@@ -50,6 +50,22 @@ class PostgresStore:
                 )
                 """,
                 """
+                CREATE INDEX IF NOT EXISTS events_received_at_idx
+                ON events (received_at DESC)
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS events_source_integration_idx
+                ON events ((payload #>> '{source,integration_id}'))
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS events_event_type_idx
+                ON events ((payload->>'event_type'))
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS events_severity_idx
+                ON events ((payload->>'severity'))
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS gateway_connections (
                     gateway_id TEXT PRIMARY KEY,
                     payload JSONB NOT NULL,
@@ -164,13 +180,114 @@ class PostgresStore:
             )
         return True
 
-    def list_events(self) -> list[EventEnvelope]:
+    def list_events(
+        self,
+        integration_id: str | None = None,
+        event_type: str | None = None,
+        severity: str | None = None,
+        limit: int = 1000,
+    ) -> list[EventEnvelope]:
+        filters = []
+        params: list[object] = []
+        if integration_id:
+            filters.append("payload #>> '{source,integration_id}' = %s")
+            params.append(integration_id)
+        if event_type:
+            filters.append("payload->>'event_type' = %s")
+            params.append(event_type)
+        if severity:
+            filters.append("payload->>'severity' = %s")
+            params.append(severity)
+        where = f"WHERE {' AND '.join(filters)}" if filters else ""
+        params.append(limit)
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "SELECT payload FROM events ORDER BY received_at, event_id"
+                f"SELECT payload FROM events {where} ORDER BY received_at DESC, event_id LIMIT %s",
+                params,
             )
             rows = cursor.fetchall()
         return [EventEnvelope.model_validate(row[0]) for row in rows]
+
+    def list_inventory_observations(self, limit: int = 2000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH observations AS (
+                    SELECT
+                        COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS address,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                    UNION ALL
+                    SELECT
+                        COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS address,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                )
+                SELECT address, MIN(occurred_at), MAX(occurred_at),
+                       COUNT(*), ARRAY_AGG(DISTINCT protocol)
+                FROM observations
+                WHERE address IS NOT NULL
+                GROUP BY address
+                ORDER BY COUNT(*) DESC, address
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "ip_address": row[0], "first_seen": row[1], "last_seen": row[2],
+                "observations": row[3], "protocols": row[4],
+            }
+            for row in rows
+        ]
+
+    def list_topology_observations(self, limit: int = 5000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH connections AS (
+                    SELECT
+                        COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS source,
+                        COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS target,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                )
+                SELECT source, target, protocol, COUNT(*)
+                FROM connections
+                WHERE source IS NOT NULL AND target IS NOT NULL
+                GROUP BY source, target, protocol
+                ORDER BY COUNT(*) DESC, source, target
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {"source": row[0], "target": row[1], "protocol": row[2], "observations": row[3]}
+            for row in rows
+        ]
+
+    def sensor_event_stats(self) -> dict[str, dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    payload #>> '{source,integration_id}' AS integration_id,
+                    COUNT(*) AS events_seen,
+                    MAX((payload->>'observed_at')::timestamptz) AS last_observed_at
+                FROM events
+                WHERE payload #>> '{source,kind}' IN ('suricata', 'zeek')
+                GROUP BY payload #>> '{source,integration_id}'
+                """
+            )
+            rows = cursor.fetchall()
+        return {
+            row[0]: {"events_seen": row[1], "last_observed_at": row[2]}
+            for row in rows
+        }
 
     def connect_gateway(
         self, gateway: GatewayConnection, actor_id: str | None = None

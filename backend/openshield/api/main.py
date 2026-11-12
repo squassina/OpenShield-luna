@@ -1,7 +1,9 @@
+import ipaddress
 import os
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from openshield.core.logging import configure_logging
@@ -13,6 +15,8 @@ from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.visibility.adapter import NetworkSensorAdapter
+from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
@@ -54,7 +58,7 @@ store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
-adapters = {"openwrt": OpenWrtAdapter()}
+adapters = {"openwrt": OpenWrtAdapter(), "suricata": NetworkSensorAdapter("suricata"), "zeek": NetworkSensorAdapter("zeek")}
 
 
 @app.get("/health/live", tags=["health"])
@@ -162,8 +166,158 @@ def ingest_event(event: EventEnvelope) -> dict[str, str]:
 
 
 @app.get("/api/v1/events", tags=["events"])
-def list_events() -> list[dict[str, object]]:
-    return [event.model_dump(mode="json") for event in store.list_events()]
+def list_events(
+    integration_id: str | None = None,
+    event_type: str | None = None,
+    severity: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> list[dict[str, object]]:
+    events = store.list_events(
+        integration_id=integration_id,
+        event_type=event_type,
+        severity=severity,
+        limit=limit,
+    )
+    return [event.model_dump(mode="json") for event in events]
+
+
+@app.post("/api/v1/sensors/{integration_id}/events", status_code=202, tags=["sensors"])
+def ingest_sensor_events(
+    integration_id: str,
+    request: Request,
+    records: Annotated[list[dict[str, Any]], Body()],
+) -> dict[str, object]:
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Sensor batch body exceeds 5 MiB")
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"suricata", "zeek"}:
+        raise HTTPException(status_code=404, detail="Network sensor integration not found")
+    try:
+        events = normalize_sensor_batch(integration.kind, records, integration_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    accepted = duplicates = 0
+    for event in events:
+        if store.insert_event(event):
+            accepted += 1
+            metrics.increment("openshield_events_ingested_total")
+        else:
+            duplicates += 1
+    return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
+
+
+@app.get("/api/v1/sensors", tags=["sensors"])
+def list_sensor_health() -> list[dict[str, object]]:
+    now = datetime.now(UTC)
+    result = []
+    stats = store.sensor_event_stats()
+    for integration in registry.list_all():
+        if integration.kind not in {"suricata", "zeek"}:
+            continue
+        sensor_stats = stats.get(integration.integration_id, {})
+        latest = sensor_stats.get("last_observed_at")
+        age = now - latest if latest else None
+        result.append({
+            "integration_id": integration.integration_id,
+            "kind": integration.kind,
+            "display_name": integration.display_name,
+            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
+                else "stale" if age is not None else "no_data",
+            "last_event_at": latest.isoformat() if latest else None,
+            "events_seen": sensor_stats.get("events_seen", 0),
+            "freshness_basis": "node_observed_at",
+        })
+    return result
+
+
+def _classify_ip(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if address.is_unspecified or address.is_multicast:
+        return None
+    if address.is_loopback:
+        scope = "loopback"
+    elif address.is_link_local:
+        scope = "link_local"
+    elif address.is_private:
+        scope = "private"
+    elif address.is_global:
+        scope = "public"
+    else:
+        scope = "reserved"
+    return str(address), scope
+
+
+@app.get("/api/v1/inventory/devices", tags=["inventory"])
+def list_network_devices(
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> list[dict[str, object]]:
+    result = []
+    for item in store.list_inventory_observations():
+        classified = _classify_ip(item["ip_address"])
+        if classified is None:
+            continue
+        address, scope = classified
+        result.append({
+            "ip_address": address,
+            "ip_version": ipaddress.ip_address(address).version,
+            "scope": scope,
+            "protocols": sorted(item["protocols"]),
+            "first_seen": item["first_seen"].isoformat(),
+            "last_seen": item["last_seen"].isoformat(),
+            "observations": item["observations"],
+        })
+    result.sort(key=lambda item: item["observations"], reverse=True)
+    return result[:limit]
+
+
+@app.get("/api/v1/inventory/topology", tags=["inventory"])
+def get_network_topology(
+    limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
+) -> dict[str, object]:
+    links: dict[tuple[str, str, str], int] = {}
+    node_scopes: dict[str, str] = {}
+    for item in store.list_topology_observations():
+        source_ip = _classify_ip(item["source"])
+        target_ip = _classify_ip(item["target"])
+        if source_ip is None or target_ip is None:
+            continue
+        source, source_scope = source_ip
+        target, target_scope = target_ip
+        node_scopes[source] = source_scope
+        node_scopes[target] = target_scope
+        links[(source, target, item["protocol"])] = item["observations"]
+
+    edges = []
+    for (source, target, protocol), count in list(links.items())[:limit]:
+        source_scope = node_scopes[source]
+        target_scope = node_scopes[target]
+        if source_scope == "private" and target_scope == "public":
+            direction = "outbound"
+        elif source_scope == "public" and target_scope == "private":
+            direction = "inbound"
+        elif source_scope == target_scope == "private":
+            direction = "internal"
+        elif source_scope == target_scope == "public":
+            direction = "external"
+        else:
+            direction = "other"
+        edges.append({
+            "source": source, "target": target, "protocol": protocol,
+            "observations": count, "direction": direction,
+        })
+    nodes = sorted(node_scopes)
+    node_details = [
+        {"ip_address": address, "scope": node_scopes[address],
+         "ip_version": ipaddress.ip_address(address).version}
+        for address in nodes
+    ]
+    return {"nodes": nodes, "node_details": node_details, "edges": edges}
 
 
 @app.get("/api/v1/audit", tags=["audit"])

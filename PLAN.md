@@ -329,8 +329,9 @@ Scope:
 - Suricata integration.
 - Zeek integration.
 - Connection and protocol metadata.
-- Initial dashboard and event exploration.
-- Sensor and integration health.
+- API-based event exploration and sensor health.
+- Initial device inventory and inferred connection topology.
+- Full interactive dashboard deferred to P2.
 
 ### P2 — Privacy Intelligence
 
@@ -693,3 +694,10 @@ Planned security evolution:
 3. **SaaS:** tenant isolation, organization administration, quotas, billing, and managed control plane.
 
 Business and SaaS authentication must be implemented and reviewed before those deployment profiles are enabled. Do not add dormant auth configuration requirements to the residential quick start.
+
+
+## P1 implementation checkpoint
+
+**Network visibility software scope:** implemented as an API-first vertical slice. OpenShield accepts bounded Suricata EVE and Zeek JSON batches, normalizes supported records into the versioned event envelope, persists them idempotently, queries event filters and limits in PostgreSQL, and aggregates observed IP inventory and inferred topology in the database. Inventory validates IP addresses and labels IP version/scope. Sensor freshness is based on Node-side observation time.
+
+**Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. The interactive web dashboard remains P2. No traffic enforcement is introduced. Live sensor validation, identity enrichment, retention/scale, Business authentication, and richer topology remain tracked in [docs/technical-debt.md](docs/technical-debt.md).

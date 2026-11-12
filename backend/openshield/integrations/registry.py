@@ -6,6 +6,8 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
         models.Capability.HEALTH_CHECK,
         models.Capability.DISCOVER,
     ],
+    "suricata": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
+    "zeek": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
 }
 
 

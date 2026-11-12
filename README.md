@@ -169,6 +169,55 @@ Event ingestion requires a registered integration ID and matching source kind. D
 
 P0 software scope is complete and CI-validated. Physical OpenWrt compatibility and forwarding-independence validation are deferred to [technical debt issue #2](https://github.com/squassina/OpenShield/issues/2); this does not block the P0 software closeout.
 
+## P1 — Network Visibility
+
+P1 adds the first network-observation pipeline. Suricata and Zeek remain external sensors; OpenShield receives their JSON events through the Node API and does not install, configure, or place either sensor inline.
+
+### Supported visibility sources
+
+- **Suricata EVE JSON:** alert, flow, DNS, HTTP, TLS, SSH, and anomaly records.
+- **Zeek JSON logs:** conn, DNS, HTTP, and SSL records.
+- Batches are limited to 500 records and 5 MiB by declared HTTP Content-Length. Only documented fields are retained; arbitrary sensor fields and secret-like fields are discarded.
+- Event IDs are deterministic for retry-safe ingestion. Event type and timestamp are part of the identity to avoid collisions across record types.
+- Suricata alert severity is mapped to the common OpenShield severity model.
+
+Register each sensor (no credentials are stored in integration config):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/integrations \
+  -H 'Content-Type: application/json' \
+  -d '{"integration_id":"suricata-home","kind":"suricata","display_name":"Suricata"}'
+
+curl -X POST http://localhost:8000/api/v1/integrations \
+  -H 'Content-Type: application/json' \
+  -d '{"integration_id":"zeek-home","kind":"zeek","display_name":"Zeek"}'
+```
+
+Send EVE records or Zeek JSON records as a JSON array:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/sensors/suricata-home/events \
+  -H 'Content-Type: application/json' \
+  --data-binary @eve-batch.json
+
+curl -X POST http://localhost:8000/api/v1/sensors/zeek-home/events \
+  -H 'Content-Type: application/json' \
+  --data-binary @zeek-batch.json
+```
+
+### Network visibility API
+
+- `GET /api/v1/inventory/devices`: observed, validated IP addresses, IP version/scope, protocols, first/last seen, and observation counts. Invalid, unspecified, and multicast addresses are excluded.
+- `GET /api/v1/inventory/topology`: observed source-to-destination edges, protocol counts, and inferred direction (`internal`, `outbound`, `inbound`, `external`, or `other`). This is not an authoritative physical topology.
+- `GET /api/v1/sensors`: sensor ingestion freshness based on the Node-generated `observed_at` timestamp (healthy within five minutes, stale afterward, or no_data). This confirms recent delivery to OpenShield, not sensor process or packet-capture health.
+- `GET /api/v1/events?integration_id=...&event_type=...&severity=...&limit=...`: filtered event exploration. Filters, ordering, and limits execute in PostgreSQL.
+
+The residential Node API is unauthenticated. Keep sensor ingestion endpoints and port 8000 restricted to the trusted LAN; do not expose them to the Internet. Configure Suricata/Zeek to send only the records needed for visibility. The P1 APIs do not block traffic or change gateway configuration.
+
+Inventory and topology use database-side aggregation; the API does not load the full raw event history to calculate these views. Event retention, cursor pagination, sustained-load benchmarks, and database partitioning remain future hardening work.
+
+The full interactive web dashboard remains in P2, consistent with the product roadmap decision. Live Suricata/Zeek deployment validation is still pending; see the [technical debt register](docs/technical-debt.md).
+
 ## Security
 
 Residential mode trusts the local network and does not authenticate API callers. Keep the Node API on a trusted LAN, restrict access at the network boundary, and never expose port 8000 directly to the Internet. OpenWrt RPC credentials remain separate and must be protected. Store `.env` securely and never commit router credentials or real network event data.
