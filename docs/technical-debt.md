@@ -31,3 +31,9 @@ This register separates known operational and product limitations from the compl
 ## P1 closure boundary
 
 P1 software is considered complete when CI passes and the documented API behavior is covered by automated tests. Live sensor deployment and physical gateway validation are tracked separately because they require a real target environment. Business/SaaS deployment remains blocked on the security work in Issue #7 and the broader authentication/authorization architecture.
+
+
+## P2 — tracked follow-up issues
+
+- [Issue #9 — Native Pi-hole/AdGuard API polling and provider list synchronization](https://github.com/squassina/OpenShield/issues/9): current adapters accept bounded pushed query-log batches. Provider API polling and provider-side list synchronization are not implemented; local lists do not enforce DNS policy.
+- [Issue #10 — Maintain DNS tracker and suspicious-domain classifications](https://github.com/squassina/OpenShield/issues/10): current suffix rules are intentionally small heuristics, not a maintained threat-intelligence feed.
