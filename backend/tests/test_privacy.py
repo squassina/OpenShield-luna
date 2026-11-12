@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
-from openshield.privacy.dns import classify_domain, normalize_domain, normalize_dns_batch
+from openshield.privacy.dns import classify_domain, normalize_dns_batch, normalize_domain
 
 client = TestClient(app)
 
