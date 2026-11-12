@@ -28,6 +28,7 @@ class GatewayHeartbeatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     protocol_version: Literal["openshield.gateway.v1"]
+    gateway_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$")
 
 
 class GatewayConnection(BaseModel):
