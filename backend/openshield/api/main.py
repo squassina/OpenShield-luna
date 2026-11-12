@@ -1,3 +1,4 @@
+import base64
 import ipaddress
 import os
 from datetime import UTC, datetime, timedelta
@@ -155,6 +156,8 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
+    if not item.enabled:
+        raise HTTPException(status_code=409, detail="Integration is disabled")
     if item.kind in {"pihole", "adguard"}:
         try:
             records = fetch_dns_records(item)
@@ -250,14 +253,25 @@ def list_events(
     event_type: str | None = None,
     severity: str | None = None,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
-) -> list[dict[str, object]]:
-    events = store.list_events(
-        integration_id=integration_id,
-        event_type=event_type,
-        severity=severity,
-        limit=limit,
+    cursor: str | None = None,
+) -> dict[str, object]:
+    position = None
+    if cursor:
+        try:
+            raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+            timestamp, event_id = raw.split("|", 1)
+            position = (datetime.fromisoformat(timestamp), event_id)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid event cursor") from exc
+    events, next_position = store.list_events_page(
+        integration_id=integration_id, event_type=event_type,
+        severity=severity, limit=limit, cursor=position,
     )
-    return [event.model_dump(mode="json") for event in events]
+    next_cursor = None
+    if next_position:
+        raw = f"{next_position[0].isoformat()}|{next_position[1]}".encode()
+        next_cursor = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    return {"items": [event.model_dump(mode="json") for event in events], "next_cursor": next_cursor}
 
 
 @app.post("/api/v1/sensors/{integration_id}/events", status_code=202, tags=["sensors"])
@@ -270,7 +284,7 @@ def ingest_sensor_events(
     if content_length and int(content_length) > 5 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Sensor batch body exceeds 5 MiB")
     integration = registry.get(integration_id)
-    if integration is None or integration.kind not in {"suricata", "zeek"}:
+    if integration is None or integration.kind not in {"suricata", "zeek"} or not integration.enabled:
         raise HTTPException(status_code=404, detail="Network sensor integration not found")
     try:
         events = normalize_sensor_batch(integration.kind, records, integration_id)
