@@ -33,8 +33,7 @@ This register separates known operational and product limitations from the compl
 P1 software is considered complete when CI passes and the documented API behavior is covered by automated tests. Live sensor deployment and physical gateway validation are tracked separately because they require a real target environment. Business/SaaS deployment remains blocked on the security work in Issue #7 and the broader authentication/authorization architecture.
 
 
-## P2 — Privacy Intelligence hardening
+## P2 — tracked follow-up issues
 
-- **Provider-native polling and list synchronization:** current Pi-hole/AdGuard adapters accept normalized query-log batches through the Node API. They do not yet authenticate to provider APIs, poll query logs, or synchronize OpenShield local allow/block entries back to provider-managed lists. Local lists do not enforce DNS policy.
-- **Classification maintenance:** tracker suffixes and suspicious-TLD rules are intentionally small and heuristic. Add a maintained, provenance-aware feed and false-positive review before treating classifications as security verdicts.
-- **DNS privacy lifecycle:** define retention, client identifier minimization/pseudonymization, export, and deletion controls for browsing metadata before broader deployments.
+- [Issue #9 — High-volume DNS polling cursors and watermarks](https://github.com/squassina/OpenShield/issues/9): native Pi-hole v6/AdGuard Home polling and explicit, verified provider list synchronization are implemented. Polling currently reads the latest 500 records per invocation; durable cursors/watermarks remain open.
+- [Issue #10 — Maintain DNS tracker and suspicious-domain classifications](https://github.com/squassina/OpenShield/issues/10): current suffix rules are intentionally small heuristics, not a maintained threat-intelligence feed.

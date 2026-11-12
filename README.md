@@ -231,47 +231,45 @@ License not selected yet.
 
 ## P2 — Privacy Intelligence
 
-P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. Provider records are sent to OpenShield through the bounded JSON ingestion endpoint; the Node does not poll provider APIs or store provider credentials in this release.
+The interactive dashboard is served at `http://localhost:8000/`. It combines P1 network sensors/inventory with P2 DNS summary metrics, daily trends, top domains/clients, source health, and local allow/block list management. Provider list sync requires an explicit confirmation in the dashboard.
 
-### Register a DNS source
+P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. OpenShield can poll provider query-log APIs directly or accept bounded pushed JSON batches. Provider credentials are read from environment variables and never stored in integration configuration.
+
+### Register DNS sources
 
 ~~~bash
 curl -X POST http://localhost:8000/api/v1/integrations \
   -H 'Content-Type: application/json' \
-  -d '{"integration_id":"pihole-home","kind":"pihole","display_name":"Pi-hole"}'
+  -d '{"integration_id":"pihole-home","kind":"pihole","display_name":"Pi-hole","config":{"base_url":"http://pihole.lan"}}'
 
 curl -X POST http://localhost:8000/api/v1/integrations \
   -H 'Content-Type: application/json' \
-  -d '{"integration_id":"adguard-home","kind":"adguard","display_name":"AdGuard Home"}'
+  -d '{"integration_id":"adguard-home","kind":"adguard","display_name":"AdGuard Home","config":{"base_url":"http://adguard.lan"}}'
 ~~~
 
-Forward query-log records as batches (maximum 500 records and 5 MiB):
+### Native polling
 
 ~~~bash
-curl -X POST http://localhost:8000/api/v1/dns/pihole-home/queries \
-  -H 'Content-Type: application/json' \
-  --data-binary @pihole-querylog.json
-
-curl -X POST http://localhost:8000/api/v1/dns/adguard-home/queries \
-  -H 'Content-Type: application/json' \
-  --data-binary @adguard-querylog.json
+curl -X POST http://localhost:8000/api/v1/privacy/sources/pihole-home/sync
+curl -X POST http://localhost:8000/api/v1/privacy/sources/adguard-home/sync
 ~~~
 
-Each record accepts domain (or query), client (or client_ip), timestamp (or time), status, and optional query type. Only normalized fields are retained. Event IDs are deterministic for retry-safe ingestion.
+Each sync fetches up to 500 latest provider records. Event IDs make overlapping polls idempotent. Pi-hole without an API password needs no credential. Otherwise set `OPENSHIELD_PIHOLE_PASSWORD`. For AdGuard Home set both `OPENSHIELD_ADGUARD_USERNAME` and `OPENSHIELD_ADGUARD_PASSWORD`. Use HTTPS where available. Do not put credentials in integration config or commit them.
+
+For provider exporters, records can also be pushed to `POST /api/v1/dns/{integration_id}/queries` in batches of up to 500 records and 5 MiB.
 
 ### Privacy API
 
-- GET /api/v1/privacy/sources: source ingestion freshness and received query count.
-- GET /api/v1/privacy/analytics/domains?days=30: top domains, blocked counts, tracker queries, unique clients.
-- GET /api/v1/privacy/analytics/devices?days=30: DNS activity grouped by client.
-- GET /api/v1/privacy/trends?days=30: daily query, blocked, tracker, and unique-domain trends.
-- GET /api/v1/privacy/report?days=30: summary rates, top domains/devices, and daily trends.
-- GET /api/v1/privacy/lists: locally managed allow/block entries.
-- POST /api/v1/privacy/lists: add a normalized domain to the local allow/block list.
-- DELETE /api/v1/privacy/lists/{allow|block}/{domain}: remove a local list entry.
+- `GET /api/v1/privacy/sources`: provider ingestion freshness and received query count.
+- `POST /api/v1/privacy/sources/{integration_id}/sync`: poll a registered provider.
+- `GET /api/v1/privacy/analytics/domains?days=30`: top domains, blocked counts, tracker queries, unique clients.
+- `GET /api/v1/privacy/analytics/devices?days=30`: DNS activity grouped by client.
+- `GET /api/v1/privacy/trends?days=30`: daily query, blocked, tracker, and unique-domain trends.
+- `GET /api/v1/privacy/report?days=30`: summary rates, top domains/clients, and daily trends.
+- `GET /api/v1/privacy/lists`, `POST /api/v1/privacy/lists`, `DELETE /api/v1/privacy/lists/{list_type}/{domain}`: locally managed allow/block lists with audit records.
 
 ### Classification and enforcement boundaries
 
-Tracker classification uses a small, curated suffix set; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs can contain sensitive browsing metadata and client identifiers; keep the Node API on the trusted LAN and protect database backups.
+Tracker classification uses a small curated suffix set; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
 
-Allow/block entries are stored as OpenShield local desired lists and audited. P2 does not push changes into Pi-hole/AdGuard or block DNS traffic. Provider-native query-log polling/list synchronization and continuously maintained classification feeds are tracked as technical debt. Enforcement remains subject to the later policy/response phase.
+Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the unauthenticated Node API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).

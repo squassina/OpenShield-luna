@@ -8,6 +8,14 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
     ],
     "suricata": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
     "zeek": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
+    "pihole": [
+        models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS,
+        models.Capability.READ_CONFIGURATION, models.Capability.WRITE_CONFIGURATION,
+    ],
+    "adguard": [
+        models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS,
+        models.Capability.READ_CONFIGURATION, models.Capability.WRITE_CONFIGURATION,
+    ],
 }
 
 

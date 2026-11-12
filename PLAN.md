@@ -338,14 +338,16 @@ Scope:
 **Goal:** make DNS activity and privacy risks understandable.
 
 Scope:
-- Pi-hole and AdGuard Home event-source adapters with bounded JSON ingestion.
+- Interactive web dashboard for network visibility and privacy intelligence.
+- Pi-hole v6 and AdGuard Home query-log integration.
+- Bounded push ingestion for exported DNS records.
 - DNS analytics grouped by client/device and domain.
 - Heuristic tracker and suspicious-TLD classification.
 - Local allow/block list management with audit trail.
 - Privacy reports and daily trends.
-- Provider freshness/ingestion health.
+- Provider ingestion freshness/health.
 
-**Implementation status:** API-first P2 slice implemented and CI-validated. Provider query-log records are pushed to OpenShield; native polling and synchronization of local lists back to provider APIs remain technical debt. Classification is heuristic, not a threat-intelligence verdict. The later P5 policy/response phase owns enforcement.
+**Implementation status:** API-first P2 slice implemented and CI-validated. Native polling fetches up to 500 latest provider records per invocation; idempotency handles overlap. High-volume cursor/watermark pagination remains technical debt. Provider list synchronization is explicit and verifies the resulting provider state. Classification is heuristic, not a threat-intelligence verdict. The later P5 policy/response phase owns enforcement.
 
 ### P3 — Threat Intelligence & Risk Engine
 
