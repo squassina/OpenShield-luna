@@ -18,6 +18,7 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
+from openshield.privacy.providers import DnsProviderError, fetch_dns_records
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -351,6 +352,26 @@ def ingest_dns_queries(
         events = normalize_dns_batch(integration.kind, integration_id, records)
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    accepted = duplicates = 0
+    for event in events:
+        if store.insert_event(event):
+            accepted += 1
+            metrics.increment("openshield_events_ingested_total")
+        else:
+            duplicates += 1
+    return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
+
+
+@app.post("/api/v1/privacy/sources/{integration_id}/sync", status_code=202, tags=["privacy"])
+def sync_privacy_source(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    try:
+        records = fetch_dns_records(integration)
+        events = normalize_dns_batch(integration.kind, integration_id, records) if records else []
+    except (DnsProviderError, ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     accepted = duplicates = 0
     for event in events:
         if store.insert_event(event):
