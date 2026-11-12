@@ -99,6 +99,9 @@ class OpenWrtRPCClient:
         for item in raw_interfaces:
             if not isinstance(item, dict):
                 continue
+            addresses = item.get("ipv4-address", [])
+            if not isinstance(addresses, list):
+                addresses = []
             normalized_interfaces.append(
                 {
                     "name": item.get("interface"),
@@ -107,7 +110,7 @@ class OpenWrtRPCClient:
                     "proto": item.get("proto"),
                     "ipv4_address": [
                         address.get("address")
-                        for address in item.get("ipv4-address", [])
+                        for address in addresses
                         if isinstance(address, dict) and isinstance(address.get("address"), str)
                     ],
                 }
