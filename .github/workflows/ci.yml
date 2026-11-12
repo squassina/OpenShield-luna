@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build application and validation images
+        run: docker compose build openshield-node openshield-gateway-connector openshield-test openshield-lint
+      - name: Lint
+        run: docker compose run --rm openshield-lint
+      - name: Test
+        run: docker compose run --rm openshield-test

@@ -1,0 +1,82 @@
+services:
+  openshield-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openshield
+      POSTGRES_PASSWORD: ${OPENSHIELD_POSTGRES_PASSWORD:-openshield-dev-password}
+      POSTGRES_DB: openshield
+    volumes:
+      - openshield-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openshield -d openshield"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  openshield-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: openshield-node
+    environment:
+      OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
+    depends_on:
+      openshield-db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  openshield-test:
+    image: openshield-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    profiles: ["tools"]
+    environment:
+      OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
+    depends_on:
+      openshield-db:
+        condition: service_healthy
+    command: ["pytest", "-v", "tests"]
+
+  openshield-lint:
+    image: openshield-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    profiles: ["tools"]
+    command: ["ruff", "check", "openshield", "tests"]
+
+  openshield-gateway-connector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    profiles: ["gateway"]
+    command: ["python", "-m", "openshield.gateway.agent"]
+    environment:
+      OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}
+      OPENSHIELD_GATEWAY_ID: ${OPENSHIELD_GATEWAY_ID:-}
+      OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL: ${OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL:-30}
+      OPENSHIELD_OPENWRT_URL: ${OPENSHIELD_OPENWRT_URL:-}
+      OPENSHIELD_OPENWRT_USERNAME: ${OPENSHIELD_OPENWRT_USERNAME:-}
+      OPENSHIELD_OPENWRT_PASSWORD: ${OPENSHIELD_OPENWRT_PASSWORD:-}
+      OPENSHIELD_GATEWAY_SPOOL_PATH: ${OPENSHIELD_GATEWAY_SPOOL_PATH:-/var/lib/openshield/gateway-spool.sqlite3}
+    volumes:
+      - openshield-gateway-spool:/var/lib/openshield
+    restart: unless-stopped
+
+
+volumes:
+  openshield-postgres-data:
+  openshield-gateway-spool:

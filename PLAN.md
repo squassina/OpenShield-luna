@@ -199,11 +199,12 @@ Use a queue or broker only when justified by measured reliability, throughput, o
 **Gateway side**
 - Gateway Connector.
 - OpenWrt / firewall4 / nftables adapter as the initial target.
-- Authenticated Node communication.
+- Unauthenticated residential Node/connector communication using the versioned `openshield.gateway.v1` contract; restrict API access to the trusted home LAN.
+- Stable local gateway identity, read-only capability advertisement, automatic first-connect registration, and heartbeat presence.
 - Minimal local state and safe behavior when disconnected.
 
 **OpenShield Node**
-- API and authentication / authorization.
+- Residential API without user accounts or API credentials; business authentication and authorization are deferred.
 - Integration Registry and Adapter SDK.
 - Discovery and configuration service.
 - Event ingestion and normalization.
@@ -304,7 +305,7 @@ The AI Orchestrator must:
 Scope:
 - Repository conventions and architecture documentation.
 - Docker Compose development environment.
-- Authentication and RBAC foundation.
+- Trusted-LAN residential API and automatic gateway enrollment.
 - Gateway Connector protocol.
 - Initial OpenWrt adapter.
 - Integration Registry and Adapter SDK.
@@ -316,7 +317,7 @@ Scope:
 - Unit and integration tests.
 - Node/gateway disconnection and recovery behavior.
 
-**Exit criteria:** OpenShield Node can establish a secure connection to a supported gateway, discover its declared capabilities, and ingest at least one validated event from an initial integration. Gateway forwarding remains unaffected when the Node is stopped.
+**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield/issues/2).
 
 ### P1 — Network Visibility
 
@@ -496,12 +497,12 @@ Recommended sequence:
 ### P0 Definition of Done
 
 - Clean deployment from documented instructions.
-- Secure and authenticated gateway connection.
+- Gateway connection using the versioned connector protocol on a trusted local network.
 - Capability discovery and manual fallback work.
 - At least one real event is ingested and normalized.
 - Event provenance is retained.
 - Audit captures security-relevant configuration and connection events.
-- Tests cover invalid input, authorization failure, gateway disconnection, Node restart, and recovery.
+- Tests cover invalid input, residential source-provenance rejection, gateway disconnection, durable outbox persistence, retry-until-acknowledged, reconnection drain, and recovery after connector restart.
 - Gateway forwarding is unaffected by Node availability.
 - CI passes.
 
@@ -532,3 +533,163 @@ OpenShield is successful when a user can:
 - Keep the network operating safely when OpenShield Node is unavailable.
 
 The first release should optimize for trust, safety, clarity, and a complete working vertical slice—not the number of integrations or the amount of automation.
+
+
+## P0 implementation status — OpenWrt read-only integration
+
+Current increment adds a read-only OpenWrt rpcd/ubus client used by the nearby-host Gateway Connector (not by the Node). OpenWrt's own RPC session login remains enabled; OpenShield API authentication is disabled in residential mode:
+
+- Session login followed by `system.board` and `network.interface.dump`.
+- Discovery returns normalized board identity and interface metadata.
+- Health check verifies RPC reachability and returns basic device identity.
+- HTTP timeout is bounded to 5 seconds; response bodies are capped at 1 MiB.
+- TLS certificate verification uses Python's default HTTPS behavior.
+- Credentials are supplied only to the connector through deployment environment variables, never integration configuration.
+- Integration configuration rejects secret-like field names to prevent accidental API disclosure.
+- The adapter advertises only `discover` and `health_check`; it does not claim event reading or enforcement.
+- No firewall, routing, wireless, or forwarding mutation is implemented.
+
+Environment:
+- `OPENSHIELD_OPENWRT_URL`
+- `OPENSHIELD_OPENWRT_USERNAME`
+- `OPENSHIELD_OPENWRT_PASSWORD`
+- Gateway integration ID defaults to `home-gateway` and is provisioned automatically by the Node on connector handshake.
+
+Validation boundary:
+- RPC behavior is covered with mocked transport tests.
+- Real OpenWrt hardware/version compatibility is not yet validated.
+- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node without an OpenShield API key.
+- P0 remains incomplete until a real normalized gateway event is verified on OpenWrt hardware, durable audit/recovery requirements are addressed, and gateway independence is validated.
+
+
+## P0 implementation status — connector event forwarding
+
+The nearby-host connector now uses the OpenWrt RPC client locally, keeping the Node out of the gateway management path:
+
+- Optional connector configuration is all-or-nothing: OpenWrt URL, username, password, and registered integration ID.
+- The gateway handshake advertises only `discover` and `health_check` when this adapter is configured; without it, no capabilities are advertised.
+- After connection, the agent reads board/interface metadata and emits a `gateway.discovery` event.
+- After each successful heartbeat, the agent emits a `gateway.health` event.
+- RPC failures produce a bounded health event (`status=unavailable`, `reason=rpc_unavailable`) without forwarding exception text or credentials.
+- Events use `openshield.event.v1`, include UTC timestamps and UUID event IDs, and preserve the configured integration ID as source provenance.
+- The Node validates integration existence and kind. Residential mode trusts callers on the local network; source identity is provenance, not an authentication boundary.
+- The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
+
+Required connector variables:
+- `OPENSHIELD_OPENWRT_URL`
+- `OPENSHIELD_OPENWRT_USERNAME`
+- `OPENSHIELD_OPENWRT_PASSWORD`
+- `OPENSHIELD_GATEWAY_ID` (default `home-gateway`)
+
+The integration must be registered on the Node before event forwarding. Hardware validation is still pending.
+
+
+## P0 implementation status — PostgreSQL persistence
+
+PostgreSQL 16 is now the source of truth for the initial Node state:
+
+- Integration registrations and capability/config metadata persist across Node restarts.
+- Versioned events persist with their complete envelope and source provenance.
+- Gateway connection records and heartbeat timestamps persist; the existing 90-second stale threshold is preserved.
+- Duplicate integration IDs and event IDs are rejected.
+- Schema creation is idempotent and performed automatically by the store.
+- Node readiness checks PostgreSQL connectivity; no API-key configuration is required.
+- Docker Compose provides PostgreSQL with a named data volume; stopping the stack does not remove this volume.
+- The CI test service starts PostgreSQL and exercises persistence through a newly created store instance.
+
+Configuration:
+- `OPENSHIELD_POSTGRES_PASSWORD`
+- `OPENSHIELD_DATABASE_URL`
+
+Remaining:
+- Durable audit records are not implemented yet.
+- Formal versioned database migrations, backup/restore automation, pooling, and production hardening remain pending.
+- Local tests must run through Docker Compose so the PostgreSQL dependency is available.
+
+
+## P0 implementation status — durable audit trail
+
+The PostgreSQL audit log now records security-relevant successful operations and gateway source authorization failures:
+
+- `integration.registered`: actor, integration ID, kind, and declared capabilities.
+- `gateway.connected`: actor/gateway ID, connector version, and accepted capabilities.
+- `event.ingested`: actor, event ID, event type, severity, and source integration ID.
+- `authorization.denied`: gateway source-ID mismatch attempts.
+- State changes and their corresponding audit records are written in the same database transaction.
+- Audit reads are exposed through `GET /api/v1/audit`, restricted to the admin role, with a bounded limit (1–500).
+- Audit records contain no OpenWrt credentials. Residential API requests have no authenticated actor identity.
+
+Remaining audit hardening:
+- Authentication-failure auditing is deferred with authentication itself.
+- Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
+
+
+## P0 implementation status — operational metrics
+
+The Node now exposes an admin-protected Prometheus text endpoint at `GET /metrics`:
+
+- HTTP request counters grouped by method, FastAPI route template, and status code.
+- Event ingestion, gateway connection, gateway heartbeat, and gateway event-source denial counters.
+- Labels avoid raw resource IDs and request values to limit cardinality.
+- Metrics are process-local and thread-safe; no new runtime dependency was added.
+
+Remaining:
+- Counters reset on process restart.
+- Histograms/latency, database gauges, scrape deployment, alerting, and long-term metrics storage remain pending.
+
+
+## P0 implementation status — durable gateway event recovery
+
+The nearby-host connector now uses a local SQLite outbox:
+
+- Events are persisted before delivery and deleted only after the Node acknowledges them.
+- The connector drains pending events in batches and retries after reconnect.
+- When the Node is unavailable, the connector continues local OpenWrt discovery/health polling and queues resulting events.
+- Node event ingestion is idempotent: duplicate event IDs return HTTP 202 with `status=duplicate`, so retries after a lost response are safe.
+- Queue capacity is bounded at 10,000 pending events; the connector refuses new events when full rather than discarding older pending events.
+- SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; the spool directory is enforced at mode 0700.
+- Docker Compose mounts a named volume at `/var/lib/openshield`, preserving the spool across connector container restarts.
+
+Configuration:
+- `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`).
+
+Remaining:
+- Spool contents are not encrypted at rest; host/volume protection is required.
+- Queue capacity/usage metrics and alerting are pending.
+- A full hardware outage/recovery drill against a real OpenWrt router is pending.
+
+
+## P0 hardware acceptance
+
+CI validates mocked RPC transport, Node API behavior, database persistence, audit, metrics, and connector spool/retry behavior. It does not validate an actual OpenWrt firmware or prove forwarding independence on physical hardware.
+
+Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) to verify:
+- Actual rpcd authentication and read-only ACL compatibility.
+- Real board/interface discovery and normalized event delivery.
+- Continued LAN/DNS/Internet forwarding while the Node is stopped.
+- Event spool growth during outage and delivery after Node recovery.
+- Spool and gateway recovery after connector container restart.
+- No firewall, routing, wireless, or forwarding changes.
+
+Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield/issues/2). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
+
+
+## P0 implementation checkpoint
+
+**Software scope: implemented and CI-validated.** The current branch covers trusted-LAN residential API access, automatic gateway registration, gateway handshake and presence, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, metrics, and durable connector-side event retry/recovery.
+
+**Physical gateway acceptance: deferred technical debt.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [issue #2](https://github.com/squassina/OpenShield/issues/2).
+
+
+## Residential deployment decision — current product stage
+
+The first product stage targets a single household and a trusted local network. OpenShield API authentication, user accounts, API keys, and RBAC are intentionally disabled. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
+
+This is a deployment simplification, not a claim that unauthenticated APIs are safe on untrusted networks. The Node API must remain reachable only from the trusted home LAN and must not be exposed directly to the Internet. OpenWrt's own RPC authentication remains enabled to protect router management access.
+
+Planned security evolution:
+1. **Home:** trusted-LAN access, no OpenShield API credentials or user management.
+2. **Business:** user/organization identity, gateway enrollment, roles, credential lifecycle, and stronger audit controls.
+3. **SaaS:** tenant isolation, organization administration, quotas, billing, and managed control plane.
+
+Business and SaaS authentication must be implemented and reviewed before those deployment profiles are enabled. Do not add dormant auth configuration requirements to the residential quick start.

@@ -1,0 +1,196 @@
+import os
+
+from fastapi.testclient import TestClient
+
+from openshield.api.main import app
+from openshield.core.storage import PostgresStore
+from openshield.gateway.registry import GatewayConnectionRegistry
+from openshield.integrations.registry import IntegrationRegistry
+
+client = TestClient(app)
+
+
+def setup_function() -> None:
+    from openshield.api import main
+    main.store.reset()
+
+
+def register_integration(integration_id: str = "router-lab") -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": integration_id,
+        "kind": "openwrt",
+        "display_name": "Lab router",
+        "config": {"base_url": "https://192.0.2.1"},
+    })
+    assert response.status_code == 201
+
+
+def gateway_payload(gateway_id: str = "home-gateway") -> dict[str, object]:
+    return {
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": gateway_id,
+        "gateway_type": "openwrt",
+        "connector_version": "0.1.0",
+        "capabilities": ["discover", "health_check"],
+    }
+
+
+def sample_event(event_id: str = "event-001", integration_id: str = "router-lab") -> dict[str, object]:
+    return {
+        "schema_version": "openshield.event.v1",
+        "event_id": event_id,
+        "source": {"integration_id": integration_id, "kind": "openwrt"},
+        "event_type": "gateway.health",
+        "occurred_at": "2026-01-01T12:00:00Z",
+        "observed_at": "2026-01-01T12:00:01Z",
+        "severity": "info",
+        "payload": {"status": "reachable"},
+    }
+
+
+def test_health_endpoints_are_public_and_readiness_checks_database() -> None:
+    assert client.get("/health/live").json() == {"status": "alive"}
+    assert client.get("/health/ready").json() == {"status": "ready"}
+
+
+def test_api_endpoints_are_available_without_authentication() -> None:
+    assert client.get("/api/v1/integrations").status_code == 200
+    assert client.get("/api/v1/events").status_code == 200
+    assert client.get("/api/v1/gateways").status_code == 200
+    assert client.get("/api/v1/audit").status_code == 200
+    assert client.get("/metrics").status_code == 200
+
+
+def test_register_openwrt_and_probe_without_authentication() -> None:
+    register_integration()
+    response = client.get("/api/v1/integrations/router-lab/probe")
+    assert response.status_code == 200
+    assert response.json()["transport"] == "gateway_connector"
+    assert response.json()["capabilities"] == ["health_check", "discover"]
+
+
+def test_duplicate_integration_is_rejected() -> None:
+    register_integration()
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "router-lab", "kind": "openwrt", "display_name": "Duplicate",
+    })
+    assert response.status_code == 409
+
+
+def test_unknown_integration_kind_is_rejected() -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "unknown-lab", "kind": "unknown", "display_name": "Unknown",
+    })
+    assert response.status_code == 400
+
+
+def test_gateway_connect_automatically_registers_home_gateway() -> None:
+    response = client.post("/api/v1/gateway/connect", json=gateway_payload())
+    assert response.status_code == 201
+    assert response.json()["status"] == "connected"
+    integrations = client.get("/api/v1/integrations").json()
+    assert len(integrations) == 1
+    assert integrations[0]["integration_id"] == "home-gateway"
+    assert integrations[0]["kind"] == "openwrt"
+    assert client.get("/api/v1/gateways").json()[0]["status"] == "connected"
+
+
+def test_gateway_heartbeat_identifies_gateway_without_credentials() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1", "gateway_id": "home-gateway",
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "acknowledged"
+
+
+def test_gateway_heartbeat_requires_existing_connection() -> None:
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1", "gateway_id": "unknown-gateway",
+    })
+    assert response.status_code == 409
+
+
+def test_gateway_cannot_advertise_enforcement_capabilities() -> None:
+    payload = gateway_payload()
+    payload["capabilities"] = ["execute_action"]
+    assert client.post("/api/v1/gateway/connect", json=payload).status_code == 422
+
+
+def test_gateway_rejects_unsupported_type() -> None:
+    register_integration("home-gateway")
+    payload = gateway_payload()
+    payload["gateway_type"] = "other"
+    assert client.post("/api/v1/gateway/connect", json=payload).status_code == 422
+
+
+def test_ingest_event_preserves_source_provenance() -> None:
+    register_integration()
+    assert client.post("/api/v1/events", json=sample_event()).status_code == 202
+    stored = client.get("/api/v1/events").json()
+    assert stored[0]["source"]["integration_id"] == "router-lab"
+
+
+def test_event_from_unknown_source_is_rejected() -> None:
+    assert client.post("/api/v1/events", json=sample_event()).status_code == 400
+
+
+def test_event_source_kind_must_match_registered_integration() -> None:
+    register_integration()
+    event = sample_event()
+    event["source"] = {"integration_id": "router-lab", "kind": "other"}
+    assert client.post("/api/v1/events", json=event).status_code == 400
+
+
+def test_event_rejects_unknown_schema_version() -> None:
+    event = sample_event()
+    event["schema_version"] = "openshield.event.v2"
+    assert client.post("/api/v1/events", json=event).status_code == 422
+
+
+def test_integration_registration_rejects_secrets_in_config() -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "router-secret", "kind": "openwrt", "display_name": "Router",
+        "config": {"base_url": "http://192.0.2.1", "password": "must-not-be-stored"},
+    })
+    assert response.status_code == 422
+
+
+def test_persisted_state_survives_store_recreation() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    assert client.post("/api/v1/events", json=sample_event(integration_id="home-gateway")).status_code == 202
+    restarted_store = PostgresStore(os.environ["OPENSHIELD_DATABASE_URL"])
+    assert IntegrationRegistry(restarted_store).get("home-gateway") is not None
+    assert len(restarted_store.list_events()) == 1
+    assert GatewayConnectionRegistry(restarted_store).get_status("home-gateway")["status"] == "connected"
+
+
+def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
+    register_integration()
+    event = sample_event()
+    first = client.post("/api/v1/events", json=event)
+    duplicate = client.post("/api/v1/events", json=event)
+    assert first.status_code == duplicate.status_code == 202
+    assert first.json()["status"] == "accepted"
+    assert duplicate.json()["status"] == "duplicate"
+
+
+def test_audit_records_registration_connection_and_event_ingestion() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    assert client.post("/api/v1/events", json=sample_event(integration_id="home-gateway")).status_code == 202
+    records = client.get("/api/v1/audit").json()
+    assert [record["action"] for record in records[:3]] == [
+        "event.ingested", "gateway.connected", "integration.registered",
+    ]
+    assert all(record["actor_id"] is None for record in records[:3])
+
+
+def test_audit_limit_is_bounded() -> None:
+    assert client.get("/api/v1/audit?limit=501").status_code == 422
+
+
+def test_metrics_endpoint_exposes_prometheus_counters() -> None:
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "openshield_http_requests_total" in response.text
