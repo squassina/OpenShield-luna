@@ -33,3 +33,17 @@ services:
       target: dev
     profiles: ["tools"]
     command: ["ruff", "check", "openshield", "tests"]
+
+  openshield-gateway-connector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    profiles: ["gateway"]
+    command: ["python", "-m", "openshield.gateway.agent"]
+    environment:
+      OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}
+      OPENSHIELD_GATEWAY_ID: ${OPENSHIELD_GATEWAY_ID:-}
+      OPENSHIELD_GATEWAY_API_KEY: ${OPENSHIELD_GATEWAY_API_KEY:-}
+      OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL: ${OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL:-30}
+    restart: unless-stopped
