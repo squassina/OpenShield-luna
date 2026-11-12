@@ -112,7 +112,7 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Disconnect/recovery and real gateway validation | Pending |
 | CI and automated tests | Implemented (initial; lint violations fixed in follow-up) |
 
-The initial CI run exposed three Ruff violations (UTC alias, mutable class attribute annotation, and import ordering). A follow-up run isolated a remaining I001 formatting issue in the registry import; the import is now formatted on one line to match Ruff/isort. The workflow must pass again, including the test stage, before this increment is considered validated. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
+The initial CI run exposed three Ruff violations (UTC alias, mutable class attribute annotation, and import ordering). A follow-up run isolated an I001 import-block formatting issue caused by one excess blank line after the import. The extra blank line was removed; the CI workflow was restored to a non-mutating lint check. The workflow must pass again, including the test stage, before this increment is considered validated. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
 
 ## Security
 
