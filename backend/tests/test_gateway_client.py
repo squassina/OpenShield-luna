@@ -26,7 +26,9 @@ def test_connector_client_sends_authenticated_versioned_handshake() -> None:
     request = urlopen_mock.call_args.args[0]
     assert request.full_url == "https://openshield.example/api/v1/gateway/connect"
     assert request.get_header("Authorization") == f"Bearer {'g' * 64}"
-    assert json.loads(request.data)["protocol_version"] == "openshield.gateway.v1"
+    payload = json.loads(request.data)
+    assert payload["protocol_version"] == "openshield.gateway.v1"
+    assert payload["capabilities"] == []
     assert result["status"] == "connected"
 
 
