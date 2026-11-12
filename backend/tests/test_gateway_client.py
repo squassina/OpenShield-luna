@@ -81,5 +81,5 @@ def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.Mon
     with pytest.raises(KeyboardInterrupt):
         run_agent(client, heartbeat_interval=5)
 
-    assert client.connect_calls == 2
+    assert client.connect_calls == 3
     assert client.heartbeat_calls == 1
