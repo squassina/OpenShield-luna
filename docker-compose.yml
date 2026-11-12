@@ -1,4 +1,19 @@
 services:
+  openshield-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openshield
+      POSTGRES_PASSWORD: ${OPENSHIELD_POSTGRES_PASSWORD:-openshield-dev-password}
+      POSTGRES_DB: openshield
+    volumes:
+      - openshield-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openshield -d openshield"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   openshield-node:
     build:
       context: .
@@ -7,6 +22,10 @@ services:
     container_name: openshield-node
     environment:
       OPENSHIELD_API_KEYS: ${OPENSHIELD_API_KEYS:-}
+      OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
+    depends_on:
+      openshield-db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     healthcheck:
@@ -23,6 +42,11 @@ services:
       dockerfile: Dockerfile
       target: dev
     profiles: ["tools"]
+    environment:
+      OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
+    depends_on:
+      openshield-db:
+        condition: service_healthy
     command: ["pytest", "-v", "tests"]
 
   openshield-lint:
@@ -51,3 +75,7 @@ services:
       OPENSHIELD_OPENWRT_PASSWORD: ${OPENSHIELD_OPENWRT_PASSWORD:-}
       OPENSHIELD_INTEGRATION_ID: ${OPENSHIELD_INTEGRATION_ID:-}
     restart: unless-stopped
+
+
+volumes:
+  openshield-postgres-data:
