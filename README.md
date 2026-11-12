@@ -110,9 +110,9 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Metrics | Pending |
 | Secure connector bootstrap | Pending |
 | Disconnect/recovery and real gateway validation | Pending |
-| CI and automated tests | Implemented (initial) |
+| CI and automated tests | Implemented (initial; lint violations fixed in follow-up) |
 
-A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
+The initial CI run exposed three Ruff violations (UTC alias, mutable class attribute annotation, and import ordering). These were corrected in the P0 branch; the workflow must pass again before this increment is considered validated. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
 
 ## Security
 
