@@ -64,7 +64,9 @@ def run_agent(
                 logger.warning("OpenWrt discovery failed: %s", exc)
             except GatewayTransportError as exc:
                 logger.warning("Unable to send gateway discovery to Node: %s", exc)
-                break
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 60.0)
+                continue
 
         while True:
             time.sleep(heartbeat_interval)
