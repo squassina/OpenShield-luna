@@ -16,16 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e "backend[dev]"
+      - name: Build application and validation images
+        run: docker compose build openshield-node openshield-test openshield-lint
       - name: Lint
-        run: ruff check backend
+        run: docker compose run --rm openshield-lint
       - name: Test
-        run: pytest backend/tests
+        run: docker compose run --rm openshield-test
