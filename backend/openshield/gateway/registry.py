@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
 from openshield.gateway.models import GatewayConnectRequest, GatewayConnection
-from openshield.integrations.models import Capability
 
 CONNECTION_TIMEOUT = timedelta(seconds=90)
 
