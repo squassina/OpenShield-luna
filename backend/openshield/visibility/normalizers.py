@@ -106,7 +106,7 @@ def normalize_sensor_batch(
     if not isinstance(records, list) or not 1 <= len(records) <= 500:
         raise ValueError("Sensor batch must contain between 1 and 500 records")
     if any(not isinstance(record, dict) for record in records):
-        raise ValueError("Every sensor record must be a JSON object")
+        raise TypeError("Every sensor record must be a JSON object")
     normalizer = {"suricata": normalize_suricata, "zeek": normalize_zeek}.get(kind)
     if normalizer is None:
         raise ValueError("Unsupported network sensor")
