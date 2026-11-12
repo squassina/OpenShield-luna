@@ -1,8 +1,4 @@
-from openshield.integrations.models import (
-    Capability,
-    Integration,
-    IntegrationRegistration,
-)
+from openshield.integrations.models import Capability, Integration, IntegrationRegistration
 
 
 CAPABILITIES_BY_KIND: dict[str, list[Capability]] = {
