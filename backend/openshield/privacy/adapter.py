@@ -2,7 +2,7 @@ from openshield.integrations.models import Capability, Integration
 
 
 class DnsPrivacyAdapter:
-    """Read-only DNS telemetry adapter contract; records are pushed by provider exporters."""
+    """DNS telemetry adapter with explicit query-log polling and managed-list synchronization."""
 
     def __init__(self, kind: str) -> None:
         if kind not in {"pihole", "adguard"}:
