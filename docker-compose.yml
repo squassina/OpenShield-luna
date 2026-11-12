@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
       target: runtime
     container_name: openshield-node
+    environment:
+      OPENSHIELD_API_KEYS: ${OPENSHIELD_API_KEYS:-}
     ports:
       - "8000:8000"
     healthcheck:
