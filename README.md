@@ -44,7 +44,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Gateway, integration, and event state is persisted in PostgreSQL; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - PostgreSQL persistence is implemented with idempotent schema creation; formal versioned migrations and backup/restore automation remain pending.
 - Durable audit records cover integration registration, gateway connection, event ingestion, and gateway event-source spoof attempts. API-key authentication failures are not yet persisted; retention, tamper-evidence, and export controls remain pending.
-- No metrics exporter or real-hardware validation exists. The nearby-host connector now collects discovery/health data and forwards normalized events; broader OpenWrt event feeds remain pending.
+- The protected Prometheus `/metrics` endpoint currently exposes process-local request, event, gateway, and authorization-denial counters. Counters reset on process restart; histograms, database gauges, external scraping/alerting, and real-hardware validation remain pending. The nearby-host connector forwards discovery/health data; broader OpenWrt event feeds remain pending.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
 ## Docker-first development
@@ -197,6 +197,12 @@ curl "http://localhost:8000/api/v1/audit?limit=100" \
 
 The audit trail records successful integration registrations, gateway connections, event ingestion, and gateway event-source authorization denials. It stores actor ID, action, target, timestamp, and minimized details; it never stores raw API keys or OpenWrt passwords. Invalid/missing API-key attempts, retention policies, tamper-evident chaining, and export are not implemented yet.
 
+## Metrics
+
+The Prometheus text endpoint is available at `GET /metrics` and requires an admin API key. It exposes request counters by method/route/status plus event ingestion, gateway connection/heartbeat, and gateway source-denial counters. Labels use FastAPI route templates to avoid high-cardinality resource IDs.
+
+Counters are process-local and reset on restart. Histograms, database-backed gauges, alerting, and metrics scraping deployment are not included yet.
+
 ## P0 roadmap status
 
 | Workstream | Status |
@@ -215,7 +221,7 @@ The audit trail records successful integration registrations, gateway connection
 | Key rotation/revocation | Pending |
 | PostgreSQL persistence for integrations, events, gateway presence, and initial audit records | Implemented; audit hardening/retention pending |
 | Structured logging | Implemented |
-| Metrics | Pending |
+| Metrics | Implemented (admin-protected Prometheus counters; process-local) |
 | OpenWrt RPC credentials via deployment environment and config secret rejection | Implemented (static env secrets; rotation pending) |
 | Disconnect/recovery and real gateway validation | Pending |
 | Docker-first runtime, lint, and test environment | Implemented |
