@@ -40,7 +40,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
-- OpenWrt adapter is a safe stub; the outbound connector agent can run on a nearby Linux/Docker host, but an on-device OpenWrt agent and actual OpenWrt telemetry/configuration transport are not implemented yet.
+- OpenWrt adapter is a safe stub; the outbound connector agent can run on a nearby Linux/Docker host, and an on-device OpenWrt agent plus actual OpenWrt telemetry/configuration transport are not implemented yet. The agent advertises no OpenWrt capabilities until those operations are real.
 - Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
@@ -130,13 +130,13 @@ docker compose --profile gateway up --build -d openshield-node openshield-gatewa
 The connector has no dependency on Node health and never sits in the packet-forwarding path. If the Node is unavailable, it retries; gateway traffic forwarding remains independent.
 
 
-A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities:
+A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities (currently none, until a real OpenWrt data adapter is connected):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/gateway/connect \\
   -H "Authorization: Bearer $OPENSHIELD_GATEWAY_API_KEY" \\
   -H 'Content-Type: application/json' \\
-  -d '{"protocol_version":"openshield.gateway.v1","gateway_id":"test-gateway","gateway_type":"openwrt","connector_version":"0.1.0","capabilities":["discover","health_check","read_events"]}'
+  -d '{"protocol_version":"openshield.gateway.v1","gateway_id":"test-gateway","gateway_type":"openwrt","connector_version":"0.1.0","capabilities":[]}'
 
 curl -X POST http://localhost:8000/api/v1/gateway/heartbeat \\
   -H "Authorization: Bearer $OPENSHIELD_GATEWAY_API_KEY" \\
@@ -144,7 +144,7 @@ curl -X POST http://localhost:8000/api/v1/gateway/heartbeat \\
   -d '{"protocol_version":"openshield.gateway.v1"}'
 ```
 
-Only `discover`, `health_check`, and `read_events` can currently be advertised. Configuration writes and action execution are rejected. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. It is a protocol/API foundation, not yet an installable OpenWrt-side daemon; gateway forwarding remains independent of the Node.
+The protocol currently permits only read-only capability declarations (`discover`, `health_check`, and `read_events`); configuration writes and action execution are rejected. The bundled agent advertises no integration capabilities yet because it does not collect gateway telemetry. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. It is a protocol/API foundation, not yet an installable OpenWrt-side daemon; gateway forwarding remains independent of the Node.
 
 ## API quick start
 
