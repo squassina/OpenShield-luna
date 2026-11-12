@@ -317,7 +317,7 @@ Scope:
 - Unit and integration tests.
 - Node/gateway disconnection and recovery behavior.
 
-**Exit criteria:** OpenShield Node can establish a secure connection to a supported gateway, discover its declared capabilities, and ingest at least one validated event from an initial integration. Gateway forwarding remains unaffected when the Node is stopped.
+**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield/issues/2).
 
 ### P1 — Network Visibility
 
@@ -671,14 +671,14 @@ Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) t
 - Spool and gateway recovery after connector container restart.
 - No firewall, routing, wireless, or forwarding changes.
 
-P0 hardware acceptance remains pending until this runbook is executed on the target gateway and its evidence is recorded.
+Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield/issues/2). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
 
 
 ## P0 implementation checkpoint
 
 **Software scope: implemented and CI-validated.** The current branch covers trusted-LAN residential API access, automatic gateway registration, gateway handshake and presence, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, metrics, and durable connector-side event retry/recovery.
 
-**Physical gateway acceptance: pending.** Run the hardware validation runbook against the target OpenWrt model/firmware before marking P0 fully accepted. CI cannot establish real rpcd ACL compatibility or prove that the user's gateway continues forwarding during a Node outage.
+**Physical gateway acceptance: deferred technical debt.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [issue #2](https://github.com/squassina/OpenShield/issues/2).
 
 
 ## Residential deployment decision — current product stage
