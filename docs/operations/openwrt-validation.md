@@ -113,7 +113,11 @@ Test one at a time:
 
 There is no OpenShield API-key rejection case in the residential profile. Source IDs preserve event provenance; they are not an authentication boundary.
 
-## 7. Evidence to record
+## 7. Automated checks in CI
+
+The gateway test suite covers outbox capacity, file permissions, process recreation, Node transport loss, retry, and acknowledgement. These tests validate connector persistence and delivery only. They do not verify packet forwarding on physical hardware.
+
+## 8. Evidence to record
 
 Record:
 - OpenWrt model, firmware version, rpcd version.

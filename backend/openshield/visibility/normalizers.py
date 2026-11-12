@@ -35,18 +35,20 @@ def _timestamp(value: Any) -> datetime:
     raise ValueError("Sensor event requires a valid timestamp")
 
 
-def _event_id(source: str, raw: dict[str, Any]) -> str:
+def _event_id(source: str, integration_id: str, raw: dict[str, Any]) -> str:
     stable = raw.get("community_id") or raw.get("uid")
     event_kind = raw.get("event_type") or raw.get("_path") or "event"
     timestamp = raw.get("timestamp") or raw.get("ts") or ""
     if stable:
-        return f"{source}:{event_kind}:{str(stable)[:70]}:{str(timestamp)[:30]}"
+        return f"{source}:{integration_id}:{event_kind}:{str(stable)[:50]}:{str(timestamp)[:30]}"
     encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str).encode()
-    return f"{source}:{hashlib.sha256(encoded).hexdigest()}"
+    return f"{source}:{integration_id}:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     """Normalize one Suricata EVE JSON record without retaining arbitrary fields."""
+    if not isinstance(raw, dict):
+        raise ValueError("Suricata record must be a JSON object")
     event_type = raw.get("event_type")
     if event_type not in {"alert", "flow", "dns", "http", "tls", "ssh", "anomaly"}:
         raise ValueError("Unsupported Suricata EVE event_type")
@@ -67,7 +69,7 @@ def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelop
         payload["signature"] = alert["signature"][:256]
     return EventEnvelope(
         schema_version="openshield.event.v1",
-        event_id=_event_id("suricata", raw),
+        event_id=_event_id("suricata", integration_id, raw),
         source=EventSource(integration_id=integration_id, kind="suricata"),
         event_type=f"network.suricata.{event_type}",
         occurred_at=timestamp,
@@ -79,6 +81,8 @@ def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelop
 
 def normalize_zeek(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     """Normalize one Zeek JSON log record; supports conn, dns, http and ssl logs."""
+    if not isinstance(raw, dict):
+        raise ValueError("Zeek record must be a JSON object")
     log_type = raw.get("_path")
     if log_type not in {"conn", "dns", "http", "ssl"}:
         raise ValueError("Unsupported Zeek log type")
@@ -86,7 +90,7 @@ def normalize_zeek(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     payload = {key: raw[key] for key in ZEEK_FIELDS if key in raw}
     return EventEnvelope(
         schema_version="openshield.event.v1",
-        event_id=_event_id(f"zeek-{log_type}", raw),
+        event_id=_event_id(f"zeek-{log_type}", integration_id, raw),
         source=EventSource(integration_id=integration_id, kind="zeek"),
         event_type=f"network.zeek.{log_type}",
         occurred_at=timestamp,
@@ -99,8 +103,10 @@ def normalize_zeek(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
 def normalize_sensor_batch(
     kind: str, records: list[dict[str, Any]], integration_id: str
 ) -> list[EventEnvelope]:
-    if not 1 <= len(records) <= 500:
+    if not isinstance(records, list) or not 1 <= len(records) <= 500:
         raise ValueError("Sensor batch must contain between 1 and 500 records")
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("Every sensor record must be a JSON object")
     normalizer = {"suricata": normalize_suricata, "zeek": normalize_zeek}.get(kind)
     if normalizer is None:
         raise ValueError("Unsupported network sensor")

@@ -340,3 +340,11 @@ def test_agent_retries_spooled_events_until_node_acknowledges(tmp_path: Path) ->
     assert agent._flush_spool(client, spool) is True
     assert spool.pending_count() == 0
     assert client.calls == 2
+
+
+def test_gateway_outbox_persists_across_connector_recreation(tmp_path: Path) -> None:
+    path = tmp_path / "independent.sqlite3"
+    event = sample_gateway_event("offline-proof")
+    GatewayEventSpool(str(path)).enqueue(event)
+    restarted = GatewayEventSpool(str(path))
+    assert restarted.pending() == [event]

@@ -172,3 +172,14 @@ def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None
     assert filtered.status_code == 200
     assert len(filtered.json()) == 1
     assert filtered.json()[0]["event_type"] == "network.suricata.alert"
+
+
+def test_sensor_event_ids_are_scoped_to_integration() -> None:
+    record = {"timestamp": "2026-01-01T12:00:00Z", "event_type": "alert", "community_id": "same-flow"}
+    assert normalize_suricata(record, "sensor-one").event_id != normalize_suricata(record, "sensor-two").event_id
+
+
+def test_sensor_batch_rejects_non_object_record() -> None:
+    import pytest
+    with pytest.raises(ValueError, match="JSON object"):
+        normalize_sensor_batch("zeek", [None], "sensor")
