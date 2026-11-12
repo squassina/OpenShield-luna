@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -10,6 +11,7 @@ from openshield.core.auth import (
     require_permissions,
 )
 from openshield.core.logging import configure_logging
+from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
@@ -25,9 +27,9 @@ app = FastAPI(
     description="Gateway-first network security and privacy intelligence node.",
 )
 
-registry = IntegrationRegistry()
-events: list[EventEnvelope] = []
-gateway_connections = GatewayConnectionRegistry()
+store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
+registry = IntegrationRegistry(store)
+gateway_connections = GatewayConnectionRegistry(store)
 adapters = {"openwrt": OpenWrtAdapter()}
 
 
@@ -38,10 +40,10 @@ def liveness() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 def readiness() -> dict[str, str]:
-    if not authentication_is_configured():
+    if not authentication_is_configured() or not store.is_ready():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication configuration is not ready",
+            detail="Authentication or database configuration is not ready",
         )
     return {"status": "ready"}
 
@@ -167,7 +169,10 @@ def ingest_event(
         raise HTTPException(status_code=400, detail="Unknown source integration")
     if integration.kind != event.source.kind:
         raise HTTPException(status_code=400, detail="Event source kind does not match integration")
-    events.append(event)
+    try:
+        store.insert_event(event)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "accepted", "event_id": event.event_id}
 
 
@@ -177,4 +182,4 @@ def ingest_event(
     dependencies=[Depends(require_permissions(Permission.EVENTS_READ))],
 )
 def list_events() -> list[dict[str, object]]:
-    return [event.model_dump(mode="json") for event in events]
+    return [event.model_dump(mode="json") for event in store.list_events()]
