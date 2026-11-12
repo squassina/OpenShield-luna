@@ -13,10 +13,12 @@ class GatewayConnectionRegistry:
         self._store = store
         self._connections: dict[str, GatewayConnection] = {}
 
-    def connect(self, request: GatewayConnectRequest) -> GatewayConnection:
+    def connect(
+        self, request: GatewayConnectRequest, actor_id: str | None = None
+    ) -> GatewayConnection:
         connection = GatewayConnection.create(request)
         if self._store is not None:
-            self._store.connect_gateway(connection)
+            self._store.connect_gateway(connection, actor_id)
         else:
             self._connections[connection.gateway_id] = connection
         return connection
