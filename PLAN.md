@@ -605,3 +605,20 @@ Remaining:
 - Durable audit records are not implemented yet.
 - Formal versioned database migrations, backup/restore automation, pooling, and production hardening remain pending.
 - Local tests must run through Docker Compose so the PostgreSQL dependency is available.
+
+
+## P0 implementation status — durable audit trail
+
+The PostgreSQL audit log now records security-relevant successful operations and gateway source authorization failures:
+
+- `integration.registered`: actor, integration ID, kind, and declared capabilities.
+- `gateway.connected`: actor/gateway ID, connector version, and accepted capabilities.
+- `event.ingested`: actor, event ID, event type, severity, and source integration ID.
+- `authorization.denied`: gateway source-ID mismatch attempts.
+- State changes and their corresponding audit records are written in the same database transaction.
+- Audit reads are exposed through `GET /api/v1/audit`, restricted to the admin role, with a bounded limit (1–500).
+- Audit records contain no raw API keys or OpenWrt credentials.
+
+Remaining audit hardening:
+- Invalid/missing API-key attempts are not persisted.
+- Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
