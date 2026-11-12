@@ -177,7 +177,8 @@ def test_gateway_cannot_spoof_another_integration_source() -> None:
         json=sample_event(),
     )
     assert response.status_code == 403
-
+    audit = client.get("/api/v1/audit", headers=headers()).json()
+    assert audit[0]["action"] == "authorization.denied"
 
 
 def gateway_connect_payload() -> dict[str, object]:
@@ -381,3 +382,40 @@ def test_duplicate_event_id_is_rejected() -> None:
     event = sample_event()
     assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 202
     assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 409
+
+
+
+def test_audit_records_registration_connection_and_event_ingestion() -> None:
+    register_gateway("test-gateway")
+    assert client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=gateway_connect_payload(),
+    ).status_code == 201
+    event = sample_event()
+    event["source"] = {"integration_id": "test-gateway", "kind": "openwrt"}
+    assert client.post(
+        "/api/v1/events",
+        headers=headers(GATEWAY_KEY),
+        json=event,
+    ).status_code == 202
+
+    records = client.get("/api/v1/audit", headers=headers()).json()
+    assert [record["action"] for record in records[:3]] == [
+        "event.ingested",
+        "gateway.connected",
+        "integration.registered",
+    ]
+    assert records[0]["actor_id"] == "test-gateway"
+    assert records[1]["actor_id"] == "test-gateway"
+    assert records[2]["actor_id"] == "test-admin"
+    assert "api_key" not in records[1]["details"]
+
+
+def test_audit_log_is_admin_only() -> None:
+    assert client.get("/api/v1/audit", headers=headers(READER_KEY)).status_code == 403
+
+
+def test_audit_limit_is_bounded() -> None:
+    response = client.get("/api/v1/audit?limit=501", headers=headers())
+    assert response.status_code == 422
