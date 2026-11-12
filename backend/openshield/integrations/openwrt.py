@@ -17,7 +17,7 @@ class OpenWrtAdapter:
     def _client(self, integration: Integration) -> OpenWrtRPCClient:
         base_url = integration.config.get("base_url")
         if not isinstance(base_url, str):
-            raise ValueError("OpenWrt integration requires a base_url")
+            raise TypeError("OpenWrt integration requires a string base_url")
         return OpenWrtRPCClient(
             base_url=base_url,
             username=os.getenv("OPENSHIELD_OPENWRT_USERNAME", ""),
