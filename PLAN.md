@@ -647,7 +647,7 @@ The nearby-host connector now uses a local SQLite outbox:
 - When the Node is unavailable, the connector continues local OpenWrt discovery/health polling and queues resulting events.
 - Node event ingestion is idempotent: duplicate event IDs return HTTP 202 with `status=duplicate`, so retries after a lost response are safe.
 - Queue capacity is bounded at 10,000 pending events; the connector refuses new events when full rather than discarding older pending events.
-- SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; a newly created spool directory uses mode 0700.
+- SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; the spool directory is enforced at mode 0700.
 - Docker Compose mounts a named volume at `/var/lib/openshield`, preserving the spool across connector container restarts.
 
 Configuration:
