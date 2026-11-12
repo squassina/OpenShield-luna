@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
+from openshield.integrations.models import Capability
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient, OpenWrtRPCError
 
 logger = logging.getLogger("openshield.gateway.agent")
@@ -132,8 +133,6 @@ def main() -> None:
             username=openwrt_username,
             password=openwrt_password,
         )
-        from openshield.integrations.models import Capability
-
         capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
 
     client = GatewayConnectorClient(
