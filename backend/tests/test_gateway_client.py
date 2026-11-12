@@ -71,7 +71,13 @@ def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.Mon
 
     client = FakeClient()
     sleeps = iter([None, None, KeyboardInterrupt])
-    monkeypatch.setattr(agent.time, "sleep", lambda _delay: next(sleeps))
+
+    def fake_sleep(_delay: float) -> None:
+        result = next(sleeps)
+        if result is KeyboardInterrupt:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", fake_sleep)
     with pytest.raises(KeyboardInterrupt):
         run_agent(client, heartbeat_interval=5)
 
