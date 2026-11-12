@@ -217,19 +217,19 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         start = rules.index(begin) if begin in rules else None
         finish = rules.index(end, start + 1) if start is not None and end in rules[start + 1:] else None
         preserved = rules[:start] + rules[finish + 1:] if start is not None and finish is not None else list(rules)
+        previous_managed = (
+            rules[start:finish + 1]
+            if start is not None and finish is not None else []
+        )
         managed_rules = [begin]
         for list_type, domain in sorted(desired):
             managed_rules.append(f"{'@@' if list_type == 'allow' else ''}||{domain}^")
         managed_rules.append(end)
         merged = preserved + managed_rules
-        previous_set = set(previous_managed if start is not None and finish is not None else [])
+        previous_set = set(previous_managed)
         managed_set = set(managed_rules)
         added = len((managed_set - previous_set) - {begin, end})
         removed = len((previous_set - managed_set) - {begin, end})
-        previous_managed = (
-            rules[start:finish + 1]
-            if start is not None and finish is not None else []
-        )
         _request(
             f"{base_url}/control/filtering/set_rules", method="POST",
             headers={**headers, "Content-Type": "application/json"},
