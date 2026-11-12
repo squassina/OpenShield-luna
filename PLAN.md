@@ -199,12 +199,12 @@ Use a queue or broker only when justified by measured reliability, throughput, o
 **Gateway side**
 - Gateway Connector.
 - OpenWrt / firewall4 / nftables adapter as the initial target.
-- Authenticated Node communication using the versioned `openshield.gateway.v1` connector contract.
-- Gateway-scoped API key identity binding, read-only capability advertisement, and heartbeat presence.
+- Unauthenticated residential Node/connector communication using the versioned `openshield.gateway.v1` contract; restrict API access to the trusted home LAN.
+- Stable local gateway identity, read-only capability advertisement, automatic first-connect registration, and heartbeat presence.
 - Minimal local state and safe behavior when disconnected.
 
 **OpenShield Node**
-- API and authentication / authorization.
+- Residential API without user accounts or API credentials; business authentication and authorization are deferred.
 - Integration Registry and Adapter SDK.
 - Discovery and configuration service.
 - Event ingestion and normalization.
@@ -305,7 +305,7 @@ The AI Orchestrator must:
 Scope:
 - Repository conventions and architecture documentation.
 - Docker Compose development environment.
-- Authentication and RBAC foundation.
+- Trusted-LAN residential API and automatic gateway enrollment.
 - Gateway Connector protocol.
 - Initial OpenWrt adapter.
 - Integration Registry and Adapter SDK.
@@ -497,7 +497,7 @@ Recommended sequence:
 ### P0 Definition of Done
 
 - Clean deployment from documented instructions.
-- Secure and authenticated gateway connection using the versioned connector protocol.
+- Gateway connection using the versioned connector protocol on a trusted local network.
 - Capability discovery and manual fallback work.
 - At least one real event is ingested and normalized.
 - Event provenance is retained.
@@ -537,7 +537,7 @@ The first release should optimize for trust, safety, clarity, and a complete wor
 
 ## P0 implementation status — OpenWrt read-only integration
 
-Current increment adds an authenticated, read-only OpenWrt rpcd/ubus client used by the nearby-host Gateway Connector (not by the Node):
+Current increment adds a read-only OpenWrt rpcd/ubus client used by the nearby-host Gateway Connector (not by the Node). OpenWrt's own RPC session login remains enabled; OpenShield API authentication is disabled in residential mode:
 
 - Session login followed by `system.board` and `network.interface.dump`.
 - Discovery returns normalized board identity and interface metadata.
@@ -553,12 +553,12 @@ Environment:
 - `OPENSHIELD_OPENWRT_URL`
 - `OPENSHIELD_OPENWRT_USERNAME`
 - `OPENSHIELD_OPENWRT_PASSWORD`
-- `OPENSHIELD_INTEGRATION_ID` (must equal both the gateway ID/API key ID and the registered integration ID)
+- Gateway integration ID defaults to `home-gateway` and is provisioned automatically by the Node on connector handshake.
 
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
 - Real OpenWrt hardware/version compatibility is not yet validated.
-- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node using the gateway-scoped API key.
+- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node without an OpenShield API key.
 - P0 remains incomplete until a real normalized gateway event is verified on OpenWrt hardware, durable audit/recovery requirements are addressed, and gateway independence is validated.
 
 
@@ -572,14 +572,14 @@ The nearby-host connector now uses the OpenWrt RPC client locally, keeping the N
 - After each successful heartbeat, the agent emits a `gateway.health` event.
 - RPC failures produce a bounded health event (`status=unavailable`, `reason=rpc_unavailable`) without forwarding exception text or credentials.
 - Events use `openshield.event.v1`, include UTC timestamps and UUID event IDs, and preserve the configured integration ID as source provenance.
-- The Node validates integration existence and kind, and binds gateway event source IDs to the authenticated gateway API key ID to prevent source spoofing.
+- The Node validates integration existence and kind. Residential mode trusts callers on the local network; source identity is provenance, not an authentication boundary.
 - The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
 
 Required connector variables:
 - `OPENSHIELD_OPENWRT_URL`
 - `OPENSHIELD_OPENWRT_USERNAME`
 - `OPENSHIELD_OPENWRT_PASSWORD`
-- `OPENSHIELD_INTEGRATION_ID`
+- `OPENSHIELD_GATEWAY_ID` (default `home-gateway`)
 
 The integration must be registered on the Node before event forwarding. Hardware validation is still pending.
 
@@ -593,7 +593,7 @@ PostgreSQL 16 is now the source of truth for the initial Node state:
 - Gateway connection records and heartbeat timestamps persist; the existing 90-second stale threshold is preserved.
 - Duplicate integration IDs and event IDs are rejected.
 - Schema creation is idempotent and performed automatically by the store.
-- Node readiness now checks both API-key configuration and database connectivity.
+- Node readiness checks PostgreSQL connectivity; no API-key configuration is required.
 - Docker Compose provides PostgreSQL with a named data volume; stopping the stack does not remove this volume.
 - The CI test service starts PostgreSQL and exercises persistence through a newly created store instance.
 
@@ -617,10 +617,10 @@ The PostgreSQL audit log now records security-relevant successful operations and
 - `authorization.denied`: gateway source-ID mismatch attempts.
 - State changes and their corresponding audit records are written in the same database transaction.
 - Audit reads are exposed through `GET /api/v1/audit`, restricted to the admin role, with a bounded limit (1–500).
-- Audit records contain no raw API keys or OpenWrt credentials.
+- Audit records contain no OpenWrt credentials. Residential API requests have no authenticated actor identity.
 
 Remaining audit hardening:
-- Invalid/missing API-key attempts are not persisted.
+- Authentication-failure auditing is deferred with authentication itself.
 - Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
 
 
@@ -676,6 +676,20 @@ P0 hardware acceptance remains pending until this runbook is executed on the tar
 
 ## P0 implementation checkpoint
 
-**Software scope: implemented and CI-validated.** The current branch covers authentication/RBAC, gateway handshake and identity binding, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, protected metrics, and durable connector-side event retry/recovery.
+**Software scope: implemented and CI-validated.** The current branch covers trusted-LAN residential API access, automatic gateway registration, gateway handshake and presence, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, metrics, and durable connector-side event retry/recovery.
 
 **Physical gateway acceptance: pending.** Run the hardware validation runbook against the target OpenWrt model/firmware before marking P0 fully accepted. CI cannot establish real rpcd ACL compatibility or prove that the user's gateway continues forwarding during a Node outage.
+
+
+## Residential deployment decision — current product stage
+
+The first product stage targets a single household and a trusted local network. OpenShield API authentication, user accounts, API keys, and RBAC are intentionally disabled. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
+
+This is a deployment simplification, not a claim that unauthenticated APIs are safe on untrusted networks. The Node API must remain reachable only from the trusted home LAN and must not be exposed directly to the Internet. OpenWrt's own RPC authentication remains enabled to protect router management access.
+
+Planned security evolution:
+1. **Home:** trusted-LAN access, no OpenShield API credentials or user management.
+2. **Business:** user/organization identity, gateway enrollment, roles, credential lifecycle, and stronger audit controls.
+3. **SaaS:** tenant isolation, organization administration, quotas, billing, and managed control plane.
+
+Business and SaaS authentication must be implemented and reviewed before those deployment profiles are enabled. Do not add dormant auth configuration requirements to the residential quick start.
