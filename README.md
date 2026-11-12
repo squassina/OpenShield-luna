@@ -40,11 +40,11 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
-- OpenWrt discovery and health checks use read-only ubus calls from the Node. Credentials are supplied only through OPENSHIELD_OPENWRT_USERNAME and OPENSHIELD_OPENWRT_PASSWORD; integration config rejects secret-like fields. The nearby-host gateway connector agent is not yet wired to collect/forward OpenWrt telemetry, and an on-device OpenWrt agent is not implemented.
+- OpenWrt discovery and health checks run through read-only ubus calls from the nearby-host gateway connector. The connector sends normalized discovery and health events to the Node using openshield.event.v1. Credentials are supplied only to the connector through environment variables; integration config rejects secret-like fields. An on-device OpenWrt agent is not implemented.
 - Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
-- No metrics exporter or real-hardware validation exists. Gateway connector reconnect remains implemented, but the agent does not yet collect or forward OpenWrt events.
+- No metrics exporter or real-hardware validation exists. The nearby-host connector now collects discovery/health data and forwards normalized events; broader OpenWrt event feeds remain pending.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
 ## Docker-first development
@@ -119,7 +119,7 @@ Missing or invalid credentials return `401`; valid credentials without the requi
 
 ## Gateway connector protocol v1
 
-A minimal outbound connector agent is included for deployment on a nearby Linux/Docker host. It uses the Python standard library, verifies TLS certificates by default, sends a versioned handshake, and maintains presence with bounded reconnect backoff. It does not yet query OpenWrt or collect real gateway events.
+A minimal outbound connector agent is included for deployment on a nearby Linux/Docker host. It uses the Python standard library, verifies TLS certificates by default, sends a versioned handshake, maintains presence with bounded reconnect backoff, queries OpenWrt through read-only ubus RPC, and forwards normalized discovery/health events.
 
 Configure `OPENSHIELD_GATEWAY_ID` to match the gateway API key record's `key_id`, and set `OPENSHIELD_GATEWAY_API_KEY` to the raw key. Start the optional connector profile:
 
@@ -157,14 +157,9 @@ curl -X POST http://localhost:8000/api/v1/integrations \
   -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway","config":{"base_url":"https://192.0.2.1"}}'
 ```
 
-Set OPENSHIELD_OPENWRT_USERNAME and OPENSHIELD_OPENWRT_PASSWORD in the Node deployment environment. The account should have only the ubus permissions needed for session.login, system.board, and network.interface.dump. Never put passwords or tokens in integration config; the API rejects secret-like config keys.
+Set OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, OPENSHIELD_OPENWRT_PASSWORD, and OPENSHIELD_INTEGRATION_ID for the gateway connector service. Register that integration ID in the Node first. The account should have only the ubus permissions needed for session.login, system.board, and network.interface.dump. Never put passwords or tokens in integration config; the API rejects secret-like config keys.
 
-Use the authenticated read-only endpoints:
-
-- GET /api/v1/integrations/openwrt-lab/discover — board identity and interface metadata.
-- GET /api/v1/integrations/openwrt-lab/health-check — reachability and basic device identity.
-
-The client verifies TLS certificates by default, limits requests to 5 seconds and response bodies to 1 MiB, and does not expose credentials in error messages. For HTTP-only OpenWrt management, isolate the management network; HTTP does not protect credentials in transit. No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
+The connector performs discovery at startup and sends a gateway.discovery event. It sends gateway.health events after each heartbeat. These events are ingested through the authenticated gateway API key and retain the registered integration ID as source provenance. The client verifies TLS certificates by default, limits RPC requests to 5 seconds and response bodies to 1 MiB, and does not expose credentials in error messages. For HTTP-only OpenWrt management, isolate the management network; HTTP does not protect credentials in transit. No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
 ## API quick start
 
 Register an OpenWrt integration (requires `integrations:write`):
@@ -199,13 +194,13 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Repository baseline and docs | In progress |
 | Node API and health checks | Implemented |
 | Integration registry and capability model | Implemented (in-memory) |
-| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (read-only; mocked tests, hardware pending) |
+| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; mocked tests, hardware pending) |
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (in-memory) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
 | Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; in-memory) |
-| Nearby-host connector agent with reconnecting HTTP client | Implemented (not yet wired to OpenWrt telemetry/event forwarding) |
+| Nearby-host connector agent with reconnecting HTTP client and discovery/health event forwarding | Implemented (mocked transport; hardware pending) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
 | Durable persistence and audit | Pending |
