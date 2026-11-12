@@ -7,6 +7,7 @@ from uuid import uuid4
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
 from openshield.integrations.models import Capability
+from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient, OpenWrtRPCError
 
 logger = logging.getLogger("openshield.gateway.agent")
@@ -31,11 +32,46 @@ def _event(
     )
 
 
+def _flush_spool(
+    client: GatewayConnectorClient,
+    spool: GatewayEventSpool,
+) -> bool:
+    for event in spool.pending():
+        try:
+            client.ingest_event(event)
+        except GatewayTransportError as exc:
+            logger.warning("Gateway event delivery deferred: %s", exc)
+            return False
+        spool.acknowledge(event.event_id)
+    return True
+
+
+def _deliver_event(
+    client: GatewayConnectorClient,
+    event: EventEnvelope,
+    spool: GatewayEventSpool | None,
+) -> bool:
+    if spool is None:
+        try:
+            client.ingest_event(event)
+        except GatewayTransportError as exc:
+            logger.warning("Gateway event delivery failed: %s", exc)
+            return False
+        return True
+    try:
+        spool.enqueue(event)
+    except SpoolFullError as exc:
+        logger.error("Gateway event spool is full: %s", exc)
+        return False
+    return _flush_spool(client, spool)
+
+
 def run_agent(
     client: GatewayConnectorClient,
     heartbeat_interval: float = 30.0,
     openwrt_client: OpenWrtRPCClient | None = None,
     integration_id: str | None = None,
+    spool: GatewayEventSpool | None = None,
 ) -> None:
     if not 5 <= heartbeat_interval <= 60:
         raise ValueError("Heartbeat interval must be between 5 and 60 seconds")
@@ -54,46 +90,48 @@ def run_agent(
             retry_delay = min(retry_delay * 2, 60.0)
             continue
 
+        if spool is not None:
+            _flush_spool(client, spool)
+
         if openwrt_client is not None and integration_id is not None:
             try:
                 discovery = openwrt_client.discover()
-                client.ingest_event(
-                    _event(integration_id, "gateway.discovery", discovery)
+                _deliver_event(
+                    client,
+                    _event(integration_id, "gateway.discovery", discovery),
+                    spool,
                 )
             except OpenWrtRPCError as exc:
                 logger.warning("OpenWrt discovery failed: %s", exc)
-            except GatewayTransportError as exc:
-                logger.warning("Unable to send gateway discovery to Node: %s", exc)
-                time.sleep(retry_delay)
-                retry_delay = min(retry_delay * 2, 60.0)
-                continue
 
         while True:
             time.sleep(heartbeat_interval)
             try:
                 client.heartbeat()
+                if spool is not None:
+                    _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:
                     health = openwrt_client.health_check()
-                    client.ingest_event(
-                        _event(integration_id, "gateway.health", health)
+                    _deliver_event(
+                        client,
+                        _event(integration_id, "gateway.health", health),
+                        spool,
                     )
             except OpenWrtRPCError as exc:
                 logger.warning("OpenWrt health check failed: %s", exc)
                 if integration_id is not None:
-                    try:
-                        client.ingest_event(
-                            _event(
-                                integration_id,
-                                "gateway.health",
-                                {"status": "unavailable", "reason": "rpc_unavailable"},
-                                Severity.MEDIUM,
-                            )
-                        )
-                    except GatewayTransportError as transport_exc:
-                        logger.warning("Unable to send gateway health event: %s", transport_exc)
-                        break
+                    _deliver_event(
+                        client,
+                        _event(
+                            integration_id,
+                            "gateway.health",
+                            {"status": "unavailable", "reason": "rpc_unavailable"},
+                            Severity.MEDIUM,
+                        ),
+                        spool,
+                    )
             except GatewayTransportError as exc:
-                logger.warning("Gateway heartbeat or event delivery failed; reconnecting: %s", exc)
+                logger.warning("Gateway heartbeat failed; reconnecting: %s", exc)
                 break
 
 
@@ -139,6 +177,12 @@ def main() -> None:
         )
         capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
 
+    spool = GatewayEventSpool(
+        os.getenv(
+            "OPENSHIELD_GATEWAY_SPOOL_PATH",
+            "/var/lib/openshield/gateway-spool.sqlite3",
+        )
+    )
     client = GatewayConnectorClient(
         node_url=node_url,
         gateway_id=gateway_id,
@@ -152,6 +196,7 @@ def main() -> None:
             heartbeat_interval=interval,
             openwrt_client=openwrt_client,
             integration_id=integration_id or None,
+            spool=spool,
         )
     except KeyboardInterrupt:
         logger.info("Gateway connector stopped")
