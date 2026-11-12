@@ -130,7 +130,7 @@ docker compose --profile gateway up --build -d openshield-node openshield-gatewa
 The connector has no dependency on Node health and never sits in the packet-forwarding path. If the Node is unavailable, it retries; gateway traffic forwarding remains independent.
 
 
-A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities (currently none, until a real OpenWrt data adapter is connected):
+A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities (discover and health_check when OpenWrt RPC settings are configured; otherwise none):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/gateway/connect \\
@@ -144,22 +144,23 @@ curl -X POST http://localhost:8000/api/v1/gateway/heartbeat \\
   -d '{"protocol_version":"openshield.gateway.v1"}'
 ```
 
-The protocol currently permits only read-only capability declarations (`discover`, `health_check`, and `read_events`); configuration writes and action execution are rejected. The bundled agent advertises no integration capabilities yet because it does not collect gateway telemetry. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. It is a protocol/API foundation, not yet an installable OpenWrt-side daemon; gateway forwarding remains independent of the Node.
+The protocol currently permits only read-only capability declarations (`discover`, `health_check`, and `read_events`); configuration writes and action execution are rejected. The bundled nearby-host agent advertises `discover` and `health_check` only when configured with OpenWrt RPC credentials; it emits discovery and health events, not a full firewall/network event feed. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. The agent is not yet installable as an on-device OpenWrt daemon; gateway forwarding remains independent of the Node.
 
 ## OpenWrt read-only discovery
 
-Register the integration with its management URL (do not include credentials):
+Register the integration in the Node first. Keep credentials out of integration config:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/integrations \
   -H "Authorization: Bearer $OPENSHIELD_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway","config":{"base_url":"https://192.0.2.1"}}'
+  -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway"}'
 ```
 
-Set OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, OPENSHIELD_OPENWRT_PASSWORD, and OPENSHIELD_INTEGRATION_ID for the gateway connector service. Register that integration ID in the Node first. The account should have only the ubus permissions needed for session.login, system.board, and network.interface.dump. Never put passwords or tokens in integration config; the API rejects secret-like config keys.
+Set OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, OPENSHIELD_OPENWRT_PASSWORD, and OPENSHIELD_INTEGRATION_ID for the gateway connector service. OPENSHIELD_INTEGRATION_ID must match the integration registered in the Node. The account should have only the ubus permissions needed for session.login, system.board, and network.interface.dump. Never put passwords or tokens in integration config; the API rejects secret-like config keys.
 
 The connector performs discovery at startup and sends a gateway.discovery event. It sends gateway.health events after each heartbeat. These events are ingested through the authenticated gateway API key and retain the registered integration ID as source provenance. The client verifies TLS certificates by default, limits RPC requests to 5 seconds and response bodies to 1 MiB, and does not expose credentials in error messages. For HTTP-only OpenWrt management, isolate the management network; HTTP does not protect credentials in transit. No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
+
 ## API quick start
 
 Register an OpenWrt integration (requires `integrations:write`):
@@ -168,7 +169,7 @@ Register an OpenWrt integration (requires `integrations:write`):
 curl -X POST http://localhost:8000/api/v1/integrations \
   -H "Authorization: Bearer $OPENSHIELD_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway","config":{"base_url":"https://192.0.2.1"}}'
+  -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway"}'
 ```
 
 List integrations (requires `integrations:read`):
