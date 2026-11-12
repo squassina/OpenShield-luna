@@ -82,7 +82,12 @@ def test_protected_endpoint_requires_bearer_key() -> None:
 
 
 def test_invalid_api_key_is_rejected() -> None:
-    response = client.get("/api/v1/integrations", headers=headers("invalid"))
+    response = client.get("/api/v1/integrations", headers=headers("x" * 64))
+    assert response.status_code == 401
+
+
+def test_short_api_key_is_rejected() -> None:
+    response = client.get("/api/v1/integrations", headers=headers("short"))
     assert response.status_code == 401
 
 
@@ -106,6 +111,27 @@ def test_reader_can_read_but_cannot_register() -> None:
         },
     )
     assert response.status_code == 403
+
+
+def test_operator_can_ingest_but_cannot_manage_integrations() -> None:
+    response = client.post(
+        "/api/v1/integrations",
+        headers=headers(OPERATOR_KEY),
+        json={
+            "integration_id": "router-lab",
+            "kind": "openwrt",
+            "display_name": "Lab router",
+        },
+    )
+    assert response.status_code == 403
+
+    register_gateway()
+    response = client.post(
+        "/api/v1/events",
+        headers=headers(OPERATOR_KEY),
+        json=sample_event(),
+    )
+    assert response.status_code == 202
 
 
 def test_gateway_can_ingest_but_cannot_read_events() -> None:
