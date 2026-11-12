@@ -14,7 +14,6 @@ from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatReq
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
-from openshield.integrations.openwrt_rpc import OpenWrtRPCError
 from openshield.integrations.registry import IntegrationRegistry
 
 configure_logging()
@@ -82,36 +81,6 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
     return adapters[item.kind].probe(item)
-
-    
-@app.get(
-    "/api/v1/integrations/{integration_id}/discover",
-    tags=["integrations"],
-    dependencies=[Depends(require_permissions(Permission.INTEGRATIONS_READ))],
-)
-def discover_integration(integration_id: str) -> dict[str, object]:
-    item = registry.get(integration_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Integration not found")
-    try:
-        return adapters[item.kind].discover(item)
-    except (OpenWrtRPCError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@app.get(
-    "/api/v1/integrations/{integration_id}/health-check",
-    tags=["integrations"],
-    dependencies=[Depends(require_permissions(Permission.INTEGRATIONS_READ))],
-)
-def check_integration_health(integration_id: str) -> dict[str, object]:
-    item = registry.get(integration_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Integration not found")
-    try:
-        return adapters[item.kind].health_check(item)
-    except (OpenWrtRPCError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.post(
