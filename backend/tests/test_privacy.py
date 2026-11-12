@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
+from openshield.integrations.models import Integration
 from openshield.privacy.dns import classify_domain, normalize_dns_batch, normalize_domain
+from openshield.privacy.providers import fetch_dns_records
 
 client = TestClient(app)
 
@@ -160,3 +163,90 @@ def test_privacy_source_health_reports_no_data_and_recent_ingestion() -> None:
     source = client.get("/api/v1/privacy/sources").json()[0]
     assert source["status"] == "healthy"
     assert source["queries_seen"] == 1
+
+
+
+def test_provider_sync_endpoint_ingests_pulled_records() -> None:
+    register_dns()
+    record = {
+        "domain": "ads.doubleclick.net",
+        "client": "192.168.1.22",
+        "timestamp": datetime.now(UTC).isoformat(),
+        "status": "blocked",
+    }
+    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
+        response = client.post("/api/v1/privacy/sources/pihole-home/sync")
+    assert response.status_code == 202
+    assert response.json() == {"accepted": 1, "duplicates": 0, "received": 1}
+    assert client.get("/api/v1/privacy/analytics/domains").json()[0]["domain"] == "ads.doubleclick.net"
+
+
+def test_provider_sync_requires_registered_dns_source() -> None:
+    assert client.post("/api/v1/privacy/sources/missing/sync").status_code == 404
+
+
+def test_pihole_provider_client_authenticates_and_reads_query_log(monkeypatch) -> None:
+    monkeypatch.setenv("OPENSHIELD_PIHOLE_PASSWORD", "provider-secret")
+    responses = [
+        b'{"session":{"sid":"test-session"}}',
+        b'{"queries":[{"domain":"example.org","client":"192.168.1.2","timestamp":"2026-11-12T12:00:00Z","status":"FORWARDED","type":"A"}]}',
+        b'{}',
+    ]
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return FakeResponse(responses.pop(0))
+
+    with patch("openshield.privacy.providers.urlopen", side_effect=fake_urlopen):
+        records = fetch_dns_records(Integration(
+            integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+            capabilities=[], config={"base_url": "http://192.0.2.53"},
+        ))
+    assert len(records) == 1
+    assert records[0]["domain"] == "example.org"
+    assert requests[1].get_header("X-ftl-sid") == "test-session"
+    assert requests[2].get_method() == "DELETE"
+
+
+def test_adguard_provider_client_uses_basic_auth_and_maps_query_log(monkeypatch) -> None:
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_PASSWORD", "provider-secret")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return b'{"data":[{"question":{"host":"ads.doubleclick.net","type":"A"},"client":"192.168.1.3","time":"2026-11-12T12:00:00Z","reason":"FilteredBlackList","status":"NOERROR"}]}'
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        return FakeResponse()
+
+    with patch("openshield.privacy.providers.urlopen", side_effect=fake_urlopen):
+        records = fetch_dns_records(Integration(
+            integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+            capabilities=[], config={"base_url": "http://192.0.2.54"},
+        ))
+    assert records[0]["domain"] == "ads.doubleclick.net"
+    assert records[0]["status"] == "FilteredBlackList"
+    assert captured["request"].get_header("Authorization").startswith("Basic ")
