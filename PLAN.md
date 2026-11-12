@@ -622,3 +622,17 @@ The PostgreSQL audit log now records security-relevant successful operations and
 Remaining audit hardening:
 - Invalid/missing API-key attempts are not persisted.
 - Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
+
+
+## P0 implementation status — operational metrics
+
+The Node now exposes an admin-protected Prometheus text endpoint at `GET /metrics`:
+
+- HTTP request counters grouped by method, FastAPI route template, and status code.
+- Event ingestion, gateway connection, gateway heartbeat, and gateway event-source denial counters.
+- Labels avoid raw resource IDs and request values to limit cardinality.
+- Metrics are process-local and thread-safe; no new runtime dependency was added.
+
+Remaining:
+- Counters reset on process restart.
+- Histograms/latency, database gauges, scrape deployment, alerting, and long-term metrics storage remain pending.
