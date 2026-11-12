@@ -8,10 +8,7 @@ class DnsPrivacyAdapter:
         if kind not in {"pihole", "adguard"}:
             raise ValueError("Unsupported DNS privacy provider")
         self.kind = kind
-        self.capabilities = [
-            Capability.HEALTH_CHECK, Capability.READ_EVENTS,
-            Capability.READ_CONFIGURATION, Capability.WRITE_CONFIGURATION,
-        ]
+        self.capabilities = [Capability.HEALTH_CHECK, Capability.READ_EVENTS]
 
     def probe(self, integration: Integration) -> dict[str, object]:
         return {
