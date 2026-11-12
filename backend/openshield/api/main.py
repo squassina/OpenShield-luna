@@ -1,16 +1,9 @@
 import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
-from openshield.core.auth import (
-    Permission,
-    Principal,
-    Role,
-    authentication_is_configured,
-    require_permissions,
-)
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.storage import PostgresStore
@@ -56,6 +49,7 @@ async def collect_http_metrics(request: Request, call_next) -> Response:
     )
     return response
 
+
 store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
@@ -70,47 +64,28 @@ def liveness() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 def readiness() -> dict[str, str]:
-    if not authentication_is_configured() or not store.is_ready():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication or database configuration is not ready",
-        )
+    if not store.is_ready():
+        raise HTTPException(status_code=503, detail="Database is not ready")
     return {"status": "ready"}
 
 
-@app.post(
-    "/api/v1/integrations",
-    status_code=status.HTTP_201_CREATED,
-    tags=["integrations"],
-)
-def register_integration(
-    registration: IntegrationRegistration,
-    principal: Annotated[Principal, Depends(require_permissions(Permission.INTEGRATIONS_WRITE))],
-) -> dict[str, object]:
-    adapter = adapters.get(registration.kind)
-    if adapter is None:
+@app.post("/api/v1/integrations", status_code=201, tags=["integrations"])
+def register_integration(registration: IntegrationRegistration) -> dict[str, object]:
+    if registration.kind not in adapters:
         raise HTTPException(status_code=400, detail="Unsupported integration kind")
     try:
-        item = registry.register(registration, actor_id=principal.key_id)
+        item = registry.register(registration)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return item.model_dump(mode="json")
 
 
-@app.get(
-    "/api/v1/integrations",
-    tags=["integrations"],
-    dependencies=[Depends(require_permissions(Permission.INTEGRATIONS_READ))],
-)
+@app.get("/api/v1/integrations", tags=["integrations"])
 def list_integrations() -> list[dict[str, object]]:
     return [item.model_dump(mode="json") for item in registry.list_all()]
 
 
-@app.get(
-    "/api/v1/integrations/{integration_id}/probe",
-    tags=["integrations"],
-    dependencies=[Depends(require_permissions(Permission.INTEGRATIONS_READ))],
-)
+@app.get("/api/v1/integrations/{integration_id}/probe", tags=["integrations"])
 def probe_integration(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
     if item is None:
@@ -118,20 +93,25 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     return adapters[item.kind].probe(item)
 
 
-@app.post(
-    "/api/v1/gateway/connect",
-    status_code=status.HTTP_201_CREATED,
-    tags=["gateway"],
-)
-def connect_gateway(
-    request: GatewayConnectRequest,
-    principal: Annotated[
-        Principal, Depends(require_permissions(Permission.GATEWAY_CONNECT))
-    ],
-) -> dict[str, object]:
-    if principal.key_id != request.gateway_id:
-        raise HTTPException(status_code=403, detail="Gateway identity does not match API key")
-    connection = gateway_connections.connect(request, actor_id=principal.key_id)
+@app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
+def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
+    # Residential mode: first connection provisions the local gateway integration.
+    integration = registry.get(request.gateway_id)
+    if integration is None:
+        try:
+            registry.register(
+                IntegrationRegistration(
+                    integration_id=request.gateway_id,
+                    kind=request.gateway_type,
+                    display_name="Home gateway",
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    elif integration.kind != request.gateway_type:
+        raise HTTPException(status_code=409, detail="Gateway integration kind mismatch")
+
+    connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
     return {
         "status": "connected",
@@ -142,17 +122,9 @@ def connect_gateway(
     }
 
 
-@app.post(
-    "/api/v1/gateway/heartbeat",
-    tags=["gateway"],
-)
-def gateway_heartbeat(
-    request: GatewayHeartbeatRequest,
-    principal: Annotated[
-        Principal, Depends(require_permissions(Permission.GATEWAY_HEARTBEAT))
-    ],
-) -> dict[str, object]:
-    connection = gateway_connections.heartbeat(principal.key_id)
+@app.post("/api/v1/gateway/heartbeat", tags=["gateway"])
+def gateway_heartbeat(request: GatewayHeartbeatRequest) -> dict[str, object]:
+    connection = gateway_connections.heartbeat(request.gateway_id)
     if connection is None:
         raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
     metrics.increment("openshield_gateway_heartbeats_total")
@@ -163,20 +135,12 @@ def gateway_heartbeat(
     }
 
 
-@app.get(
-    "/api/v1/gateways",
-    tags=["gateway"],
-    dependencies=[Depends(require_permissions(Permission.GATEWAY_READ))],
-)
+@app.get("/api/v1/gateways", tags=["gateway"])
 def list_gateways() -> list[dict[str, object]]:
     return gateway_connections.list_status()
 
 
-@app.get(
-    "/api/v1/gateways/{gateway_id}",
-    tags=["gateway"],
-    dependencies=[Depends(require_permissions(Permission.GATEWAY_READ))],
-)
+@app.get("/api/v1/gateways/{gateway_id}", tags=["gateway"])
 def get_gateway_status(gateway_id: str) -> dict[str, object]:
     gateway = gateway_connections.get_status(gateway_id)
     if gateway is None:
@@ -184,69 +148,31 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
     return gateway
 
 
-@app.post(
-    "/api/v1/events",
-    status_code=status.HTTP_202_ACCEPTED,
-    tags=["events"],
-)
-def ingest_event(
-    event: EventEnvelope,
-    principal: Annotated[Principal, Depends(require_permissions(Permission.EVENTS_WRITE))],
-) -> dict[str, str]:
-    if principal.role == Role.GATEWAY and event.source.integration_id != principal.key_id:
-        metrics.increment("openshield_gateway_event_source_denials_total")
-        store.write_audit(
-            "authorization.denied",
-            principal.key_id,
-            event.source.integration_id,
-            {"reason": "gateway_event_source_mismatch"},
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Gateway cannot ingest events for another integration",
-        )
+@app.post("/api/v1/events", status_code=202, tags=["events"])
+def ingest_event(event: EventEnvelope) -> dict[str, str]:
     integration = registry.get(event.source.integration_id)
     if integration is None:
         raise HTTPException(status_code=400, detail="Unknown source integration")
     if integration.kind != event.source.kind:
         raise HTTPException(status_code=400, detail="Event source kind does not match integration")
-    inserted = store.insert_event(event, actor_id=principal.key_id)
+    inserted = store.insert_event(event)
     if inserted:
         metrics.increment("openshield_events_ingested_total")
-    return {
-        "status": "accepted" if inserted else "duplicate",
-        "event_id": event.event_id,
-    }
+    return {"status": "accepted" if inserted else "duplicate", "event_id": event.event_id}
 
 
-@app.get(
-    "/api/v1/events",
-    tags=["events"],
-    dependencies=[Depends(require_permissions(Permission.EVENTS_READ))],
-)
+@app.get("/api/v1/events", tags=["events"])
 def list_events() -> list[dict[str, object]]:
     return [event.model_dump(mode="json") for event in store.list_events()]
 
 
-
-@app.get(
-    "/api/v1/audit",
-    tags=["audit"],
-    dependencies=[Depends(require_permissions(Permission.AUDIT_READ))],
-)
+@app.get("/api/v1/audit", tags=["audit"])
 def list_audit_records(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict[str, object]]:
     return store.list_audit(limit)
 
 
-
-@app.get(
-    "/metrics",
-    response_class=PlainTextResponse,
-    tags=["metrics"],
-    dependencies=[Depends(require_permissions(Permission.METRICS_READ))],
-    include_in_schema=False,
-)
+@app.get("/metrics", response_class=PlainTextResponse, tags=["metrics"], include_in_schema=False)
 def prometheus_metrics() -> PlainTextResponse:
     return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
