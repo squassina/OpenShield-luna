@@ -1,10 +1,11 @@
 import ipaddress
 import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from openshield.core.logging import configure_logging
@@ -75,6 +76,16 @@ class PrivacyListEntry(BaseModel):
     list_type: str = Field(pattern=r"^(allow|block)$")
     domain: str = Field(min_length=3, max_length=253)
     comment: str = Field(default="", max_length=500)
+
+
+DASHBOARD_PATH = Path(__file__).resolve().parents[3] / "web" / "index.html"
+
+
+@app.get("/", response_class=FileResponse, include_in_schema=False)
+def dashboard() -> FileResponse:
+    if not DASHBOARD_PATH.is_file():
+        raise HTTPException(status_code=404, detail="Dashboard asset not found")
+    return FileResponse(DASHBOARD_PATH, media_type="text/html")
 
 
 @app.get("/health/live", tags=["health"])
