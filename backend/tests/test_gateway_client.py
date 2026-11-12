@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openshield.gateway.agent import run_agent
 from openshield.events.models import EventEnvelope, EventSource, Severity
+from openshield.gateway.agent import run_agent
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
 from openshield.integrations.models import Capability
 
@@ -139,8 +139,9 @@ def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pyt
     from openshield.gateway import agent
 
     class FakeNodeClient:
-        events: list[EventEnvelope] = []
-        heartbeat_calls = 0
+        def __init__(self) -> None:
+            self.events: list[EventEnvelope] = []
+            self.heartbeat_calls = 0
 
         def connect(self) -> dict[str, object]:
             return {"gateway_id": "test-gateway"}
