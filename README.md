@@ -113,7 +113,7 @@ curl http://localhost:8000/api/v1/integrations \
 | `admin` | Read/write integrations and events |
 | `operator` | Read integrations and read/ingest events |
 | `reader` | Read integrations and events |
-| `gateway` | Ingest events only |
+| `gateway` | Connect, send heartbeats, and ingest events for its own identity |
 
 Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints and makes readiness return `503`. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
 
