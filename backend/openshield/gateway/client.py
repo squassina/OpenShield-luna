@@ -3,7 +3,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest
+from openshield.integrations.models import Capability
 
 
 class GatewayTransportError(RuntimeError):
@@ -20,6 +22,7 @@ class GatewayConnectorClient:
         api_key: str,
         connector_version: str = "0.1.0",
         timeout: float = 10.0,
+        capabilities: list[Capability] | None = None,
     ) -> None:
         parsed = urlsplit(node_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -35,6 +38,7 @@ class GatewayConnectorClient:
         self._api_key = api_key
         self._connector_version = connector_version
         self._timeout = timeout
+        self._capabilities = capabilities or []
 
     def connect(self) -> dict[str, object]:
         request = GatewayConnectRequest(
@@ -42,7 +46,7 @@ class GatewayConnectorClient:
             gateway_id=self._gateway_id,
             gateway_type="openwrt",
             connector_version=self._connector_version,
-            capabilities=[],
+            capabilities=self._capabilities,
         )
         return self._post("/api/v1/gateway/connect", request.model_dump(mode="json"))
 
@@ -51,6 +55,9 @@ class GatewayConnectorClient:
             "/api/v1/gateway/heartbeat",
             {"protocol_version": "openshield.gateway.v1"},
         )
+
+    def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
+        return self._post("/api/v1/events", event.model_dump(mode="json"))
 
     def _post(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         request = Request(
