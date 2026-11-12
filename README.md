@@ -231,6 +231,8 @@ License not selected yet.
 
 ## P2 — Privacy Intelligence
 
+The interactive dashboard is served at `http://localhost:8000/`. It combines P1 network sensors/inventory with P2 DNS summary metrics, daily trends, top domains/clients, source health, and local allow/block list management. Provider list sync requires an explicit confirmation in the dashboard.
+
 P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. OpenShield can poll provider query-log APIs directly or accept bounded pushed JSON batches. Provider credentials are read from environment variables and never stored in integration configuration.
 
 ### Register DNS sources
