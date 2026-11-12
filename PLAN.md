@@ -199,7 +199,8 @@ Use a queue or broker only when justified by measured reliability, throughput, o
 **Gateway side**
 - Gateway Connector.
 - OpenWrt / firewall4 / nftables adapter as the initial target.
-- Authenticated Node communication.
+- Authenticated Node communication using the versioned `openshield.gateway.v1` connector contract.
+- Gateway-scoped API key identity binding, read-only capability advertisement, and heartbeat presence.
 - Minimal local state and safe behavior when disconnected.
 
 **OpenShield Node**
@@ -496,7 +497,7 @@ Recommended sequence:
 ### P0 Definition of Done
 
 - Clean deployment from documented instructions.
-- Secure and authenticated gateway connection.
+- Secure and authenticated gateway connection using the versioned connector protocol.
 - Capability discovery and manual fallback work.
 - At least one real event is ingested and normalized.
 - Event provenance is retained.
