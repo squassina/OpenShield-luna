@@ -35,5 +35,5 @@ P1 software is considered complete when CI passes and the documented API behavio
 
 ## P2 — tracked follow-up issues
 
-- [Issue #9 — Native Pi-hole/AdGuard API polling and provider list synchronization](https://github.com/squassina/OpenShield/issues/9): current adapters accept bounded pushed query-log batches. Provider API polling and provider-side list synchronization are not implemented; local lists do not enforce DNS policy.
+- [Issue #9 — High-volume DNS polling cursors and watermarks](https://github.com/squassina/OpenShield/issues/9): native Pi-hole v6/AdGuard Home polling and explicit, verified provider list synchronization are implemented. Polling currently reads the latest 500 records per invocation; durable cursors/watermarks remain open.
 - [Issue #10 — Maintain DNS tracker and suspicious-domain classifications](https://github.com/squassina/OpenShield/issues/10): current suffix rules are intentionally small heuristics, not a maintained threat-intelligence feed.
