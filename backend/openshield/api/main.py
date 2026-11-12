@@ -78,7 +78,7 @@ class PrivacyListEntry(BaseModel):
     comment: str = Field(default="", max_length=500)
 
 
-DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
+DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
 
 
 @app.get("/", response_class=FileResponse, include_in_schema=False)
