@@ -43,7 +43,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - OpenWrt discovery and health checks run through read-only ubus calls from the nearby-host gateway connector. The connector sends normalized discovery and health events to the Node using openshield.event.v1. Credentials are supplied only to the connector through environment variables; integration config rejects secret-like fields. An on-device OpenWrt agent is not implemented.
 - Gateway, integration, and event state is persisted in PostgreSQL; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - PostgreSQL persistence is implemented with idempotent schema creation; formal versioned migrations and backup/restore automation remain pending.
-- Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
+- Durable audit records cover integration registration, gateway connection, event ingestion, and gateway event-source spoof attempts. API-key authentication failures are not yet persisted; retention, tamper-evidence, and export controls remain pending.
 - No metrics exporter or real-hardware validation exists. The nearby-host connector now collects discovery/health data and forwards normalized events; broader OpenWrt event feeds remain pending.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
@@ -188,6 +188,15 @@ curl -X POST http://localhost:8000/api/v1/events \
   -d '{"schema_version":"openshield.event.v1","event_id":"evt-001","source":{"integration_id":"openwrt-lab","kind":"openwrt"},"event_type":"gateway.health","occurred_at":"2026-01-01T12:00:00Z","observed_at":"2026-01-01T12:00:01Z","severity":"info","payload":{"status":"reachable"}}'
 ```
 
+Read the recent audit trail (requires admin role / `audit:read`):
+
+```bash
+curl "http://localhost:8000/api/v1/audit?limit=100" \
+  -H "Authorization: Bearer $OPENSHIELD_API_KEY"
+```
+
+The audit trail records successful integration registrations, gateway connections, event ingestion, and gateway event-source authorization denials. It stores actor ID, action, target, timestamp, and minimized details; it never stores raw API keys or OpenWrt passwords. Invalid/missing API-key attempts, retention policies, tamper-evident chaining, and export are not implemented yet.
+
 ## P0 roadmap status
 
 | Workstream | Status |
@@ -204,7 +213,7 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Nearby-host connector agent with reconnecting HTTP client and discovery/health event forwarding | Implemented (mocked transport; hardware pending) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
-| PostgreSQL persistence for integrations, events, and gateway presence | Implemented; audit persistence pending |
+| PostgreSQL persistence for integrations, events, gateway presence, and initial audit records | Implemented; audit hardening/retention pending |
 | Structured logging | Implemented |
 | Metrics | Pending |
 | OpenWrt RPC credentials via deployment environment and config secret rejection | Implemented (static env secrets; rotation pending) |
