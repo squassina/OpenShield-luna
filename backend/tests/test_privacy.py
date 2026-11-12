@@ -70,7 +70,9 @@ def test_adguard_dns_ingestion_and_provider_probe() -> None:
     probe = client.get("/api/v1/integrations/adguard-home/probe")
     assert probe.status_code == 200
     assert probe.json()["kind"] == "adguard"
-    assert probe.json()["capabilities"] == ["health_check", "read_events"]
+    assert probe.json()["capabilities"] == [
+        "health_check", "read_events", "read_configuration", "write_configuration",
+    ]
     response = client.post("/api/v1/dns/adguard-home/queries", json=[{
         "time": datetime.now(UTC).isoformat(),
         "domain": "example.org",
@@ -250,3 +252,108 @@ def test_adguard_provider_client_uses_basic_auth_and_maps_query_log(monkeypatch)
     assert records[0]["domain"] == "ads.doubleclick.net"
     assert records[0]["status"] == "FilteredBlackList"
     assert captured["request"].get_header("Authorization").startswith("Basic ")
+
+
+
+def test_provider_list_sync_endpoint_is_explicit_and_audited() -> None:
+    register_dns()
+    client.post("/api/v1/privacy/lists", json={
+        "list_type": "block", "domain": "ads.doubleclick.net",
+    })
+    with patch("openshield.api.main.sync_provider_lists", return_value={
+        "provider": "pihole", "added": 1, "removed": 0,
+    }):
+        response = client.post("/api/v1/privacy/lists/pihole-home/sync")
+    assert response.status_code == 200
+    assert response.json()["entries"] == 1
+    assert response.json()["added"] == 1
+    audit = client.get("/api/v1/audit").json()
+    assert any(item["action"] == "privacy.provider_lists.synchronized" for item in audit)
+
+
+def test_pihole_list_sync_preserves_unmanaged_entries_and_verifies_changes(monkeypatch) -> None:
+    from openshield.privacy.providers import sync_provider_lists
+
+    monkeypatch.delenv("OPENSHIELD_PIHOLE_PASSWORD", raising=False)
+    responses = [
+        b'{"domains":[{"type":"deny","domain":"stale.example","comment":"OpenShield managed"},{"type":"deny","domain":"manual.example","comment":"User managed"}]}',
+        b'{}',
+        b'{}',
+        b'{"domains":[{"type":"allow","domain":"allowed.example","comment":"OpenShield managed"},{"type":"deny","domain":"manual.example","comment":"User managed"}]}',
+    ]
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return FakeResponse(responses.pop(0))
+
+    with patch("openshield.privacy.providers.urlopen", side_effect=fake_urlopen):
+        result = sync_provider_lists(Integration(
+            integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+            capabilities=[], config={"base_url": "http://192.0.2.53"},
+        ), [{"list_type": "allow", "domain": "allowed.example", "comment": ""}])
+    assert result == {"provider": "pihole", "added": 1, "removed": 1}
+    assert requests[1].get_method() == "POST"
+    assert requests[2].get_method() == "DELETE"
+    assert "manual.example" not in requests[2].full_url
+
+
+def test_adguard_list_sync_preserves_existing_rules_and_verifies(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy.providers import sync_provider_lists
+
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_USERNAME", raising=False)
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_PASSWORD", raising=False)
+    expected_rules = [
+        "||user.example^", "! OpenShield managed begin",
+        "@@||allowed.example^", "||blocked.example^", "! OpenShield managed end",
+    ]
+    responses = [
+        b'{"user_rules":["||user.example^"]}',
+        b'{}',
+        json.dumps({"user_rules": expected_rules}).encode(),
+    ]
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requests.append(request)
+        return FakeResponse(responses.pop(0))
+
+    with patch("openshield.privacy.providers.urlopen", side_effect=fake_urlopen):
+        result = sync_provider_lists(Integration(
+            integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+            capabilities=[], config={"base_url": "http://192.0.2.54"},
+        ), [
+            {"list_type": "block", "domain": "blocked.example", "comment": ""},
+            {"list_type": "allow", "domain": "allowed.example", "comment": ""},
+        ])
+    assert result == {"provider": "adguard", "added": 2, "removed": 0}
+    payload = json.loads(requests[1].data)
+    assert payload["rules"] == expected_rules
