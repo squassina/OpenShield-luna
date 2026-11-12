@@ -15,11 +15,10 @@ def make_client() -> GatewayConnectorClient:
     return GatewayConnectorClient(
         node_url="https://openshield.example",
         gateway_id="test-gateway",
-        api_key="g" * 64,
     )
 
 
-def test_connector_client_sends_authenticated_versioned_handshake() -> None:
+def test_connector_client_sends_versioned_handshake_without_credentials() -> None:
     response = MagicMock()
     response.__enter__.return_value.read.return_value = json.dumps(
         {"status": "connected", "gateway_id": "test-gateway"}
@@ -29,7 +28,7 @@ def test_connector_client_sends_authenticated_versioned_handshake() -> None:
 
     request = urlopen_mock.call_args.args[0]
     assert request.full_url == "https://openshield.example/api/v1/gateway/connect"
-    assert request.get_header("Authorization") == f"Bearer {'g' * 64}"
+    assert request.get_header("Authorization") is None
     payload = json.loads(request.data)
     assert payload["protocol_version"] == "openshield.gateway.v1"
     assert payload["capabilities"] == []
@@ -39,8 +38,6 @@ def test_connector_client_sends_authenticated_versioned_handshake() -> None:
 def test_connector_client_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError, match="absolute HTTP"):
         GatewayConnectorClient("openshield.example", "test-gateway", "g" * 64)
-    with pytest.raises(ValueError, match="32 characters"):
-        GatewayConnectorClient("http://localhost:8000", "test-gateway", "short")
     with pytest.raises(ValueError, match="credentials"):
         GatewayConnectorClient("https://user:pass@example.com", "test-gateway", "g" * 64)
 
@@ -102,7 +99,6 @@ def test_connector_client_advertises_only_configured_capabilities() -> None:
     client = GatewayConnectorClient(
         node_url="https://openshield.example",
         gateway_id="test-gateway",
-        api_key="g" * 64,
         capabilities=[Capability.DISCOVER, Capability.HEALTH_CHECK],
     )
     with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
@@ -132,7 +128,7 @@ def test_connector_client_posts_versioned_event_to_node() -> None:
 
     request = mocked.call_args.args[0]
     assert request.full_url == "https://openshield.example/api/v1/events"
-    assert request.get_header("Authorization") == f"Bearer {'g' * 64}"
+    assert request.get_header("Authorization") is None
     assert json.loads(request.data)["source"]["integration_id"] == "router-lab"
     assert result["status"] == "accepted"
 
