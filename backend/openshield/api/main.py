@@ -1,6 +1,10 @@
 from fastapi import Depends, FastAPI, HTTPException, status
 
-from openshield.core.auth import Permission, require_permissions
+from openshield.core.auth import (
+    Permission,
+    authentication_is_configured,
+    require_permissions,
+)
 from openshield.core.logging import configure_logging
 from openshield.events.models import EventEnvelope
 from openshield.integrations.models import IntegrationRegistration
@@ -27,6 +31,11 @@ def liveness() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 def readiness() -> dict[str, str]:
+    if not authentication_is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication configuration is not ready",
+        )
     return {"status": "ready"}
 
 
