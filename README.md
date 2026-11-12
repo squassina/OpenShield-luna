@@ -67,7 +67,7 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - Audit retention, tamper-evidence, and external immutable export remain pending.
 - Metrics are process-local and reset on restart.
 - The connector is a nearby-host Linux/Docker agent, not an on-device OpenWrt daemon.
-- Real OpenWrt hardware/firmware compatibility and forwarding-independence acceptance remain pending.
+- Physical OpenWrt hardware/firmware compatibility and forwarding-independence validation are deferred technical debt: [Issue #2](https://github.com/squassina/OpenShield/issues/2).
 
 ## Docker-first development
 
@@ -155,11 +155,11 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Node API and health checks | Implemented |
 | Integration registry and capability model | Implemented (PostgreSQL-backed) |
 | Automatic home gateway registration | Implemented |
-| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; hardware pending) |
+| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; physical validation tracked as technical debt #2) |
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
 | Residential API authentication | Disabled by product decision |
-| Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass (hardware pending) |
+| Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass |
 | PostgreSQL persistence and initial audit records | Implemented; audit hardening/retention pending |
 | Structured logging and Prometheus metrics | Implemented (process-local counters) |
 | On-device OpenWrt agent and secure bootstrap | Pending |
@@ -167,7 +167,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | SaaS multi-tenancy and billing | Future phase |
 | Docker-first runtime, lint, tests, and CI | Implemented |
 
-P0 software scope is implemented and CI-validated once the current change passes CI. Physical OpenWrt compatibility and forwarding-independence acceptance remain pending until the hardware runbook is executed.
+P0 software scope is complete and CI-validated. Physical OpenWrt compatibility and forwarding-independence validation are deferred to [technical debt issue #2](https://github.com/squassina/OpenShield/issues/2); this does not block the P0 software closeout.
 
 ## Security
 
