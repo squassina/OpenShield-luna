@@ -67,6 +67,7 @@ def test_adguard_dns_ingestion_and_provider_probe() -> None:
     probe = client.get("/api/v1/integrations/adguard-home/probe")
     assert probe.status_code == 200
     assert probe.json()["kind"] == "adguard"
+    assert probe.json()["capabilities"] == ["health_check", "read_events"]
     response = client.post("/api/v1/dns/adguard-home/queries", json=[{
         "time": datetime.now(UTC).isoformat(),
         "domain": "example.org",
