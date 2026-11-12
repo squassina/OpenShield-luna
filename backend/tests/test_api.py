@@ -44,12 +44,12 @@ def headers(key: str = ADMIN_KEY) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
-def register_gateway() -> None:
+def register_gateway(integration_id: str = "router-lab") -> None:
     response = client.post(
         "/api/v1/integrations",
         headers=headers(),
         json={
-            "integration_id": "router-lab",
+            "integration_id": integration_id,
             "kind": "openwrt",
             "display_name": "Lab router",
             "config": {"base_url": "https://192.0.2.1"},
@@ -152,16 +152,28 @@ def test_operator_can_ingest_but_cannot_manage_integrations() -> None:
     assert response.status_code == 202
 
 
-def test_gateway_can_ingest_but_cannot_read_events() -> None:
+def test_gateway_can_ingest_only_its_own_integration_events() -> None:
+    register_gateway("test-gateway")
+    event = sample_event()
+    event["source"] = {"integration_id": "test-gateway", "kind": "openwrt"}
+    response = client.post(
+        "/api/v1/events",
+        headers=headers(GATEWAY_KEY),
+        json=event,
+    )
+    assert response.status_code == 202
+
+    response = client.get("/api/v1/events", headers=headers(GATEWAY_KEY))
+    assert response.status_code == 403
+
+
+def test_gateway_cannot_spoof_another_integration_source() -> None:
     register_gateway()
     response = client.post(
         "/api/v1/events",
         headers=headers(GATEWAY_KEY),
         json=sample_event(),
     )
-    assert response.status_code == 202
-
-    response = client.get("/api/v1/events", headers=headers(GATEWAY_KEY))
     assert response.status_code == 403
 
 
