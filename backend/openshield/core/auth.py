@@ -81,6 +81,14 @@ def _load_api_keys() -> list[APIKeyRecord]:
     return records
 
 
+def authentication_is_configured() -> bool:
+    try:
+        _load_api_keys()
+    except AuthenticationConfigurationError:
+        return False
+    return True
+
+
 def require_permissions(*permissions: Permission) -> Callable:
     required = frozenset(permissions)
 
