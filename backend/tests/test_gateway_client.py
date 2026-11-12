@@ -50,3 +50,30 @@ def test_connector_client_surfaces_transport_failures() -> None:
     with patch("openshield.gateway.client.urlopen", side_effect=URLError("offline")):
         with pytest.raises(GatewayTransportError, match="Unable to reach"):
             make_client().heartbeat()
+
+
+def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openshield.gateway import agent
+
+    class FakeClient:
+        connect_calls = 0
+        heartbeat_calls = 0
+
+        def connect(self) -> dict[str, object]:
+            self.connect_calls += 1
+            if self.connect_calls == 1:
+                raise GatewayTransportError("offline")
+            return {"gateway_id": "test-gateway"}
+
+        def heartbeat(self) -> dict[str, object]:
+            self.heartbeat_calls += 1
+            raise GatewayTransportError("connection lost")
+
+    client = FakeClient()
+    sleeps = iter([None, None, KeyboardInterrupt])
+    monkeypatch.setattr(agent.time, "sleep", lambda _delay: next(sleeps))
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(client, heartbeat_interval=5)
+
+    assert client.connect_calls == 2
+    assert client.heartbeat_calls == 1
