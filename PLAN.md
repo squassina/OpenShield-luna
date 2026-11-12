@@ -550,8 +550,10 @@ Current increment adds an authenticated, read-only OpenWrt rpcd/ubus client used
 - No firewall, routing, wireless, or forwarding mutation is implemented.
 
 Environment:
+- `OPENSHIELD_OPENWRT_URL`
 - `OPENSHIELD_OPENWRT_USERNAME`
 - `OPENSHIELD_OPENWRT_PASSWORD`
+- `OPENSHIELD_INTEGRATION_ID`
 
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
