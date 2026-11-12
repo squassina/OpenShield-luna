@@ -210,12 +210,13 @@ def ingest_event(
         raise HTTPException(status_code=400, detail="Unknown source integration")
     if integration.kind != event.source.kind:
         raise HTTPException(status_code=400, detail="Event source kind does not match integration")
-    try:
-        store.insert_event(event, actor_id=principal.key_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    metrics.increment("openshield_events_ingested_total")
-    return {"status": "accepted", "event_id": event.event_id}
+    inserted = store.insert_event(event, actor_id=principal.key_id)
+    if inserted:
+        metrics.increment("openshield_events_ingested_total")
+    return {
+        "status": "accepted" if inserted else "duplicate",
+        "event_id": event.event_id,
+    }
 
 
 @app.get(
