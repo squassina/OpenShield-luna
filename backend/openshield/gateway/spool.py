@@ -20,8 +20,11 @@ class GatewayEventSpool:
         if max_events < 1:
             raise ValueError("Spool capacity must be positive")
         self._path = Path(path)
+        if not self._path.is_absolute():
+            raise ValueError("Gateway spool path must be absolute")
         self._max_events = max_events
         self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self._path.parent, 0o700)
         with self._connection() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=FULL")
