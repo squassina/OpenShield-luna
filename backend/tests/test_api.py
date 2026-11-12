@@ -201,5 +201,5 @@ def test_dashboard_is_served_from_node_root() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "Privacy Intelligence" in response.text
+    assert "DNS privacy intelligence" in response.text
     assert "Sync lists" in response.text
