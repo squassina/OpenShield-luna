@@ -1,8 +1,9 @@
 """Explicit, bounded event-retention maintenance command."""
-from datetime import UTC, datetime, timedelta
 import os
+from datetime import UTC, datetime, timedelta
 
 from openshield.core.storage import PostgresStore
+
 
 def run_retention() -> int:
     raw_days = os.getenv("OPENSHIELD_EVENT_RETENTION_DAYS", "0")
@@ -25,6 +26,7 @@ def run_retention() -> int:
             break
     print(f"Deleted {deleted} events received before {cutoff.isoformat()}.")
     return deleted
+
 
 if __name__ == "__main__":
     run_retention()
