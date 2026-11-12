@@ -21,7 +21,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - FastAPI Node API with liveness/readiness endpoints.
 - Integration registry with explicit capability declarations.
 - Manual integration registration through the API.
-- Initial OpenWrt adapter boundary with read-only probe.
+- Read-only OpenWrt rpcd/ubus client with authenticated session login, bounded HTTP timeout/response size, board/interface discovery, and health check.
 - Versioned event envelope (`openshield.event.v1`) with validation and provenance.
 - Event ingestion endpoint with in-process storage.
 - Structured application logging.
@@ -40,11 +40,11 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
-- OpenWrt adapter is a safe stub; the outbound connector agent can run on a nearby Linux/Docker host, and an on-device OpenWrt agent plus actual OpenWrt telemetry/configuration transport are not implemented yet. The agent advertises no OpenWrt capabilities until those operations are real.
+- OpenWrt discovery and health checks use read-only ubus calls from the Node. Credentials are supplied only through OPENSHIELD_OPENWRT_USERNAME and OPENSHIELD_OPENWRT_PASSWORD; integration config rejects secret-like fields. The nearby-host gateway connector agent is not yet wired to collect/forward OpenWrt telemetry, and an on-device OpenWrt agent is not implemented.
 - Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
-- No metrics exporter, reconnect loop, or hardware validation exists.
+- No metrics exporter or real-hardware validation exists. Gateway connector reconnect remains implemented, but the agent does not yet collect or forward OpenWrt events.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
 ## Docker-first development
@@ -146,6 +146,25 @@ curl -X POST http://localhost:8000/api/v1/gateway/heartbeat \\
 
 The protocol currently permits only read-only capability declarations (`discover`, `health_check`, and `read_events`); configuration writes and action execution are rejected. The bundled agent advertises no integration capabilities yet because it does not collect gateway telemetry. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. It is a protocol/API foundation, not yet an installable OpenWrt-side daemon; gateway forwarding remains independent of the Node.
 
+## OpenWrt read-only discovery
+
+Register the integration with its management URL (do not include credentials):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/integrations \
+  -H "Authorization: Bearer $OPENSHIELD_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway","config":{"base_url":"https://192.0.2.1"}}'
+```
+
+Set OPENSHIELD_OPENWRT_USERNAME and OPENSHIELD_OPENWRT_PASSWORD in the Node deployment environment. The account should have only the ubus permissions needed for session.login, system.board, and network.interface.dump. Never put passwords or tokens in integration config; the API rejects secret-like config keys.
+
+Use the authenticated read-only endpoints:
+
+- GET /api/v1/integrations/openwrt-lab/discover — board identity and interface metadata.
+- GET /api/v1/integrations/openwrt-lab/health-check — reachability and basic device identity.
+
+The client verifies TLS certificates by default, limits requests to 5 seconds and response bodies to 1 MiB, and does not expose credentials in error messages. For HTTP-only OpenWrt management, isolate the management network; HTTP does not protect credentials in transit. No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
 ## API quick start
 
 Register an OpenWrt integration (requires `integrations:write`):
@@ -180,19 +199,19 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Repository baseline and docs | In progress |
 | Node API and health checks | Implemented |
 | Integration registry and capability model | Implemented (in-memory) |
-| Initial OpenWrt adapter boundary | Implemented (read-only stub) |
+| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (read-only; mocked tests, hardware pending) |
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (in-memory) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
 | Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; in-memory) |
-| Nearby-host connector agent with reconnecting HTTP client | Implemented (no OpenWrt telemetry yet) |
+| Nearby-host connector agent with reconnecting HTTP client | Implemented (not yet wired to OpenWrt telemetry/event forwarding) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
 | Durable persistence and audit | Pending |
 | Structured logging | Implemented |
 | Metrics | Pending |
-| Secure connector bootstrap | Pending |
+| OpenWrt RPC credentials via deployment environment and config secret rejection | Implemented (static env secrets; rotation pending) |
 | Disconnect/recovery and real gateway validation | Pending |
 | Docker-first runtime, lint, and test environment | Implemented |
 | CI and automated tests | Implemented; runs in Docker |
