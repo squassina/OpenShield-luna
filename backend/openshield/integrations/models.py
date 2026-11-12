@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Capability(StrEnum):
@@ -22,6 +22,25 @@ class IntegrationRegistration(BaseModel):
     kind: str = Field(min_length=2, max_length=40)
     display_name: str = Field(min_length=1, max_length=120)
     config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("config")
+    @classmethod
+    def reject_secret_material(cls, config: dict[str, Any]) -> dict[str, Any]:
+        forbidden = ("password", "secret", "token", "credential", "private_key", "api_key")
+
+        def validate(value: Any) -> None:
+            if isinstance(value, dict):
+                for key, nested in value.items():
+                    normalized = str(key).lower().replace("-", "_")
+                    if any(part in normalized for part in forbidden):
+                        raise ValueError("Integration secrets must be supplied through secret environment variables")
+                    validate(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    validate(nested)
+
+        validate(config)
+        return config
 
 
 class Integration(BaseModel):
