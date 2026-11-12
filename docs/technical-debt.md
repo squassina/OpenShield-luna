@@ -37,3 +37,7 @@ P1 software is considered complete when CI passes and the documented API behavio
 
 - [Issue #9 — High-volume DNS polling cursors and watermarks](https://github.com/squassina/OpenShield/issues/9): native Pi-hole v6/AdGuard Home polling and explicit, verified provider list synchronization are implemented. Polling currently reads the latest 500 records per invocation; durable cursors/watermarks remain open.
 - [Issue #10 — Maintain DNS tracker and suspicious-domain classifications](https://github.com/squassina/OpenShield/issues/10): current suffix rules are intentionally small heuristics, not a maintained threat-intelligence feed.
+
+- [Issue #13 — Complete service configuration lifecycle and security](https://github.com/squassina/OpenShield/issues/13): enable/disable, secure credential storage/rotation, service diagnostics, API/UI security, and guided connector configuration. Router-specific UI is tracked in #15.
+- [Issue #14 — Automate DNS provider polling and dashboard refresh](https://github.com/squassina/OpenShield/issues/14): background polling, provider isolation, freshness/error state, manual sync, bounded pagination, and dashboard refresh.
+- [Issue #15 — Configure OpenWrt router from the web interface](https://github.com/squassina/OpenShield/issues/15): guided router address/RPC credentials, connectivity and ACL validation, router discovery, connector status, and safe read-only setup. Depends on secure secret handling in #13; physical validation remains #2.
