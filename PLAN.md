@@ -537,14 +537,14 @@ The first release should optimize for trust, safety, clarity, and a complete wor
 
 ## P0 implementation status — OpenWrt read-only integration
 
-Current increment adds an authenticated, read-only OpenWrt rpcd/ubus client to the Node:
+Current increment adds an authenticated, read-only OpenWrt rpcd/ubus client used by the nearby-host Gateway Connector (not by the Node):
 
 - Session login followed by `system.board` and `network.interface.dump`.
 - Discovery returns normalized board identity and interface metadata.
 - Health check verifies RPC reachability and returns basic device identity.
 - HTTP timeout is bounded to 5 seconds; response bodies are capped at 1 MiB.
 - TLS certificate verification uses Python's default HTTPS behavior.
-- Credentials are supplied through deployment environment variables, never integration configuration.
+- Credentials are supplied only to the connector through deployment environment variables, never integration configuration.
 - Integration configuration rejects secret-like field names to prevent accidental API disclosure.
 - The adapter advertises only `discover` and `health_check`; it does not claim event reading or enforcement.
 - No firewall, routing, wireless, or forwarding mutation is implemented.
@@ -556,5 +556,27 @@ Environment:
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
 - Real OpenWrt hardware/version compatibility is not yet validated.
-- The nearby-host connector agent is not yet wired to this RPC client or event forwarding.
-- P0 remains incomplete until a real normalized gateway event reaches the Node, provenance is verified, durable audit/recovery requirements are addressed, and gateway independence is validated.
+- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node using the gateway-scoped API key.
+- P0 remains incomplete until a real normalized gateway event is verified on OpenWrt hardware, durable audit/recovery requirements are addressed, and gateway independence is validated.
+
+
+## P0 implementation status — connector event forwarding
+
+The nearby-host connector now uses the OpenWrt RPC client locally, keeping the Node out of the gateway management path:
+
+- Optional connector configuration is all-or-nothing: OpenWrt URL, username, password, and registered integration ID.
+- The gateway handshake advertises only `discover` and `health_check` when this adapter is configured; without it, no capabilities are advertised.
+- After connection, the agent reads board/interface metadata and emits a `gateway.discovery` event.
+- After each successful heartbeat, the agent emits a `gateway.health` event.
+- RPC failures produce a bounded health event (`status=unavailable`, `reason=rpc_unavailable`) without forwarding exception text or credentials.
+- Events use `openshield.event.v1`, include UTC timestamps and UUID event IDs, and preserve the configured integration ID as source provenance.
+- The Node continues to validate integration existence and kind before accepting events.
+- The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
+
+Required connector variables:
+- `OPENSHIELD_OPENWRT_URL`
+- `OPENSHIELD_OPENWRT_USERNAME`
+- `OPENSHIELD_OPENWRT_PASSWORD`
+- `OPENSHIELD_INTEGRATION_ID`
+
+The integration must be registered on the Node before event forwarding. Hardware validation is still pending.
