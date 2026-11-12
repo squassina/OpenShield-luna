@@ -553,7 +553,7 @@ Environment:
 - `OPENSHIELD_OPENWRT_URL`
 - `OPENSHIELD_OPENWRT_USERNAME`
 - `OPENSHIELD_OPENWRT_PASSWORD`
-- `OPENSHIELD_INTEGRATION_ID`
+- `OPENSHIELD_INTEGRATION_ID` (must equal both the gateway ID/API key ID and the registered integration ID)
 
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
@@ -572,7 +572,7 @@ The nearby-host connector now uses the OpenWrt RPC client locally, keeping the N
 - After each successful heartbeat, the agent emits a `gateway.health` event.
 - RPC failures produce a bounded health event (`status=unavailable`, `reason=rpc_unavailable`) without forwarding exception text or credentials.
 - Events use `openshield.event.v1`, include UTC timestamps and UUID event IDs, and preserve the configured integration ID as source provenance.
-- The Node continues to validate integration existence and kind before accepting events.
+- The Node validates integration existence and kind, and binds gateway event source IDs to the authenticated gateway API key ID to prevent source spoofing.
 - The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
 
 Required connector variables:
