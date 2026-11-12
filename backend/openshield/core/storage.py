@@ -303,6 +303,23 @@ class PostgresStore:
             for row in rows
         }
 
+    def privacy_source_stats(self) -> dict[str, dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT payload #>> '{source,integration_id}', COUNT(*),
+                       MAX((payload->>'observed_at')::timestamptz)
+                FROM events
+                WHERE payload->>'event_type' = 'privacy.dns.query'
+                GROUP BY payload #>> '{source,integration_id}'
+                """
+            )
+            rows = cursor.fetchall()
+        return {
+            row[0]: {"queries_seen": row[1], "last_observed_at": row[2]}
+            for row in rows
+        }
+
     def privacy_domain_stats(self, days: int = 30, limit: int = 100) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
