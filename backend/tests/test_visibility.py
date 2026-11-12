@@ -84,7 +84,7 @@ def test_suricata_sensor_ingestion_is_idempotent_and_visible() -> None:
     assert first.json() == {"accepted": 1, "duplicates": 0, "received": 1}
     assert second.json() == {"accepted": 0, "duplicates": 1, "received": 1}
 
-    events = client.get("/api/v1/events?integration_id=sensor-suricata&severity=medium").json()
+    events = client.get("/api/v1/events?integration_id=sensor-suricata&severity=medium").json()["items"]
     assert len(events) == 1
     assert events[0]["event_type"] == "network.suricata.alert"
 
@@ -170,5 +170,16 @@ def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None
         "/api/v1/events?integration_id=sensor-suricata&event_type=network.suricata.alert&limit=1"
     )
     assert filtered.status_code == 200
-    assert len(filtered.json()) == 1
-    assert filtered.json()[0]["event_type"] == "network.suricata.alert"
+    assert len(filtered.json()["items"]) == 1
+    assert filtered.json()["items"][0]["event_type"] == "network.suricata.alert"
+
+
+def test_sensor_event_ids_are_scoped_to_integration() -> None:
+    record = {"timestamp": "2026-01-01T12:00:00Z", "event_type": "alert", "community_id": "same-flow"}
+    assert normalize_suricata(record, "sensor-one").event_id != normalize_suricata(record, "sensor-two").event_id
+
+
+def test_sensor_batch_rejects_non_object_record() -> None:
+    import pytest
+    with pytest.raises(TypeError, match="JSON object"):
+        normalize_sensor_batch("zeek", [None], "sensor")

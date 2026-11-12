@@ -58,7 +58,7 @@ def test_pihole_dns_queries_are_ingested_and_idempotent() -> None:
     assert first.status_code == second.status_code == 202
     assert first.json() == {"accepted": 1, "duplicates": 0, "received": 1}
     assert second.json() == {"accepted": 0, "duplicates": 1, "received": 1}
-    stored = client.get("/api/v1/events?event_type=privacy.dns.query").json()
+    stored = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert len(stored) == 1
     assert stored[0]["payload"]["category"] == "tracker"
     assert stored[0]["payload"]["status"] == "blocked"
@@ -370,7 +370,7 @@ def test_dns_integration_connection_test_does_not_ingest_records() -> None:
         "status": "connected", "integration_id": "pihole-home",
         "provider": "pihole", "records_available": 1, "imported": 0,
     }
-    assert client.get("/api/v1/events?event_type=privacy.dns.query").json() == []
+    assert client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"] == []
 
 
 def test_dns_integration_connection_test_reports_provider_failure() -> None:

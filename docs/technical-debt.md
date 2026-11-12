@@ -41,3 +41,11 @@ P1 software is considered complete when CI passes and the documented API behavio
 - [Issue #13 — Complete service configuration lifecycle and security](https://github.com/squassina/OpenShield/issues/13): enable/disable, secure credential storage/rotation, service diagnostics, API/UI security, and guided connector configuration. Router-specific UI is tracked in #15.
 - [Issue #14 — Automate DNS provider polling and dashboard refresh](https://github.com/squassina/OpenShield/issues/14): background polling, provider isolation, freshness/error state, manual sync, bounded pagination, and dashboard refresh.
 - [Issue #15 — Configure OpenWrt router from the web interface](https://github.com/squassina/OpenShield/issues/15): guided router address/RPC credentials, connectivity and ACL validation, router discovery, connector status, and safe read-only setup. Depends on secure secret handling in #13; physical validation remains #2.
+
+
+## Recently implemented on feature/technical-debt-2-4-6-13 (pending CI/merge)
+- Event exploration now has stable keyset cursor pagination using received_at and event_id.
+- Integration records support enabled/disabled state; the dashboard exposes the toggle.
+- Sensor event IDs are scoped by integration to prevent cross-sensor collisions; malformed non-object records are rejected.
+- Gateway outbox restart persistence is explicitly covered by a test; physical forwarding independence remains a hardware acceptance task.
+- Event retention has a bounded deletion primitive and an explicit CLI command. It is disabled by default; configure OPENSHIELD_EVENT_RETENTION_DAYS and run python -m openshield.maintenance in the backend environment.

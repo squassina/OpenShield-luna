@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -96,7 +97,7 @@ def test_integration_can_be_deleted_without_deleting_event_history() -> None:
     response = client.delete("/api/v1/integrations/router-lab")
     assert response.status_code == 204
     assert client.get("/api/v1/integrations/router-lab/probe").status_code == 404
-    assert len(client.get("/api/v1/events").json()) == 1
+    assert len(client.get("/api/v1/events").json()["items"]) == 1
     actions = [item["action"] for item in client.get("/api/v1/audit").json()]
     assert "integration.deleted" in actions
 
@@ -164,7 +165,7 @@ def test_gateway_rejects_unsupported_type() -> None:
 def test_ingest_event_preserves_source_provenance() -> None:
     register_integration()
     assert client.post("/api/v1/events", json=sample_event()).status_code == 202
-    stored = client.get("/api/v1/events").json()
+    stored = client.get("/api/v1/events").json()["items"]
     assert stored[0]["source"]["integration_id"] == "router-lab"
 
 
@@ -240,3 +241,52 @@ def test_dashboard_is_served_from_node_root() -> None:
     assert "text/html" in response.headers["content-type"]
     assert "DNS privacy intelligence" in response.text
     assert "Sync lists" in response.text
+
+
+def test_integration_can_be_disabled_and_reenabled() -> None:
+    register_integration()
+    response = client.patch("/api/v1/integrations/router-lab", json={"enabled": False})
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+    response = client.patch("/api/v1/integrations/router-lab", json={"enabled": True})
+    assert response.status_code == 200
+    assert response.json()["enabled"] is True
+
+
+def test_event_cursor_pagination_returns_no_duplicates() -> None:
+    register_integration()
+    for index in range(4):
+        event = sample_event(event_id=f"page-{index}")
+        event["occurred_at"] = f"2026-01-01T12:00:0{index}Z"
+        event["observed_at"] = f"2026-01-01T12:00:0{index}Z"
+        assert client.post("/api/v1/events", json=event).status_code == 202
+    first = client.get("/api/v1/events?limit=2").json()
+    assert len(first["items"]) == 2 and first["next_cursor"]
+    second = client.get("/api/v1/events?limit=2&cursor="+first["next_cursor"]).json()
+    ids = [item["event_id"] for item in first["items"] + second["items"]]
+    assert len(ids) == len(set(ids)) == 4
+    assert second["next_cursor"] is None
+
+
+def test_event_endpoint_rejects_invalid_cursor() -> None:
+    assert client.get("/api/v1/events?cursor=invalid").status_code == 422
+
+
+def test_disabled_sensor_rejects_ingestion() -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "sensor-disabled", "kind": "zeek", "display_name": "Disabled sensor",
+    })
+    assert response.status_code == 201
+    assert client.patch("/api/v1/integrations/sensor-disabled", json={"enabled": False}).status_code == 200
+    assert client.post("/api/v1/sensors/sensor-disabled/events", json=[{}]).status_code == 404
+
+
+def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() -> None:
+    from openshield.api import main
+    register_integration()
+    assert client.post("/api/v1/events", json=sample_event("retention-old")).status_code == 202
+    deleted = main.store.purge_events_before(
+        datetime.now(UTC) + timedelta(seconds=1), batch_size=1
+    )
+    assert deleted == 1
+    assert client.get("/api/v1/events").json()["items"] == []

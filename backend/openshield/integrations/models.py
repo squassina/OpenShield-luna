@@ -49,6 +49,7 @@ class Integration(BaseModel):
     display_name: str
     capabilities: list[Capability]
     config: dict[str, Any]
+    enabled: bool = True
     registered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -57,6 +58,7 @@ class IntegrationUpdate(BaseModel):
 
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     config: dict[str, Any] | None = None
+    enabled: bool | None = None
 
     @field_validator("config")
     @classmethod

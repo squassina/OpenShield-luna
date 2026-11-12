@@ -174,12 +174,13 @@ function renderIntegrations(items) {
   const root=$("integrations"); root.replaceChildren();
   if(!items.length){const p=document.createElement("p");p.className="empty";p.textContent="No integrations configured";root.append(p);return;}
   const t=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
-  ["Service","Type","ID","Endpoint","Capabilities","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
+  ["Service","Type","ID","Endpoint","Capabilities","State","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
   const thead=document.createElement("thead");thead.append(head);t.append(thead);
   items.forEach(item=>{
     const tr=document.createElement("tr");
-    [item.display_name,item.kind,item.integration_id,(item.config&&item.config.base_url)||"Push / connector",item.capabilities.join(", ")].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
+    [item.display_name,item.kind,item.integration_id,(item.config&&item.config.base_url)||"Push / connector",item.capabilities.join(", "),item.enabled===false?"Disabled":"Enabled"].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
     const actions=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    wrap.append(actionButton(item.enabled===false?"Enable":"Disable","",async()=>{try{await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id),{method:"PATCH",body:JSON.stringify({enabled:item.enabled===false})});await load();}catch(error){showNotice("Could not change integration state: "+error.message,true);}}));
     wrap.append(actionButton("Edit","",()=>editIntegration(item)));
     wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
     actions.append(wrap);tr.append(actions);body.append(tr);
