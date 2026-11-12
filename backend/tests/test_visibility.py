@@ -171,7 +171,7 @@ def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None
     )
     assert filtered.status_code == 200
     assert len(filtered.json()["items"]) == 1
-    assert filtered.json()[0]["event_type"] == "network.suricata.alert"
+    assert filtered.json()["items"][0]["event_type"] == "network.suricata.alert"
 
 
 def test_sensor_event_ids_are_scoped_to_integration() -> None:
