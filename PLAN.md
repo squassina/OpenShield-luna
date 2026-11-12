@@ -346,7 +346,7 @@ Scope:
 - Privacy reports and daily trends.
 - Provider ingestion freshness/health.
 
-**Implementation status:** API-first P2 slice implemented and CI-validated. Native polling fetches up to 500 latest provider records per invocation; idempotency handles overlap. Provider-side allow/block list synchronization and high-volume cursor/watermark pagination remain technical debt. Classification is heuristic, not a threat-intelligence verdict. The later P5 policy/response phase owns enforcement.
+**Implementation status:** API-first P2 slice implemented and CI-validated. Native polling fetches up to 500 latest provider records per invocation; idempotency handles overlap. High-volume cursor/watermark pagination remains technical debt. Provider list synchronization is explicit and verifies the resulting provider state. Classification is heuristic, not a threat-intelligence verdict. The later P5 policy/response phase owns enforcement.
 
 ### P3 — Threat Intelligence & Risk Engine
 
