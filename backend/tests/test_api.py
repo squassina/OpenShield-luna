@@ -70,9 +70,15 @@ def sample_event(event_id: str = "event-001") -> dict[str, object]:
     }
 
 
-def test_health_endpoints_remain_public() -> None:
+def test_health_endpoints_remain_public_but_readiness_requires_auth_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert client.get("/health/live").json() == {"status": "alive"}
     assert client.get("/health/ready").json() == {"status": "ready"}
+
+    monkeypatch.setenv("OPENSHIELD_API_KEYS", "")
+    assert client.get("/health/live").status_code == 200
+    assert client.get("/health/ready").status_code == 503
 
 
 def test_protected_endpoint_requires_bearer_key() -> None:
@@ -93,6 +99,17 @@ def test_short_api_key_is_rejected() -> None:
 
 def test_invalid_auth_configuration_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENSHIELD_API_KEYS", "not-json")
+    response = client.get("/api/v1/integrations", headers=headers())
+    assert response.status_code == 503
+
+
+def test_duplicate_key_ids_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    key_hash = hashlib.sha256(ADMIN_KEY.encode()).hexdigest()
+    records = [
+        {"key_id": "duplicate", "role": "admin", "key_hash": key_hash},
+        {"key_id": "duplicate", "role": "reader", "key_hash": hashlib.sha256(READER_KEY.encode()).hexdigest()},
+    ]
+    monkeypatch.setenv("OPENSHIELD_API_KEYS", json.dumps(records))
     response = client.get("/api/v1/integrations", headers=headers())
     assert response.status_code == 503
 
