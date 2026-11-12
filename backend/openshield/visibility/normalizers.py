@@ -1,7 +1,8 @@
-import hashlib
-import json
 from datetime import UTC, datetime
 from typing import Any
+
+import hashlib
+import json
 
 from openshield.events.models import EventEnvelope, EventSource, Severity
 
