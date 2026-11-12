@@ -23,7 +23,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Manual integration registration through the API.
 - Read-only OpenWrt rpcd/ubus client with authenticated session login, bounded HTTP timeout/response size, board/interface discovery, and health check.
 - Versioned event envelope (`openshield.event.v1`) with validation and provenance.
-- Event ingestion endpoint with in-process storage.
+- PostgreSQL-backed integration registry, gateway presence, and event ingestion.
 - Structured application logging.
 - Docker Compose development environment.
 - Dedicated Docker image target for tests and lint.
@@ -33,7 +33,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Role-based authorization for admin, operator, reader, and gateway principals.
 - Versioned gateway connector handshake (`openshield.gateway.v1`) authenticated with a gateway-scoped API key.
 - Gateway identity bound to the API key ID, read-only capability advertisement, and authenticated heartbeat.
-- In-memory gateway presence/status with a 90-second freshness window and admin-only status inspection.
+- Persistent gateway presence/status with a 90-second freshness window and admin-only status inspection.
 - Fail-closed behavior: protected endpoints return 503 when authentication configuration is missing or invalid.
 
 ### Deliberate P0 limitations
@@ -41,15 +41,15 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
 - OpenWrt discovery and health checks run through read-only ubus calls from the nearby-host gateway connector. The connector sends normalized discovery and health events to the Node using openshield.event.v1. Credentials are supplied only to the connector through environment variables; integration config rejects secret-like fields. An on-device OpenWrt agent is not implemented.
-- Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
-- Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
+- Gateway, integration, and event state is persisted in PostgreSQL; heartbeat freshness is evaluated when status is queried (90-second timeout).
+- PostgreSQL persistence is implemented with idempotent schema creation; formal versioned migrations and backup/restore automation remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
 - No metrics exporter or real-hardware validation exists. The nearby-host connector now collects discovery/health data and forwards normalized events; broader OpenWrt event feeds remain pending.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
 ## Docker-first development
 
-Docker Engine and the Docker Compose plugin are the only local runtime/test prerequisites. Python, Ruff, and Pytest do not need to be installed on the host.
+Docker Engine and the Docker Compose plugin are the only local runtime/test prerequisites. Compose starts PostgreSQL 16 with a named persistent volume; Python, Ruff, and Pytest do not need to be installed on the host.
 
 Create a local environment file and configure at least one API key hash before using protected API endpoints:
 
@@ -77,13 +77,13 @@ OpenAPI: http://localhost:8000/docs
 Liveness: http://localhost:8000/health/live  
 Readiness: http://localhost:8000/health/ready
 
-Stop the API without deleting persisted Docker data:
+Stop the API and database without deleting persisted Docker data:
 
 ```bash
 docker compose down
 ```
 
-Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the project dependencies from `backend/pyproject.toml`. Tests use `httpx2` with Starlette TestClient, and pytest treats all warnings as errors so deprecations cannot silently accumulate. Docker image installs explicitly acknowledge root execution to keep build logs clean; GitHub Actions uses checkout v5 (Node.js 24).
+Test and lint services use the `tools` profile and run on demand. The test service starts PostgreSQL as a dependency; lint does not. The API starts PostgreSQL automatically. The application image excludes development dependencies; the test/lint image installs the project dependencies from `backend/pyproject.toml`. Tests use `httpx2` with Starlette TestClient, and pytest treats all warnings as errors so deprecations cannot silently accumulate. Docker image installs explicitly acknowledge root execution to keep build logs clean; GitHub Actions uses checkout v5 (Node.js 24).
 
 ## API authentication and roles
 
@@ -115,7 +115,7 @@ curl http://localhost:8000/api/v1/integrations \
 | `reader` | Read integrations and events |
 | `gateway` | Connect, send heartbeats, and ingest events for its own identity |
 
-Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints and makes readiness return `503`. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
+Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints and makes readiness return `503`. Readiness also checks PostgreSQL connectivity. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
 
 ## Gateway connector protocol v1
 
@@ -194,17 +194,17 @@ curl -X POST http://localhost:8000/api/v1/events \
 |---|---|
 | Repository baseline and docs | In progress |
 | Node API and health checks | Implemented |
-| Integration registry and capability model | Implemented (in-memory) |
+| Integration registry and capability model | Implemented (PostgreSQL-backed) |
 | OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; mocked tests, hardware pending) |
 | Versioned event schema and normalizer | Implemented |
-| Event ingestion | Implemented (in-memory) |
+| Event ingestion | Implemented (PostgreSQL-backed; duplicate event IDs rejected) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
-| Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; in-memory) |
+| Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; PostgreSQL-backed presence) |
 | Nearby-host connector agent with reconnecting HTTP client and discovery/health event forwarding | Implemented (mocked transport; hardware pending) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
-| Durable persistence and audit | Pending |
+| PostgreSQL persistence for integrations, events, and gateway presence | Implemented; audit persistence pending |
 | Structured logging | Implemented |
 | Metrics | Pending |
 | OpenWrt RPC credentials via deployment environment and config secret rejection | Implemented (static env secrets; rotation pending) |
