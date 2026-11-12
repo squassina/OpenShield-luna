@@ -1,6 +1,6 @@
 """Explicit, bounded event-retention maintenance command."""
-import os
 from datetime import UTC, datetime, timedelta
+import os
 
 from openshield.core.storage import PostgresStore
 

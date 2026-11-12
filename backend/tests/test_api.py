@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -281,7 +282,6 @@ def test_disabled_sensor_rejects_ingestion() -> None:
 
 
 def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() -> None:
-    from datetime import UTC, datetime, timedelta
     from openshield.api import main
     register_integration()
     assert client.post("/api/v1/events", json=sample_event("retention-old")).status_code == 202
