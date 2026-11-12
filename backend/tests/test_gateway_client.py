@@ -133,3 +133,54 @@ def test_connector_client_posts_versioned_event_to_node() -> None:
     assert request.get_header("Authorization") == f"Bearer {'g' * 64}"
     assert json.loads(request.data)["source"]["integration_id"] == "router-lab"
     assert result["status"] == "accepted"
+
+
+def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openshield.gateway import agent
+
+    class FakeNodeClient:
+        events: list[EventEnvelope] = []
+        heartbeat_calls = 0
+
+        def connect(self) -> dict[str, object]:
+            return {"gateway_id": "test-gateway"}
+
+        def heartbeat(self) -> dict[str, object]:
+            self.heartbeat_calls += 1
+            return {"status": "acknowledged"}
+
+        def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
+            self.events.append(event)
+            return {"status": "accepted"}
+
+    class FakeOpenWrtClient:
+        def discover(self) -> dict[str, object]:
+            return {"board": {"hostname": "router"}, "interfaces": []}
+
+        def health_check(self) -> dict[str, object]:
+            return {"status": "reachable", "hostname": "router"}
+
+    node = FakeNodeClient()
+    sleeps = iter([None, KeyboardInterrupt])
+
+    def fake_sleep(_delay: float) -> None:
+        result = next(sleeps)
+        if result is KeyboardInterrupt:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", fake_sleep)
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(
+            node,
+            heartbeat_interval=5,
+            openwrt_client=FakeOpenWrtClient(),
+            integration_id="router-lab",
+        )
+
+    assert node.heartbeat_calls == 1
+    assert [event.event_type for event in node.events] == [
+        "gateway.discovery",
+        "gateway.health",
+    ]
+    assert all(event.schema_version == "openshield.event.v1" for event in node.events)
+    assert all(event.source.integration_id == "router-lab" for event in node.events)
