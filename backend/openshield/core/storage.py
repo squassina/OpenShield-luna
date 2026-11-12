@@ -168,6 +168,45 @@ class PostgresStore:
             rows = cursor.fetchall()
         return [Integration.model_validate(row[0]) for row in rows]
 
+    def update_integration(
+        self, integration: Integration, actor_id: str | None = None
+    ) -> Integration | None:
+        payload = integration.model_dump(mode="json")
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE integrations SET payload = %s
+                WHERE integration_id = %s
+                RETURNING integration_id
+                """,
+                (Jsonb(payload), integration.integration_id),
+            )
+            if cursor.fetchone() is None:
+                return None
+            self._insert_audit(
+                cursor, "integration.updated", actor_id, integration.integration_id,
+                {"kind": integration.kind},
+            )
+        return integration
+
+    def delete_integration(
+        self, integration_id: str, actor_id: str | None = None
+    ) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM integrations WHERE integration_id = %s RETURNING payload",
+                (integration_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            integration = Integration.model_validate(row[0])
+            self._insert_audit(
+                cursor, "integration.deleted", actor_id, integration_id,
+                {"kind": integration.kind, "history_preserved": True},
+            )
+        return True
+
     def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(

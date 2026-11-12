@@ -14,7 +14,7 @@ from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
-from openshield.integrations.models import IntegrationRegistration
+from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
@@ -116,6 +116,30 @@ def list_integrations() -> list[dict[str, object]]:
     return [item.model_dump(mode="json") for item in registry.list_all()]
 
 
+@app.patch("/api/v1/integrations/{integration_id}", tags=["integrations"])
+def update_integration(
+    integration_id: str, changes: IntegrationUpdate
+) -> dict[str, object]:
+    if not changes.model_fields_set:
+        raise HTTPException(status_code=422, detail="At least one field must be provided")
+    item = registry.update(integration_id, changes)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    return item.model_dump(mode="json")
+
+
+@app.delete(
+    "/api/v1/integrations/{integration_id}",
+    status_code=204,
+    response_class=Response,
+    tags=["integrations"],
+)
+def delete_integration(integration_id: str) -> Response:
+    if not registry.delete(integration_id):
+        raise HTTPException(status_code=404, detail="Integration not found")
+    return Response(status_code=204)
+
+
 @app.get("/api/v1/integrations/{integration_id}/probe", tags=["integrations"])
 def probe_integration(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
@@ -123,6 +147,34 @@ def probe_integration(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     return adapters[item.kind].probe(item)
 
+
+
+@app.post("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
+def test_integration_connection(integration_id: str) -> dict[str, object]:
+    """Test a DNS provider connection without persisting or importing query records."""
+    item = registry.get(integration_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Integration not found")
+    if item.kind in {"pihole", "adguard"}:
+        try:
+            records = fetch_dns_records(item)
+        except DnsProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": item.kind,
+            "records_available": len(records),
+            "imported": 0,
+        }
+    if item.kind in {"suricata", "zeek"}:
+        return {
+            "status": "configured",
+            "integration_id": integration_id,
+            "mode": "push",
+            "ingestion_endpoint": f"/api/v1/sensors/{integration_id}/events",
+        }
+    raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
 
 @app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
 def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:

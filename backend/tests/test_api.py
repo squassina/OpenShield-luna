@@ -69,6 +69,43 @@ def test_register_openwrt_and_probe_without_authentication() -> None:
     assert response.json()["capabilities"] == ["health_check", "discover"]
 
 
+def test_integration_can_be_updated_without_changing_identity_or_kind() -> None:
+    register_integration()
+    response = client.patch("/api/v1/integrations/router-lab", json={
+        "display_name": "Updated router",
+        "config": {"base_url": "http://192.0.2.2"},
+    })
+    assert response.status_code == 200
+    assert response.json()["integration_id"] == "router-lab"
+    assert response.json()["kind"] == "openwrt"
+    assert response.json()["display_name"] == "Updated router"
+    assert response.json()["config"]["base_url"] == "http://192.0.2.2"
+
+
+def test_integration_update_rejects_secrets() -> None:
+    register_integration()
+    response = client.patch("/api/v1/integrations/router-lab", json={
+        "config": {"password": "must-not-be-stored"},
+    })
+    assert response.status_code == 422
+
+
+def test_integration_can_be_deleted_without_deleting_event_history() -> None:
+    register_integration()
+    assert client.post("/api/v1/events", json=sample_event()).status_code == 202
+    response = client.delete("/api/v1/integrations/router-lab")
+    assert response.status_code == 204
+    assert client.get("/api/v1/integrations/router-lab/probe").status_code == 404
+    assert len(client.get("/api/v1/events").json()) == 1
+    actions = [item["action"] for item in client.get("/api/v1/audit").json()]
+    assert "integration.deleted" in actions
+
+
+def test_update_and_delete_unknown_integration_return_404() -> None:
+    assert client.patch("/api/v1/integrations/missing", json={"display_name": "Missing"}).status_code == 404
+    assert client.delete("/api/v1/integrations/missing").status_code == 404
+
+
 def test_duplicate_integration_is_rejected() -> None:
     register_integration()
     response = client.post("/api/v1/integrations", json={

@@ -49,6 +49,27 @@ class IntegrationRegistry:
             return self._store.get_integration(integration_id)
         return self._integrations.get(integration_id)
 
+    def update(
+        self, integration_id: str, changes: models.IntegrationUpdate,
+        actor_id: str | None = None,
+    ) -> models.Integration | None:
+        current = self.get(integration_id)
+        if current is None:
+            return None
+        updated = models.Integration.model_validate({
+            **current.model_dump(),
+            **changes.model_dump(exclude_unset=True),
+        })
+        if self._store is not None:
+            return self._store.update_integration(updated, actor_id)
+        self._integrations[integration_id] = updated
+        return updated
+
+    def delete(self, integration_id: str, actor_id: str | None = None) -> bool:
+        if self._store is not None:
+            return self._store.delete_integration(integration_id, actor_id)
+        return self._integrations.pop(integration_id, None) is not None
+
     def list_all(self) -> list[models.Integration]:
         if self._store is not None:
             return self._store.list_integrations()
