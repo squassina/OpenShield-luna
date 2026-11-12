@@ -148,6 +148,8 @@ The protocol currently permits only read-only capability declarations (`discover
 
 ## OpenWrt read-only discovery
 
+For physical gateway testing, outage/restart drills, and acceptance evidence, follow [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md).
+
 Register the integration in the Node first. Keep credentials out of integration config:
 
 ```bash
