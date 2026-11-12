@@ -6,8 +6,8 @@ from uuid import uuid4
 
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
-from openshield.integrations.models import Capability
 from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
+from openshield.integrations.models import Capability
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient, OpenWrtRPCError
 
 logger = logging.getLogger("openshield.gateway.agent")
@@ -46,6 +46,15 @@ def _flush_spool(
     return True
 
 
+def _queue_event(spool: GatewayEventSpool, event: EventEnvelope) -> bool:
+    try:
+        spool.enqueue(event)
+    except SpoolFullError as exc:
+        logger.error("Gateway event spool is full: %s", exc)
+        return False
+    return True
+
+
 def _deliver_event(
     client: GatewayConnectorClient,
     event: EventEnvelope,
@@ -58,12 +67,39 @@ def _deliver_event(
             logger.warning("Gateway event delivery failed: %s", exc)
             return False
         return True
-    try:
-        spool.enqueue(event)
-    except SpoolFullError as exc:
-        logger.error("Gateway event spool is full: %s", exc)
+    if not _queue_event(spool, event):
         return False
     return _flush_spool(client, spool)
+
+
+def _collect_while_node_unavailable(
+    openwrt_client: OpenWrtRPCClient,
+    integration_id: str,
+    spool: GatewayEventSpool,
+    include_discovery: bool,
+) -> None:
+    if include_discovery:
+        try:
+            _queue_event(
+                spool,
+                _event(integration_id, "gateway.discovery", openwrt_client.discover()),
+            )
+        except OpenWrtRPCError as exc:
+            logger.warning("OpenWrt discovery failed while Node is unavailable: %s", exc)
+    try:
+        health = openwrt_client.health_check()
+        _queue_event(spool, _event(integration_id, "gateway.health", health))
+    except OpenWrtRPCError as exc:
+        logger.warning("OpenWrt health check failed while Node is unavailable: %s", exc)
+        _queue_event(
+            spool,
+            _event(
+                integration_id,
+                "gateway.health",
+                {"status": "unavailable", "reason": "rpc_unavailable"},
+                Severity.MEDIUM,
+            ),
+        )
 
 
 def run_agent(
@@ -79,6 +115,7 @@ def run_agent(
         raise ValueError("OpenWrt client and integration ID must be configured together")
 
     retry_delay = 1.0
+    discovery_collected_offline = False
     while True:
         try:
             result = client.connect()
@@ -86,6 +123,18 @@ def run_agent(
             retry_delay = 1.0
         except GatewayTransportError as exc:
             logger.warning("Gateway connection failed: %s", exc)
+            if (
+                openwrt_client is not None
+                and integration_id is not None
+                and spool is not None
+            ):
+                _collect_while_node_unavailable(
+                    openwrt_client,
+                    integration_id,
+                    spool,
+                    include_discovery=not discovery_collected_offline,
+                )
+                discovery_collected_offline = True
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 60.0)
             continue
