@@ -25,9 +25,10 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Versioned event envelope (`openshield.event.v1`) with validation and provenance.
 - Event ingestion endpoint with in-process storage.
 - Structured application logging.
-- Docker Compose development setup.
+- Docker Compose development environment.
+- Dedicated Docker image target for tests and lint.
+- GitHub Actions CI running lint and tests in Docker.
 - Unit/API tests.
-- GitHub Actions CI for linting and tests.
 
 ### Deliberate P0 limitations
 
@@ -38,14 +39,22 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Durable audit, metrics exporter, reconnect loop, and hardware validation remain pending.
 - No firewall or forwarding configuration is changed. The connector is not inline.
 
-### Requirements
+## Docker-first development
 
-Docker Engine + Docker Compose plugin, or Python 3.12+ for local development.
+Docker Engine and the Docker Compose plugin are the only local runtime/test prerequisites. Python, Ruff, and Pytest do not need to be installed on the host.
 
-### Run with Docker
+Build and start the API:
 
 ```bash
-docker compose up --build
+docker compose up --build -d openshield-node
+```
+
+Run lint and tests in the same Python 3.12 container environment used by CI:
+
+```bash
+docker compose build openshield-test openshield-lint
+docker compose run --rm openshield-lint
+docker compose run --rm openshield-test
 ```
 
 API: http://localhost:8000  
@@ -53,22 +62,13 @@ OpenAPI: http://localhost:8000/docs
 Liveness: http://localhost:8000/health/live  
 Readiness: http://localhost:8000/health/ready
 
-### Run locally
+Stop the API without deleting persisted Docker data:
 
 ```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn openshield.api.main:app --reload
+docker compose down
 ```
 
-### Test
-
-```bash
-cd backend
-pytest
-```
+Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the pinned project dependency ranges from `backend/pyproject.toml`.
 
 ## API quick start
 
@@ -110,9 +110,10 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Metrics | Pending |
 | Secure connector bootstrap | Pending |
 | Disconnect/recovery and real gateway validation | Pending |
-| CI and automated tests | Implemented (initial; lint violations fixed in follow-up) |
+| Docker-first runtime, lint, and test environment | Implemented; CI validation pending |
+| CI and automated tests | Implemented; now runs in Docker |
 
-The initial CI run exposed three Ruff violations (UTC alias, mutable class attribute annotation, and import ordering). A follow-up run isolated an I001 import-block formatting issue caused by one excess blank line after the import. The extra blank line was removed; the CI workflow was restored to a non-mutating lint check. The workflow must pass again, including the test stage, before this increment is considered validated. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
+The initial CI run exposed Ruff violations in UTC handling, class attribute typing, and import formatting. The final I001 issue was caused by one excess blank line after an import and was corrected. CI now uses Docker Compose for lint and tests, so local validation and CI share the same Python/container build. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
 
 ## Security
 
