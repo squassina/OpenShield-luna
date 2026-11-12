@@ -37,14 +37,30 @@ def test_connector_client_sends_versioned_handshake_without_credentials() -> Non
 
 def test_connector_client_rejects_invalid_configuration() -> None:
     with pytest.raises(ValueError, match="absolute HTTP"):
-        GatewayConnectorClient("openshield.example", "test-gateway", "g" * 64)
+        GatewayConnectorClient("openshield.example", "test-gateway")
     with pytest.raises(ValueError, match="credentials"):
-        GatewayConnectorClient("https://user:pass@example.com", "test-gateway", "g" * 64)
+        GatewayConnectorClient("https://user:pass@example.com", "test-gateway")
 
 
 def test_connector_agent_rejects_unsafe_heartbeat_interval() -> None:
     with pytest.raises(ValueError, match="between 5 and 60"):
         run_agent(make_client(), heartbeat_interval=1)
+
+
+def test_connector_client_heartbeat_includes_gateway_identity() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "acknowledged", "gateway_id": "test-gateway"}
+    ).encode()
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        make_client().heartbeat()
+
+    request = mocked.call_args.args[0]
+    assert request.get_header("Authorization") is None
+    assert json.loads(request.data) == {
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "test-gateway",
+    }
 
 
 def test_connector_client_surfaces_transport_failures() -> None:
