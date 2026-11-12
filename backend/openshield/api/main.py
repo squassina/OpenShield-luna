@@ -362,6 +362,30 @@ def ingest_dns_queries(
     return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
 
 
+@app.get("/api/v1/privacy/sources", tags=["privacy"])
+def list_privacy_sources() -> list[dict[str, object]]:
+    now = datetime.now(UTC)
+    stats = store.privacy_source_stats()
+    result = []
+    for integration in registry.list_all():
+        if integration.kind not in {"pihole", "adguard"}:
+            continue
+        source = stats.get(integration.integration_id, {})
+        latest = source.get("last_observed_at")
+        age = now - latest if latest else None
+        result.append({
+            "integration_id": integration.integration_id,
+            "kind": integration.kind,
+            "display_name": integration.display_name,
+            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
+                else "stale" if age is not None else "no_data",
+            "last_query_at": latest.isoformat() if latest else None,
+            "queries_seen": source.get("queries_seen", 0),
+            "freshness_basis": "node_observed_at",
+        })
+    return result
+
+
 @app.get("/api/v1/privacy/analytics/domains", tags=["privacy"])
 def privacy_domain_analytics(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
