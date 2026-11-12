@@ -97,7 +97,7 @@ def test_zeek_sensor_ingestion_populates_inventory_and_topology() -> None:
         "uid": "C456",
         "id.orig_h": "192.0.2.11",
         "id.orig_p": 53000,
-        "id.resp_h": "198.51.100.30",
+        "id.resp_h": "8.8.8.8",
         "id.resp_p": 443,
         "proto": "tcp",
         "service": "ssl",
@@ -105,10 +105,14 @@ def test_zeek_sensor_ingestion_populates_inventory_and_topology() -> None:
     response = client.post("/api/v1/sensors/sensor-zeek/events", json=[record])
     assert response.status_code == 202
     devices = client.get("/api/v1/inventory/devices").json()
-    assert {item["ip_address"] for item in devices} == {"192.0.2.11", "198.51.100.30"}
+    assert {item["ip_address"] for item in devices} == {"192.0.2.11", "8.8.8.8"}
+    scopes = {item["ip_address"]: item["scope"] for item in devices}
+    assert scopes == {"192.0.2.11": "private", "8.8.8.8": "public"}
     topology = client.get("/api/v1/inventory/topology").json()
-    assert topology["nodes"] == ["192.0.2.11", "198.51.100.30"]
+    assert topology["nodes"] == ["192.0.2.11", "8.8.8.8"]
+    assert topology["node_details"][0]["ip_version"] == 4
     assert topology["edges"][0]["protocol"] == "tcp"
+    assert topology["edges"][0]["direction"] == "outbound"
 
 
 def test_sensor_health_reports_no_data_then_healthy() -> None:
@@ -132,3 +136,39 @@ def test_sensor_endpoint_rejects_non_sensor_integrations() -> None:
         "capabilities": ["discover", "health_check"],
     })
     assert client.post("/api/v1/sensors/home-gateway/events", json=[{}]).status_code == 404
+
+
+def test_inventory_ignores_invalid_unspecified_and_multicast_addresses() -> None:
+    register_sensor("sensor-suricata", "suricata")
+    response = client.post("/api/v1/sensors/sensor-suricata/events", json=[{
+        "timestamp": "2026-01-01T12:00:00Z",
+        "event_type": "flow",
+        "src_ip": "not-an-ip",
+        "dest_ip": "224.0.0.1",
+        "proto": "UDP",
+    }])
+    assert response.status_code == 202
+    assert client.get("/api/v1/inventory/devices").json() == []
+    assert client.get("/api/v1/inventory/topology").json() == {
+        "nodes": [], "node_details": [], "edges": []
+    }
+
+
+def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None:
+    register_sensor("sensor-suricata", "suricata")
+    for event_type, source_ip in [("alert", "192.0.2.1"), ("flow", "192.0.2.2")]:
+        response = client.post("/api/v1/sensors/sensor-suricata/events", json=[{
+            "timestamp": "2026-01-01T12:00:00Z",
+            "event_type": event_type,
+            "src_ip": source_ip,
+            "dest_ip": "8.8.8.8",
+            "proto": "TCP",
+            "alert": {"severity": 1} if event_type == "alert" else {},
+        }])
+        assert response.status_code == 202
+    filtered = client.get(
+        "/api/v1/events?integration_id=sensor-suricata&event_type=network.suricata.alert&limit=1"
+    )
+    assert filtered.status_code == 200
+    assert len(filtered.json()) == 1
+    assert filtered.json()[0]["event_type"] == "network.suricata.alert"
