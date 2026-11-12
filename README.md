@@ -197,6 +197,16 @@ curl "http://localhost:8000/api/v1/audit?limit=100" \
 
 The audit trail records successful integration registrations, gateway connections, event ingestion, and gateway event-source authorization denials. It stores actor ID, action, target, timestamp, and minimized details; it never stores raw API keys or OpenWrt passwords. Invalid/missing API-key attempts, retention policies, tamper-evident chaining, and export are not implemented yet.
 
+## Gateway event recovery
+
+The nearby-host connector writes discovery and health envelopes to a local SQLite outbox before delivery. It retries queued events after reconnect and removes them only after the Node acknowledges them. Event ingestion is idempotent: a retry of an already stored event ID receives HTTP 202 with status `duplicate`, allowing the connector to safely acknowledge it.
+
+- Default spool path: `/var/lib/openshield/gateway-spool.sqlite3`.
+- Docker Compose persists the directory in the `openshield-gateway-spool` named volume.
+- Queue capacity is bounded to 10,000 pending events; when full, new events are rejected and logged rather than deleting older pending events.
+- SQLite uses WAL and full synchronous mode; the database file is chmod 0600 and its newly created directory uses mode 0700.
+- The spool is not encrypted at rest. Protect the Docker volume and host storage.
+
 ## Metrics
 
 The Prometheus text endpoint is available at `GET /metrics` and requires an admin API key. It exposes request counters by method/route/status plus event ingestion, gateway connection/heartbeat, and gateway source-denial counters. Labels use FastAPI route templates to avoid high-cardinality resource IDs.
@@ -215,7 +225,7 @@ Counters are process-local and reset on restart. Histograms, database-backed gau
 | Event ingestion | Implemented (PostgreSQL-backed; duplicate event IDs rejected) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
-| Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; PostgreSQL-backed presence) |
+| Gateway connector protocol v1, identity binding, heartbeat, and durable event outbox | Implemented (PostgreSQL presence + SQLite connector spool) |
 | Nearby-host connector agent with reconnecting HTTP client and discovery/health event forwarding | Implemented (mocked transport; hardware pending) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
