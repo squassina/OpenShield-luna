@@ -657,3 +657,18 @@ Remaining:
 - Spool contents are not encrypted at rest; host/volume protection is required.
 - Queue capacity/usage metrics and alerting are pending.
 - A full hardware outage/recovery drill against a real OpenWrt router is pending.
+
+
+## P0 hardware acceptance
+
+CI validates mocked RPC transport, Node API behavior, database persistence, audit, metrics, and connector spool/retry behavior. It does not validate an actual OpenWrt firmware or prove forwarding independence on physical hardware.
+
+Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) to verify:
+- Actual rpcd authentication and read-only ACL compatibility.
+- Real board/interface discovery and normalized event delivery.
+- Continued LAN/DNS/Internet forwarding while the Node is stopped.
+- Event spool growth during outage and delivery after Node recovery.
+- Spool and gateway recovery after connector container restart.
+- No firewall, routing, wireless, or forwarding changes.
+
+P0 hardware acceptance remains pending until this runbook is executed on the target gateway and its evidence is recorded.
