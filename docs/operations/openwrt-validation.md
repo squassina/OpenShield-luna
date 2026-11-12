@@ -78,18 +78,27 @@ docker compose start openshield-node
 
 Wait for the connector to reconnect. Verify queued events appear in `/api/v1/events` and the spool count returns toward zero.
 
-## 5. Verify connector restart recovery
+## 5. Verify connector restart recovery and Node recovery
 
-With the Node available and pending events present, restart the connector:
+Keep the Node stopped from the previous step while restarting the connector. This avoids racing the connector's automatic queue drain:
 
 ```bash
 docker compose restart openshield-gateway-connector
 ```
 
-Verify:
-- Gateway reconnects and heartbeat presence recovers.
-- Pending events survive the connector container restart.
-- Retries with the same event ID return `duplicate` and are acknowledged.
+Before restarting the Node, inspect the spool count again using the command from the previous section. It must remain greater than zero after the connector restart.
+
+Now restore the Node:
+
+```bash
+docker compose start openshield-node
+```
+
+Wait for the connector to reconnect. Verify:
+- Gateway status and heartbeat presence recover.
+- Previously queued events appear in `/api/v1/events`.
+- The spool count returns to zero.
+- Retries with an already-ingested event ID return `duplicate` and are acknowledged.
 - The `openshield-gateway-spool` named volume remains present.
 
 Do not use `docker compose down -v` during validation; it deletes persistent volumes.
