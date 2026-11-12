@@ -3,7 +3,8 @@ import hmac
 import json
 import os
 from enum import StrEnum
-from typing import Callable
+from collections.abc import Callable
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -93,7 +94,7 @@ def require_permissions(*permissions: Permission) -> Callable:
     required = frozenset(permissions)
 
     def dependency(
-        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     ) -> Principal:
         if credentials is None or credentials.scheme.lower() != "bearer":
             raise HTTPException(
