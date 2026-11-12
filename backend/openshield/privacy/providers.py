@@ -222,6 +222,10 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             managed_rules.append(f"{'@@' if list_type == 'allow' else ''}||{domain}^")
         managed_rules.append(end)
         merged = preserved + managed_rules
+        previous_set = set(previous_managed if start is not None and finish is not None else [])
+        managed_set = set(managed_rules)
+        added = len((managed_set - previous_set) - {begin, end})
+        removed = len((previous_set - managed_set) - {begin, end})
         previous_managed = (
             rules[start:finish + 1]
             if start is not None and finish is not None else []
@@ -236,8 +240,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         if verified_rules != merged:
             raise DnsProviderError("AdGuard list synchronization could not be verified")
         return {
-            "provider": "adguard", "added": len(desired),
-            "removed": max(0, len(previous_managed) - len(managed_rules)),
+            "provider": "adguard", "added": added, "removed": removed,
         }
 
     raise DnsProviderError("Unsupported DNS provider for list synchronization")
