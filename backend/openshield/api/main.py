@@ -1,7 +1,8 @@
 import os
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from openshield.core.logging import configure_logging
@@ -13,6 +14,8 @@ from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.visibility.adapter import NetworkSensorAdapter
+from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
@@ -54,7 +57,7 @@ store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
-adapters = {"openwrt": OpenWrtAdapter()}
+adapters = {"openwrt": OpenWrtAdapter(), "suricata": NetworkSensorAdapter("suricata"), "zeek": NetworkSensorAdapter("zeek")}
 
 
 @app.get("/health/live", tags=["health"])
@@ -162,8 +165,121 @@ def ingest_event(event: EventEnvelope) -> dict[str, str]:
 
 
 @app.get("/api/v1/events", tags=["events"])
-def list_events() -> list[dict[str, object]]:
-    return [event.model_dump(mode="json") for event in store.list_events()]
+def list_events(
+    integration_id: str | None = None,
+    event_type: str | None = None,
+    severity: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+) -> list[dict[str, object]]:
+    events = store.list_events()
+    if integration_id:
+        events = [item for item in events if item.source.integration_id == integration_id]
+    if event_type:
+        events = [item for item in events if item.event_type == event_type]
+    if severity:
+        events = [item for item in events if item.severity.value == severity]
+    events.sort(key=lambda item: item.observed_at, reverse=True)
+    return [event.model_dump(mode="json") for event in events[:limit]]
+
+
+@app.post("/api/v1/sensors/{integration_id}/events", status_code=202, tags=["sensors"])
+def ingest_sensor_events(
+    integration_id: str,
+    records: Annotated[list[dict[str, Any]], Body()],
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"suricata", "zeek"}:
+        raise HTTPException(status_code=404, detail="Network sensor integration not found")
+    try:
+        events = normalize_sensor_batch(integration.kind, records, integration_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    accepted = duplicates = 0
+    for event in events:
+        if store.insert_event(event):
+            accepted += 1
+            metrics.increment("openshield_events_ingested_total")
+        else:
+            duplicates += 1
+    return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
+
+
+@app.get("/api/v1/sensors", tags=["sensors"])
+def list_sensor_health() -> list[dict[str, object]]:
+    now = datetime.now(UTC)
+    result = []
+    all_events = store.list_events()
+    for integration in registry.list_all():
+        if integration.kind not in {"suricata", "zeek"}:
+            continue
+        events = [event for event in all_events if event.source.integration_id == integration.integration_id]
+        latest = max((event.observed_at for event in events), default=None)
+        age = now - latest if latest else None
+        result.append({
+            "integration_id": integration.integration_id,
+            "kind": integration.kind,
+            "display_name": integration.display_name,
+            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
+                else "stale" if age is not None else "no_data",
+            "last_event_at": latest.isoformat() if latest else None,
+            "events_seen": len(events),
+        })
+    return result
+
+
+@app.get("/api/v1/inventory/devices", tags=["inventory"])
+def list_network_devices(
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> list[dict[str, object]]:
+    devices: dict[str, dict[str, Any]] = {}
+    for event in store.list_events():
+        payload = event.payload
+        addresses = [
+            payload.get(key) for key in ("src_ip", "dest_ip", "id.orig_h", "id.resp_h")
+        ]
+        for address in addresses:
+            if not isinstance(address, str) or not address:
+                continue
+            item = devices.setdefault(address, {
+                "ip_address": address, "protocols": set(),
+                "first_seen": event.occurred_at, "last_seen": event.occurred_at,
+                "observations": 0,
+            })
+            item["protocols"].add(str(payload.get("proto") or payload.get("app_proto") or "unknown"))
+            item["first_seen"] = min(item["first_seen"], event.occurred_at)
+            item["last_seen"] = max(item["last_seen"], event.occurred_at)
+            item["observations"] += 1
+    result = [{
+        **item,
+        "protocols": sorted(item["protocols"]),
+        "first_seen": item["first_seen"].isoformat(),
+        "last_seen": item["last_seen"].isoformat(),
+    } for item in devices.values()]
+    result.sort(key=lambda item: item["observations"], reverse=True)
+    return result[:limit]
+
+
+@app.get("/api/v1/inventory/topology", tags=["inventory"])
+def get_network_topology(
+    limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
+) -> dict[str, object]:
+    nodes: set[str] = set()
+    links: dict[tuple[str, str, str], int] = {}
+    for event in store.list_events():
+        payload = event.payload
+        source = payload.get("src_ip") or payload.get("id.orig_h")
+        target = payload.get("dest_ip") or payload.get("id.resp_h")
+        if not isinstance(source, str) or not isinstance(target, str):
+            continue
+        protocol = str(payload.get("proto") or payload.get("app_proto") or "unknown")
+        nodes.update((source, target))
+        key = (source, target, protocol)
+        links[key] = links.get(key, 0) + 1
+    edges = [
+        {"source": source, "target": target, "protocol": protocol, "observations": count}
+        for (source, target, protocol), count in sorted(links.items(), key=lambda item: item[1], reverse=True)[:limit]
+    ]
+    return {"nodes": sorted(nodes), "edges": edges}
 
 
 @app.get("/api/v1/audit", tags=["audit"])
