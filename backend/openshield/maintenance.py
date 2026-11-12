@@ -1,6 +1,7 @@
 """Explicit, bounded event-retention maintenance command."""
 import os
 from datetime import UTC, datetime, timedelta
+
 from openshield.core.storage import PostgresStore
 
 def run_retention() -> int:

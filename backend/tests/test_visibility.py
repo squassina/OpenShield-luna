@@ -181,5 +181,5 @@ def test_sensor_event_ids_are_scoped_to_integration() -> None:
 
 def test_sensor_batch_rejects_non_object_record() -> None:
     import pytest
-    with pytest.raises(ValueError, match="JSON object"):
+    with pytest.raises(TypeError, match="JSON object"):
         normalize_sensor_batch("zeek", [None], "sensor")

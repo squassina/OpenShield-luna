@@ -48,7 +48,7 @@ def _event_id(source: str, integration_id: str, raw: dict[str, Any]) -> str:
 def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     """Normalize one Suricata EVE JSON record without retaining arbitrary fields."""
     if not isinstance(raw, dict):
-        raise ValueError("Suricata record must be a JSON object")
+        raise TypeError("Suricata record must be a JSON object")
     event_type = raw.get("event_type")
     if event_type not in {"alert", "flow", "dns", "http", "tls", "ssh", "anomaly"}:
         raise ValueError("Unsupported Suricata EVE event_type")
@@ -82,7 +82,7 @@ def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelop
 def normalize_zeek(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     """Normalize one Zeek JSON log record; supports conn, dns, http and ssl logs."""
     if not isinstance(raw, dict):
-        raise ValueError("Zeek record must be a JSON object")
+        raise TypeError("Zeek record must be a JSON object")
     log_type = raw.get("_path")
     if log_type not in {"conn", "dns", "http", "ssl"}:
         raise ValueError("Unsupported Zeek log type")
