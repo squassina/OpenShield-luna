@@ -231,7 +231,7 @@ License not selected yet.
 
 ## P2 — Privacy Intelligence
 
-The interactive dashboard is served at `http://localhost:8000/`. It combines P1 network sensors/inventory with P2 DNS summary metrics, daily trends, top domains/clients, source health, and local allow/block list management. Provider list sync requires an explicit confirmation in the dashboard.
+The interactive web console is served at `http://localhost:8000/`. It combines P1 network visibility and P2 privacy analytics with service onboarding for Pi-hole v6, AdGuard Home, Suricata, and Zeek. DNS provider setup validates live connectivity without importing records; Suricata/Zeek setup displays the push-ingestion endpoint. The console also manages local allow/block lists and explicit provider synchronization. Full integration editing/removal and UI-managed secret storage remain future P2 work.
 
 P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. OpenShield can poll provider query-log APIs directly or accept bounded pushed JSON batches. Provider credentials are read from environment variables and never stored in integration configuration.
 

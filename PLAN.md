@@ -338,7 +338,11 @@ Scope:
 **Goal:** make DNS activity and privacy risks understandable.
 
 Scope:
-- Interactive web dashboard for network visibility and privacy intelligence.
+- Interactive web console for network visibility, privacy intelligence, and service configuration (not dashboard-only).
+- Guided integration setup for supported services: provider type, integration identity, endpoint, capability display, and connection test.
+- Integration lifecycle management: inspect, edit, enable/disable, and remove configured services with validation and audit.
+- Safe credential configuration: secrets entered through the UI must be stored encrypted or delegated to a secret manager; never return secrets through APIs or persist them in integration JSON as plaintext.
+- Guided setup and operational instructions for push-based sensors (Suricata/Zeek) and gateway connector configuration.
 - Pi-hole v6 and AdGuard Home query-log integration.
 - Bounded push ingestion for exported DNS records.
 - DNS analytics grouped by client/device and domain.
@@ -347,7 +351,7 @@ Scope:
 - Privacy reports and daily trends.
 - Provider ingestion freshness/health.
 
-**Implementation status:** API-first P2 slice implemented and CI-validated. Native polling fetches up to 500 latest provider records per invocation; idempotency handles overlap. High-volume cursor/watermark pagination remains technical debt. Provider list synchronization is explicit and verifies the resulting provider state. Classification is heuristic, not a threat-intelligence verdict. The later P5 policy/response phase owns enforcement.
+**Implementation status:** dashboard, DNS provider polling/ingestion, analytics, and explicit verified list synchronization are implemented. The service console supports registering, editing, and removing DNS providers and push-based Suricata/Zeek sources; edits preserve integration identity and kind, and removals preserve historical telemetry with audit records. Enable/disable lifecycle, secure UI-managed secret storage, guided gateway configuration, and service health/diagnostics remain in progress. Polling is limited to 500 latest records per invocation; durable cursors/watermarks remain tracked technical debt. Classification is heuristic, not a threat-intelligence verdict. P5 owns policy enforcement.
 
 ### P3 — Threat Intelligence & Risk Engine
 

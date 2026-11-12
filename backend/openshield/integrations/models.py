@@ -50,3 +50,17 @@ class Integration(BaseModel):
     capabilities: list[Capability]
     config: dict[str, Any]
     registered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class IntegrationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    config: dict[str, Any] | None = None
+
+    @field_validator("config")
+    @classmethod
+    def reject_secret_material(cls, config: dict[str, Any] | None) -> dict[str, Any] | None:
+        if config is not None:
+            return IntegrationRegistration.reject_secret_material(config)
+        return config

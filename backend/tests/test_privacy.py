@@ -357,3 +357,37 @@ def test_adguard_list_sync_preserves_existing_rules_and_verifies(monkeypatch) ->
     assert result == {"provider": "adguard", "added": 2, "removed": 0}
     payload = json.loads(requests[1].data)
     assert payload["rules"] == expected_rules
+
+
+def test_dns_integration_connection_test_does_not_ingest_records() -> None:
+    register_dns()
+    record = {"domain": "example.org", "client": "192.168.1.20",
+              "timestamp": datetime.now(UTC).isoformat(), "status": "allowed"}
+    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
+        response = client.post("/api/v1/integrations/pihole-home/test")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "connected", "integration_id": "pihole-home",
+        "provider": "pihole", "records_available": 1, "imported": 0,
+    }
+    assert client.get("/api/v1/events?event_type=privacy.dns.query").json() == []
+
+
+def test_dns_integration_connection_test_reports_provider_failure() -> None:
+    from openshield.privacy.providers import DnsProviderError
+    register_dns()
+    with patch("openshield.api.main.fetch_dns_records", side_effect=DnsProviderError("unreachable")):
+        response = client.post("/api/v1/integrations/pihole-home/test")
+    assert response.status_code == 502
+    assert response.json()["detail"] == "unreachable"
+
+
+def test_sensor_integration_test_returns_push_endpoint() -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "suricata-home", "kind": "suricata", "display_name": "Suricata",
+    })
+    assert response.status_code == 201
+    tested = client.post("/api/v1/integrations/suricata-home/test")
+    assert tested.status_code == 200
+    assert tested.json()["mode"] == "push"
+    assert tested.json()["ingestion_endpoint"] == "/api/v1/sensors/suricata-home/events"

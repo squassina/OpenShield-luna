@@ -13,7 +13,7 @@ h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 14px}p{margin:4px 0;colo
 .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:28px;font-weight:700;margin-top:5px}.metric-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .columns{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin:14px 0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}td{font-size:13px}.empty{color:var(--muted);padding:12px 0}.status{display:inline-block;padding:2px 8px;border-radius:20px;background:var(--panel2);font-size:12px}.healthy{color:var(--good)}.stale,.warning{color:var(--warn)}.error{color:var(--bad)}
 .bars{height:150px;display:flex;align-items:end;gap:5px;padding-top:10px}.bar-col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:end}.bar{width:100%;max-width:30px;background:#3288c8;border-radius:4px 4px 0 0;min-height:2px}.bar-label{font-size:10px;color:var(--muted)}
-form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline input{flex:1;min-width:150px}.actions{display:flex;gap:6px}.notice{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.notice.error{border-color:#784848;color:var(--bad)}.notice[hidden]{display:none}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline input{flex:1;min-width:150px}.actions{display:flex;gap:6px}.danger{border-color:#784848;color:var(--bad)}dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:min(460px,calc(100% - 32px));padding:20px}dialog::backdrop{background:#0009}dialog form{display:grid;gap:12px}dialog label{display:grid;gap:5px;color:var(--muted)}dialog input{width:100%}.notice{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.notice.error{border-color:#784848;color:var(--bad)}.notice[hidden]{display:none}
 footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.columns{grid-template-columns:1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr 1fr}.metric{font-size:23px}header{align-items:flex-start}}
 </style>
@@ -25,6 +25,39 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
 </header>
 <main>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+  <section class="panel">
+    <h2>Service integrations</h2>
+    <p>Connect and manage the services that provide network and DNS telemetry.</p>
+    <form id="service-form" class="inline">
+      <select id="service-kind" aria-label="Service type">
+        <option value="pihole">Pi-hole v6</option>
+        <option value="adguard">AdGuard Home</option>
+        <option value="suricata">Suricata</option>
+        <option value="zeek">Zeek</option>
+      </select>
+      <input id="service-id" placeholder="Integration ID (e.g. pihole-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}">
+      <input id="service-name" placeholder="Display name" required maxlength="120">
+      <input id="service-url" type="url" placeholder="Service URL (DNS providers only)">
+      <button class="primary" type="submit">Add service</button>
+    </form>
+    <div id="service-help" class="notice">DNS providers require a base URL. Provider passwords remain in server environment variables; they are never sent to or stored by the dashboard.</div>
+    <div id="integrations" class="table-wrap"></div>
+  </section>
+
+  <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
+    <form id="integration-edit-form">
+      <h2 id="integration-dialog-title">Edit integration</h2>
+      <p id="integration-dialog-kind"></p>
+      <label>Display name<input id="edit-display-name" required maxlength="120"></label>
+      <label id="edit-url-label">Service URL<input id="edit-base-url" type="url"></label>
+      <div class="toolbar">
+        <button type="button" id="cancel-integration-edit">Cancel</button>
+        <button class="primary" type="submit">Save changes</button>
+      </div>
+    </form>
+  </dialog>
+
   <section class="grid" aria-label="DNS summary">
     <article class="panel"><div class="metric-label">DNS queries</div><div id="queries" class="metric">—</div></article>
     <article class="panel"><div class="metric-label">Blocked queries</div><div id="blocked" class="metric">—</div></article>
@@ -98,7 +131,8 @@ async function load() {
     $("block-rate").textContent=report.totals.block_rate_percent+"%";
     table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
-    table("sources",["Provider","Status","Queries"],sources.map(x=>[x.display_name,x.status,fmt(x.queries_seen)]));
+    renderSources(sources,integrations);
+    renderIntegrations(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -109,6 +143,116 @@ async function load() {
   } catch(error) { showNotice("Dashboard refresh failed: "+error.message,true); }
   finally { $("refresh").disabled=false; }
 }
+
+let editingIntegrationId=null;
+function actionButton(label, className, handler) {
+  const button=document.createElement("button");
+  button.type="button"; button.textContent=label;
+  if(className) button.className=className;
+  button.addEventListener("click",handler);
+  return button;
+}
+function editIntegration(item) {
+  editingIntegrationId=item.integration_id;
+  $("integration-dialog-kind").textContent=item.kind+" · "+item.integration_id;
+  $("edit-display-name").value=item.display_name;
+  const hasUrl=["pihole","adguard"].includes(item.kind);
+  $("edit-url-label").hidden=!hasUrl;
+  $("edit-base-url").required=hasUrl;
+  $("edit-base-url").value=(item.config&&item.config.base_url)||"";
+  $("integration-dialog").showModal();
+}
+async function deleteIntegration(item) {
+  if(!confirm("Delete integration "+item.display_name+" ("+item.integration_id+")? Historical events will be preserved.")) return;
+  try {
+    await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id),{method:"DELETE"});
+    showNotice("Integration "+item.display_name+" deleted. Historical events were preserved.");
+    await load();
+  } catch(error) { showNotice("Could not delete integration: "+error.message,true); }
+}
+function renderIntegrations(items) {
+  const root=$("integrations"); root.replaceChildren();
+  if(!items.length){const p=document.createElement("p");p.className="empty";p.textContent="No integrations configured";root.append(p);return;}
+  const t=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
+  ["Service","Type","ID","Endpoint","Capabilities","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
+  const thead=document.createElement("thead");thead.append(head);t.append(thead);
+  items.forEach(item=>{
+    const tr=document.createElement("tr");
+    [item.display_name,item.kind,item.integration_id,(item.config&&item.config.base_url)||"Push / connector",item.capabilities.join(", ")].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
+    const actions=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    wrap.append(actionButton("Edit","",()=>editIntegration(item)));
+    wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
+    actions.append(wrap);tr.append(actions);body.append(tr);
+  });
+  t.append(body);root.append(t);
+}
+function renderSources(sources, integrations) {
+  const root=$("sources"); root.replaceChildren();
+  if(!sources.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS sources configured";root.append(p);return;}
+  const byId=new Map(integrations.map(item=>[item.integration_id,item]));
+  const t=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
+  ["Provider","Status","Queries","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
+  const thead=document.createElement("thead");thead.append(head);t.append(thead);
+  sources.forEach(source=>{
+    const tr=document.createElement("tr");
+    [source.display_name,source.status,fmt(source.queries_seen)].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
+    const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    const item=byId.get(source.integration_id);
+    if(item) {
+      wrap.append(actionButton("Edit","",()=>editIntegration(item)));
+      wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
+    }
+    td.append(wrap);tr.append(td);body.append(tr);
+  });
+  t.append(body);root.append(t);
+}
+$("cancel-integration-edit").addEventListener("click",()=>$("integration-dialog").close());
+$("integration-edit-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  if(!editingIntegrationId) return;
+  const item=(await api("/api/v1/integrations")).find(x=>x.integration_id===editingIntegrationId);
+  if(!item){showNotice("Integration no longer exists.",true);$("integration-dialog").close();return;}
+  const payload={display_name:$("edit-display-name").value.trim()};
+  if(["pihole","adguard"].includes(item.kind)) payload.config={...item.config,base_url:$("edit-base-url").value.trim()};
+  const button=event.submitter;button.disabled=true;
+  try {
+    await api("/api/v1/integrations/"+encodeURIComponent(editingIntegrationId),{method:"PATCH",body:JSON.stringify(payload)});
+    $("integration-dialog").close();editingIntegrationId=null;
+    showNotice("Integration updated.");await load();
+  } catch(error) { showNotice("Could not update integration: "+error.message,true); }
+  finally { button.disabled=false; }
+});
+$("service-kind").addEventListener("change",()=>{
+  const kind=$("service-kind").value;
+  $("service-url").required=["pihole","adguard"].includes(kind);
+  $("service-url").disabled=!$("service-url").required;
+  $("service-help").textContent=$("service-url").required
+    ?"Enter the provider base URL. Credentials are configured on the OpenShield host through environment variables, never stored in integration configuration."
+    :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
+});
+$("service-kind").dispatchEvent(new Event("change"));
+$("service-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const kind=$("service-kind").value, id=$("service-id").value.trim();
+  const payload={integration_id:id,kind,display_name:$("service-name").value.trim()};
+  if(["pihole","adguard"].includes(kind)) payload.config={base_url:$("service-url").value.trim()};
+  const button=event.submitter; button.disabled=true;
+  try {
+    await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
+    let result;
+    if(["pihole","adguard"].includes(kind)) {
+      result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
+      showNotice("Connected to "+payload.display_name+". "+fmt(result.records_available)+" DNS records available; no records imported by this test.");
+    } else {
+      result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/probe");
+      const endpoint="/api/v1/sensors/"+encodeURIComponent(id)+"/events";
+      showNotice(payload.display_name+" registered. Configure the sensor exporter to POST JSON batches to "+endpoint+".");
+    }
+    $("service-form").reset(); $("service-kind").dispatchEvent(new Event("change")); await load();
+  } catch(error) { showNotice("Service setup failed: "+error.message,true); }
+  finally { button.disabled=false; }
+});
+
 function renderTrend(rows) {
   const root=$("trend");root.replaceChildren();
   if(!rows.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS trend data yet";root.append(p);return;}
