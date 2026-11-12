@@ -32,8 +32,10 @@ def _timestamp(value: Any) -> datetime:
 
 def _event_id(source: str, raw: dict[str, Any]) -> str:
     stable = raw.get("community_id") or raw.get("uid")
+    event_kind = raw.get("event_type") or raw.get("_path") or "event"
+    timestamp = raw.get("timestamp") or raw.get("ts") or ""
     if stable:
-        return f"{source}:{str(stable)[:110]}"
+        return f"{source}:{event_kind}:{str(stable)[:70]}:{str(timestamp)[:30]}"
     encoded = json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str).encode()
     return f"{source}:{hashlib.sha256(encoded).hexdigest()}"
 
