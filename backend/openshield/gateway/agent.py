@@ -192,12 +192,9 @@ def main() -> None:
     )
     node_url = os.getenv("OPENSHIELD_NODE_URL", "").strip()
     gateway_id = os.getenv("OPENSHIELD_GATEWAY_ID", "").strip()
-    api_key = os.getenv("OPENSHIELD_GATEWAY_API_KEY", "")
-    if not node_url or not gateway_id or not api_key:
-        raise SystemExit(
-            "OPENSHIELD_NODE_URL, OPENSHIELD_GATEWAY_ID, and "
-            "OPENSHIELD_GATEWAY_API_KEY are required"
-        )
+    gateway_id = gateway_id or "home-gateway"
+    if not node_url:
+        raise SystemExit("OPENSHIELD_NODE_URL is required")
     try:
         interval = float(os.getenv("OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL", "30"))
     except ValueError as exc:
@@ -206,17 +203,14 @@ def main() -> None:
     openwrt_url = os.getenv("OPENSHIELD_OPENWRT_URL", "").strip()
     openwrt_username = os.getenv("OPENSHIELD_OPENWRT_USERNAME", "")
     openwrt_password = os.getenv("OPENSHIELD_OPENWRT_PASSWORD", "")
-    integration_id = os.getenv("OPENSHIELD_INTEGRATION_ID", "").strip()
-    openwrt_values = (openwrt_url, openwrt_username, openwrt_password, integration_id)
+    integration_id = gateway_id
+    openwrt_values = (openwrt_url, openwrt_username, openwrt_password)
     if any(openwrt_values) and not all(openwrt_values):
         raise SystemExit(
             "OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, "
-            "OPENSHIELD_OPENWRT_PASSWORD, and OPENSHIELD_INTEGRATION_ID "
-            "must be configured together"
+            "OPENSHIELD_OPENWRT_PASSWORD must be configured together with "
+            "the OpenWrt URL and username"
         )
-    if integration_id and integration_id != gateway_id:
-        raise SystemExit("OPENSHIELD_INTEGRATION_ID must match OPENSHIELD_GATEWAY_ID")
-
     openwrt_client = None
     capabilities = []
     if all(openwrt_values):
@@ -236,7 +230,6 @@ def main() -> None:
     client = GatewayConnectorClient(
         node_url=node_url,
         gateway_id=gateway_id,
-        api_key=api_key,
         connector_version=os.getenv("OPENSHIELD_GATEWAY_CONNECTOR_VERSION", "0.1.0"),
         capabilities=capabilities,
     )
