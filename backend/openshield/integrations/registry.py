@@ -1,6 +1,5 @@
 from openshield.integrations import models
 
-
 CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
     "openwrt": [
         models.Capability.HEALTH_CHECK,
