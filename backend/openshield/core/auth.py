@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 from enum import StrEnum
 from typing import Callable
 
@@ -27,7 +26,13 @@ class Permission(StrEnum):
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.ADMIN: frozenset(Permission),
-    Role.OPERATOR: frozenset(Permission),
+    Role.OPERATOR: frozenset(
+        {
+            Permission.INTEGRATIONS_READ,
+            Permission.EVENTS_READ,
+            Permission.EVENTS_WRITE,
+        }
+    ),
     Role.READER: frozenset(
         {Permission.INTEGRATIONS_READ, Permission.EVENTS_READ}
     ),
@@ -86,6 +91,13 @@ def require_permissions(*permissions: Permission) -> Callable:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Bearer API key required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        if len(credentials.credentials) < 32:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
