@@ -266,7 +266,7 @@ def test_register_openwrt_and_probe() -> None:
         headers=headers(),
     )
     assert response.status_code == 200
-    assert response.json()["transport"] == "not_connected"
+    assert response.json()["transport"] == "ubus_rpc"
     assert response.json()["capabilities"] == ["health_check", "discover"]
 
 
