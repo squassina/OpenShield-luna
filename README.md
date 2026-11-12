@@ -79,7 +79,7 @@ Stop the API without deleting persisted Docker data:
 docker compose down
 ```
 
-Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the pinned project dependency ranges from `backend/pyproject.toml`.
+Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the project dependencies from `backend/pyproject.toml`. Tests use `httpx2` with Starlette TestClient, and pytest treats all warnings as errors so deprecations cannot silently accumulate.
 
 ## API authentication and roles
 
