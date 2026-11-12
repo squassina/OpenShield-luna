@@ -40,7 +40,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
-- OpenWrt adapter is a safe stub; no on-device OpenWrt connector agent or outbound transport client is implemented yet. The current protocol is the authenticated gateway-to-Node API contract.
+- OpenWrt adapter is a safe stub; the outbound connector agent can run on a nearby Linux/Docker host, but an on-device OpenWrt agent and actual OpenWrt telemetry/configuration transport are not implemented yet.
 - Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
@@ -119,6 +119,17 @@ Missing or invalid credentials return `401`; valid credentials without the requi
 
 ## Gateway connector protocol v1
 
+A minimal outbound connector agent is included for deployment on a nearby Linux/Docker host. It uses the Python standard library, verifies TLS certificates by default, sends a versioned handshake, and maintains presence with bounded reconnect backoff. It does not yet query OpenWrt or collect real gateway events.
+
+Configure `OPENSHIELD_GATEWAY_ID` to match the gateway API key record's `key_id`, and set `OPENSHIELD_GATEWAY_API_KEY` to the raw key. Start the optional connector profile:
+
+```bash
+docker compose --profile gateway up --build -d openshield-node openshield-gateway-connector
+```
+
+The connector has no dependency on Node health and never sits in the packet-forwarding path. If the Node is unavailable, it retries; gateway traffic forwarding remains independent.
+
+
 A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities:
 
 ```bash
@@ -175,7 +186,8 @@ curl -X POST http://localhost:8000/api/v1/events \
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
 | Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; in-memory) |
-| On-device OpenWrt connector agent and secure bootstrap/mTLS | Pending |
+| Nearby-host connector agent with reconnecting HTTP client | Implemented (no OpenWrt telemetry yet) |
+| On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
 | Durable persistence and audit | Pending |
 | Structured logging | Implemented |
