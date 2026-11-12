@@ -338,6 +338,7 @@ Scope:
 **Goal:** make DNS activity and privacy risks understandable.
 
 Scope:
+- Interactive web dashboard for network visibility and privacy intelligence.
 - Pi-hole v6 and AdGuard Home query-log integration.
 - Bounded push ingestion for exported DNS records.
 - DNS analytics grouped by client/device and domain.
