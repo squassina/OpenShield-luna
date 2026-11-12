@@ -245,7 +245,7 @@ def main() -> None:
             client,
             heartbeat_interval=interval,
             openwrt_client=openwrt_client,
-            integration_id=integration_id or None,
+            integration_id=integration_id if openwrt_client is not None else None,
             spool=spool,
         )
     except KeyboardInterrupt:
