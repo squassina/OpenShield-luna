@@ -4,7 +4,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openshield.gateway.agent import run_agent
+from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
+from openshield.integrations.models import Capability
 
 
 def make_client() -> GatewayConnectorClient:
@@ -87,3 +89,47 @@ def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.Mon
 
     assert client.connect_calls == 3
     assert client.heartbeat_calls == 1
+
+
+
+def test_connector_client_advertises_only_configured_capabilities() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "connected", "gateway_id": "test-gateway"}
+    ).encode()
+    client = GatewayConnectorClient(
+        node_url="https://openshield.example",
+        gateway_id="test-gateway",
+        api_key="g" * 64,
+        capabilities=[Capability.DISCOVER, Capability.HEALTH_CHECK],
+    )
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        client.connect()
+
+    payload = json.loads(mocked.call_args.args[0].data)
+    assert payload["capabilities"] == ["discover", "health_check"]
+
+
+def test_connector_client_posts_versioned_event_to_node() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "accepted", "event_id": "event-1"}
+    ).encode()
+    event = EventEnvelope(
+        schema_version="openshield.event.v1",
+        event_id="event-1",
+        source=EventSource(integration_id="router-lab", kind="openwrt"),
+        event_type="gateway.health",
+        occurred_at="2026-01-01T12:00:00Z",
+        observed_at="2026-01-01T12:00:01Z",
+        severity=Severity.INFO,
+        payload={"status": "reachable"},
+    )
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        result = make_client().ingest_event(event)
+
+    request = mocked.call_args.args[0]
+    assert request.full_url == "https://openshield.example/api/v1/events"
+    assert request.get_header("Authorization") == f"Bearer {'g' * 64}"
+    assert json.loads(request.data)["source"]["integration_id"] == "router-lab"
+    assert result["status"] == "accepted"
