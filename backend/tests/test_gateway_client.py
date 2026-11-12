@@ -6,6 +6,7 @@ import pytest
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.agent import run_agent
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
+from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
 from openshield.integrations.models import Capability
 
 
@@ -185,3 +186,72 @@ def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pyt
     ]
     assert all(event.schema_version == "openshield.event.v1" for event in node.events)
     assert all(event.source.integration_id == "router-lab" for event in node.events)
+
+
+
+def sample_gateway_event(event_id: str = "spooled-event") -> EventEnvelope:
+    return EventEnvelope(
+        schema_version="openshield.event.v1",
+        event_id=event_id,
+        source=EventSource(integration_id="test-gateway", kind="openwrt"),
+        event_type="gateway.health",
+        occurred_at="2026-01-01T12:00:00Z",
+        observed_at="2026-01-01T12:00:01Z",
+        severity=Severity.INFO,
+        payload={"status": "reachable"},
+    )
+
+
+def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path) -> None:
+    path = tmp_path / "gateway-spool.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    event = sample_gateway_event()
+    assert spool.enqueue(event) is True
+    assert spool.pending_count() == 1
+
+    restarted_spool = GatewayEventSpool(str(path))
+    assert restarted_spool.pending() == [event]
+    restarted_spool.acknowledge(event.event_id)
+    assert restarted_spool.pending_count() == 0
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_gateway_spool_enforces_capacity(tmp_path) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "limited.sqlite3"), max_events=1)
+    spool.enqueue(sample_gateway_event("event-one"))
+    with pytest.raises(SpoolFullError, match="spool is full"):
+        spool.enqueue(sample_gateway_event("event-two"))
+    assert spool.pending_count() == 1
+
+
+def test_agent_retains_event_when_node_delivery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from openshield.gateway import agent
+
+    class OfflineNodeClient:
+        def connect(self) -> dict[str, object]:
+            return {"gateway_id": "test-gateway"}
+
+        def ingest_event(self, _event: EventEnvelope) -> dict[str, object]:
+            raise GatewayTransportError("offline")
+
+    class FakeOpenWrtClient:
+        def discover(self) -> dict[str, object]:
+            return {"board": {"hostname": "router"}, "interfaces": []}
+
+    spool = GatewayEventSpool(str(tmp_path / "offline.sqlite3"))
+    monkeypatch.setattr(agent.time, "sleep", lambda _delay: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(
+            OfflineNodeClient(),
+            heartbeat_interval=5,
+            openwrt_client=FakeOpenWrtClient(),
+            integration_id="test-gateway",
+            spool=spool,
+        )
+
+    pending = spool.pending()
+    assert len(pending) == 1
+    assert pending[0].event_type == "gateway.discovery"
