@@ -42,7 +42,7 @@ class GatewayConnectorClient:
             gateway_id=self._gateway_id,
             gateway_type="openwrt",
             connector_version=self._connector_version,
-            capabilities=["discover", "health_check", "read_events"],
+            capabilities=[],
         )
         return self._post("/api/v1/gateway/connect", request.model_dump(mode="json"))
 
