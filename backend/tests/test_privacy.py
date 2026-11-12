@@ -144,3 +144,18 @@ def test_privacy_list_rejects_invalid_type_and_domain() -> None:
 def test_privacy_analytics_period_is_bounded() -> None:
     assert client.get("/api/v1/privacy/report?days=0").status_code == 422
     assert client.get("/api/v1/privacy/trends?days=366").status_code == 422
+
+
+
+def test_privacy_source_health_reports_no_data_and_recent_ingestion() -> None:
+    register_dns()
+    assert client.get("/api/v1/privacy/sources").json()[0]["status"] == "no_data"
+    response = client.post("/api/v1/dns/pihole-home/queries", json=[{
+        "timestamp": datetime.now(UTC).isoformat(),
+        "domain": "example.org",
+        "client": "192.168.1.20",
+    }])
+    assert response.status_code == 202
+    source = client.get("/api/v1/privacy/sources").json()[0]
+    assert source["status"] == "healthy"
+    assert source["queries_seen"] == 1
