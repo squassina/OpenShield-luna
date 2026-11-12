@@ -3,10 +3,9 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
-
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
@@ -17,10 +16,10 @@ from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
-from openshield.visibility.adapter import NetworkSensorAdapter
-from openshield.visibility.normalizers import normalize_sensor_batch
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
+from openshield.visibility.adapter import NetworkSensorAdapter
+from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
