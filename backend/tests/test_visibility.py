@@ -1,7 +1,11 @@
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
-from openshield.visibility.normalizers import normalize_sensor_batch, normalize_suricata, normalize_zeek
+from openshield.visibility.normalizers import (
+    normalize_sensor_batch,
+    normalize_suricata,
+    normalize_zeek,
+)
 
 client = TestClient(app)
 
