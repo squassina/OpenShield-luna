@@ -1,7 +1,5 @@
 import threading
 from datetime import UTC, datetime
-from typing import Any
-
 import psycopg
 from psycopg.types.json import Jsonb
 
