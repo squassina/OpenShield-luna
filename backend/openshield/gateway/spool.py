@@ -47,6 +47,7 @@ class GatewayEventSpool:
     def _connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._path, timeout=5)
         try:
+            connection.execute("PRAGMA synchronous=FULL")
             yield connection
             connection.commit()
         except Exception:
