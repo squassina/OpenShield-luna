@@ -32,21 +32,25 @@ app = FastAPI(
 
 @app.middleware("http")
 async def collect_http_metrics(request: Request, call_next) -> Response:
-    route = request.scope.get("route")
-    route_path = getattr(route, "path", "unmatched")
     try:
         response = await call_next(request)
     except Exception:
+        route = request.scope.get("route")
         metrics.increment(
             "openshield_http_requests_total",
-            {"method": request.method, "route": route_path, "status": "500"},
+            {
+                "method": request.method,
+                "route": getattr(route, "path", "unmatched"),
+                "status": "500",
+            },
         )
         raise
+    route = request.scope.get("route")
     metrics.increment(
         "openshield_http_requests_total",
         {
             "method": request.method,
-            "route": route_path,
+            "route": getattr(route, "path", "unmatched"),
             "status": str(response.status_code),
         },
     )
