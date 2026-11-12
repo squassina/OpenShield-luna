@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from openshield.integrations.models import Capability, Integration
 
 
@@ -9,7 +11,7 @@ class OpenWrtAdapter:
     """
 
     kind = "openwrt"
-    capabilities = [
+    capabilities: ClassVar[list[Capability]] = [
         Capability.HEALTH_CHECK,
         Capability.READ_EVENTS,
         Capability.DISCOVER,
