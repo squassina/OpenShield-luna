@@ -316,3 +316,27 @@ def test_agent_collects_and_spools_health_while_node_is_offline(
         "gateway.discovery",
         "gateway.health",
     ]
+
+def test_agent_retries_spooled_events_until_node_acknowledges(tmp_path: Path) -> None:
+    from openshield.gateway import agent
+
+    class RecoveringNodeClient:
+        calls = 0
+
+        def ingest_event(self, _event: EventEnvelope) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                raise GatewayTransportError("node unavailable")
+            return {"status": "duplicate"}
+
+    spool = GatewayEventSpool(str(tmp_path / "recovery.sqlite3"))
+    event = sample_gateway_event("recovery-event")
+    spool.enqueue(event)
+    client = RecoveringNodeClient()
+
+    assert agent._flush_spool(client, spool) is False
+    assert spool.pending() == [event]
+
+    assert agent._flush_spool(client, spool) is True
+    assert spool.pending_count() == 0
+    assert client.calls == 2

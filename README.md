@@ -36,6 +36,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Versioned event envelope (`openshield.event.v1`) with validation and provenance.
 - Nearby-host Gateway Connector with bounded reconnect behavior.
 - Durable SQLite event outbox (10,000-event limit) with persistent Docker volume.
+- Automated recovery tests verify offline event collection, spool persistence across recreation, retry-until-acknowledged, and queue drain after Node recovery.
 - Idempotent event ingestion; retries do not duplicate stored events or audit entries.
 - Durable audit records for integration registration, gateway connection, and event ingestion.
 - Prometheus `/metrics` endpoint.
@@ -158,7 +159,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
 | Residential API authentication | Disabled by product decision |
-| Gateway connector protocol v1, heartbeat, durable event outbox | Implemented (hardware pending) |
+| Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass (hardware pending) |
 | PostgreSQL persistence and initial audit records | Implemented; audit hardening/retention pending |
 | Structured logging and Prometheus metrics | Implemented (process-local counters) |
 | On-device OpenWrt agent and secure bootstrap | Pending |

@@ -502,7 +502,7 @@ Recommended sequence:
 - At least one real event is ingested and normalized.
 - Event provenance is retained.
 - Audit captures security-relevant configuration and connection events.
-- Tests cover invalid input, authorization failure, gateway disconnection, Node restart, and recovery.
+- Tests cover invalid input, residential source-provenance rejection, gateway disconnection, durable outbox persistence, retry-until-acknowledged, reconnection drain, and recovery after connector restart.
 - Gateway forwarding is unaffected by Node availability.
 - CI passes.
 
