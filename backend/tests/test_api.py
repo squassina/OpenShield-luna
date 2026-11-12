@@ -1,10 +1,14 @@
 import hashlib
 import json
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
+from openshield.core.storage import PostgresStore
+from openshield.gateway.registry import GatewayConnectionRegistry
+from openshield.integrations.registry import IntegrationRegistry
 
 client = TestClient(app)
 ADMIN_KEY = "a" * 64
@@ -35,9 +39,7 @@ def configure_test_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 def setup_function() -> None:
     from openshield.api import main
 
-    main.registry._integrations.clear()
-    main.events.clear()
-    main.gateway_connections._connections.clear()
+    main.store.reset()
 
 
 def headers(key: str = ADMIN_KEY) -> dict[str, str]:
@@ -350,3 +352,34 @@ def test_integration_registration_rejects_secrets_in_config() -> None:
         },
     )
     assert response.status_code == 422
+
+
+
+def test_persisted_state_survives_store_recreation() -> None:
+    from openshield.api import main
+
+    register_gateway("test-gateway")
+    event = sample_event()
+    event["source"] = {"integration_id": "test-gateway", "kind": "openwrt"}
+    assert client.post(
+        "/api/v1/events",
+        headers=headers(GATEWAY_KEY),
+        json=event,
+    ).status_code == 202
+    assert client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=gateway_connect_payload(),
+    ).status_code == 201
+
+    restarted_store = PostgresStore(os.environ["OPENSHIELD_DATABASE_URL"])
+    assert IntegrationRegistry(restarted_store).get("test-gateway") is not None
+    assert len(restarted_store.list_events()) == 1
+    assert GatewayConnectionRegistry(restarted_store).get_status("test-gateway")["status"] == "connected"
+
+
+def test_duplicate_event_id_is_rejected() -> None:
+    register_gateway()
+    event = sample_event()
+    assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 202
+    assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 409
