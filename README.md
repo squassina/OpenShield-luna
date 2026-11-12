@@ -227,3 +227,51 @@ Authentication, authorization, gateway enrollment, and tenant isolation will be 
 ## License
 
 License not selected yet.
+
+
+## P2 — Privacy Intelligence
+
+P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. Provider records are sent to OpenShield through the bounded JSON ingestion endpoint; the Node does not poll provider APIs or store provider credentials in this release.
+
+### Register a DNS source
+
+~~~bash
+curl -X POST http://localhost:8000/api/v1/integrations \
+  -H 'Content-Type: application/json' \
+  -d '{"integration_id":"pihole-home","kind":"pihole","display_name":"Pi-hole"}'
+
+curl -X POST http://localhost:8000/api/v1/integrations \
+  -H 'Content-Type: application/json' \
+  -d '{"integration_id":"adguard-home","kind":"adguard","display_name":"AdGuard Home"}'
+~~~
+
+Forward query-log records as batches (maximum 500 records and 5 MiB):
+
+~~~bash
+curl -X POST http://localhost:8000/api/v1/dns/pihole-home/queries \
+  -H 'Content-Type: application/json' \
+  --data-binary @pihole-querylog.json
+
+curl -X POST http://localhost:8000/api/v1/dns/adguard-home/queries \
+  -H 'Content-Type: application/json' \
+  --data-binary @adguard-querylog.json
+~~~
+
+Each record accepts domain (or query), client (or client_ip), timestamp (or time), status, and optional query type. Only normalized fields are retained. Event IDs are deterministic for retry-safe ingestion.
+
+### Privacy API
+
+- GET /api/v1/privacy/sources: source ingestion freshness and received query count.
+- GET /api/v1/privacy/analytics/domains?days=30: top domains, blocked counts, tracker queries, unique clients.
+- GET /api/v1/privacy/analytics/devices?days=30: DNS activity grouped by client.
+- GET /api/v1/privacy/trends?days=30: daily query, blocked, tracker, and unique-domain trends.
+- GET /api/v1/privacy/report?days=30: summary rates, top domains/devices, and daily trends.
+- GET /api/v1/privacy/lists: locally managed allow/block entries.
+- POST /api/v1/privacy/lists: add a normalized domain to the local allow/block list.
+- DELETE /api/v1/privacy/lists/{allow|block}/{domain}: remove a local list entry.
+
+### Classification and enforcement boundaries
+
+Tracker classification uses a small, curated suffix set; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs can contain sensitive browsing metadata and client identifiers; keep the Node API on the trusted LAN and protect database backups.
+
+Allow/block entries are stored as OpenShield local desired lists and audited. P2 does not push changes into Pi-hole/AdGuard or block DNS traffic. Provider-native query-log polling/list synchronization and continuously maintained classification feeds are tracked as technical debt. Enforcement remains subject to the later policy/response phase.
