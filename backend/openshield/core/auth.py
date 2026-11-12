@@ -23,6 +23,9 @@ class Permission(StrEnum):
     INTEGRATIONS_WRITE = "integrations:write"
     EVENTS_READ = "events:read"
     EVENTS_WRITE = "events:write"
+    GATEWAY_CONNECT = "gateway:connect"
+    GATEWAY_HEARTBEAT = "gateway:heartbeat"
+    GATEWAY_READ = "gateway:read"
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
@@ -37,7 +40,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.READER: frozenset(
         {Permission.INTEGRATIONS_READ, Permission.EVENTS_READ}
     ),
-    Role.GATEWAY: frozenset({Permission.EVENTS_WRITE}),
+    Role.GATEWAY: frozenset({Permission.EVENTS_WRITE, Permission.GATEWAY_CONNECT, Permission.GATEWAY_HEARTBEAT}),
 }
 
 
