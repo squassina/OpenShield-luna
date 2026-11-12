@@ -267,7 +267,7 @@ def test_register_openwrt_and_probe() -> None:
     )
     assert response.status_code == 200
     assert response.json()["transport"] == "not_connected"
-    assert "read_events" in response.json()["capabilities"]
+    assert response.json()["capabilities"] == ["health_check", "discover"]
 
 
 def test_duplicate_integration_is_rejected() -> None:
@@ -322,4 +322,19 @@ def test_event_rejects_unknown_schema_version() -> None:
     event = sample_event()
     event["schema_version"] = "openshield.event.v2"
     response = client.post("/api/v1/events", headers=headers(), json=event)
+    assert response.status_code == 422
+
+
+
+def test_integration_registration_rejects_secrets_in_config() -> None:
+    response = client.post(
+        "/api/v1/integrations",
+        headers=headers(),
+        json={
+            "integration_id": "router-secret",
+            "kind": "openwrt",
+            "display_name": "Router",
+            "config": {"base_url": "http://192.0.2.1", "password": "must-not-be-stored"},
+        },
+    )
     assert response.status_code == 422
