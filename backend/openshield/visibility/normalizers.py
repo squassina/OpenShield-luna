@@ -8,8 +8,15 @@ from openshield.events.models import EventEnvelope, EventSource, Severity
 
 SURICATA_FIELDS = (
     "src_ip", "src_port", "dest_ip", "dest_port", "proto", "app_proto",
-    "community_id", "flow_id", "alert", "dns", "http", "tls", "flow",
+    "community_id", "flow_id",
 )
+SURICATA_NESTED_FIELDS = {
+    "alert": {"signature", "category", "severity", "action", "signature_id"},
+    "dns": {"type", "rrname", "rrtype", "rcode", "answers"},
+    "http": {"hostname", "url", "http_user_agent", "http_method", "status"},
+    "tls": {"sni", "version", "subject", "issuer", "ja3", "ja3s"},
+    "flow": {"pkts_toserver", "pkts_toclient", "bytes_toserver", "bytes_toclient", "state"},
+}
 ZEEK_FIELDS = (
     "uid", "id.orig_h", "id.orig_p", "id.resp_h", "id.resp_p", "proto",
     "service", "duration", "orig_bytes", "resp_bytes", "conn_state",
@@ -52,6 +59,10 @@ def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelop
         Severity.LOW if severity_value == 3 else Severity.INFO
     )
     payload = {key: raw[key] for key in SURICATA_FIELDS if key in raw}
+    for key, allowed in SURICATA_NESTED_FIELDS.items():
+        value = raw.get(key)
+        if isinstance(value, dict):
+            payload[key] = {name: value[name] for name in allowed if name in value}
     if event_type == "alert" and isinstance(alert.get("signature"), str):
         payload["signature"] = alert["signature"][:256]
     return EventEnvelope(
