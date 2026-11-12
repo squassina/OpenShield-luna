@@ -126,6 +126,8 @@ def main() -> None:
             "OPENSHIELD_OPENWRT_PASSWORD, and OPENSHIELD_INTEGRATION_ID "
             "must be configured together"
         )
+    if integration_id and integration_id != gateway_id:
+        raise SystemExit("OPENSHIELD_INTEGRATION_ID must match OPENSHIELD_GATEWAY_ID")
 
     openwrt_client = None
     capabilities = []
