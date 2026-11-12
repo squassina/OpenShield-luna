@@ -672,3 +672,10 @@ Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) t
 - No firewall, routing, wireless, or forwarding changes.
 
 P0 hardware acceptance remains pending until this runbook is executed on the target gateway and its evidence is recorded.
+
+
+## P0 implementation checkpoint
+
+**Software scope: implemented and CI-validated.** The current branch covers authentication/RBAC, gateway handshake and identity binding, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, protected metrics, and durable connector-side event retry/recovery.
+
+**Physical gateway acceptance: pending.** Run the hardware validation runbook against the target OpenWrt model/firmware before marking P0 fully accepted. CI cannot establish real rpcd ACL compatibility or prove that the user's gateway continues forwarding during a Node outage.
