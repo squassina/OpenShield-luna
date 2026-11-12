@@ -57,6 +57,20 @@ class PostgresStore:
                     last_seen_at TIMESTAMPTZ NOT NULL
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS audit_records (
+                    audit_id BIGSERIAL PRIMARY KEY,
+                    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    actor_id TEXT,
+                    action TEXT NOT NULL,
+                    target_id TEXT,
+                    details JSONB NOT NULL DEFAULT '{}'::jsonb
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS audit_records_occurred_at_idx
+                ON audit_records (occurred_at DESC)
+                """,
             ]
             with (
                 psycopg.connect(self._dsn, connect_timeout=5) as connection,
@@ -77,10 +91,12 @@ class PostgresStore:
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE events, gateway_connections, integrations"
+                "TRUNCATE TABLE audit_records, events, gateway_connections, integrations RESTART IDENTITY"
             )
 
-    def insert_integration(self, integration: Integration) -> None:
+    def insert_integration(
+        self, integration: Integration, actor_id: str | None = None
+    ) -> None:
         payload = integration.model_dump(mode="json")
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -94,6 +110,16 @@ class PostgresStore:
             )
             if cursor.fetchone() is None:
                 raise ValueError("Integration already exists")
+            self._insert_audit(
+                cursor,
+                "integration.registered",
+                actor_id,
+                integration.integration_id,
+                {
+                    "kind": integration.kind,
+                    "capabilities": [item.value for item in integration.capabilities],
+                },
+            )
 
     def get_integration(self, integration_id: str) -> Integration | None:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -112,7 +138,7 @@ class PostgresStore:
             rows = cursor.fetchall()
         return [Integration.model_validate(row[0]) for row in rows]
 
-    def insert_event(self, event: EventEnvelope) -> None:
+    def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -125,6 +151,17 @@ class PostgresStore:
             )
             if cursor.fetchone() is None:
                 raise ValueError("Event already exists")
+            self._insert_audit(
+                cursor,
+                "event.ingested",
+                actor_id,
+                event.event_id,
+                {
+                    "event_type": event.event_type,
+                    "severity": event.severity.value,
+                    "source_integration_id": event.source.integration_id,
+                },
+            )
 
     def list_events(self) -> list[EventEnvelope]:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -134,7 +171,9 @@ class PostgresStore:
             rows = cursor.fetchall()
         return [EventEnvelope.model_validate(row[0]) for row in rows]
 
-    def connect_gateway(self, gateway: GatewayConnection) -> None:
+    def connect_gateway(
+        self, gateway: GatewayConnection, actor_id: str | None = None
+    ) -> None:
         payload = gateway.model_dump(mode="json")
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -153,6 +192,17 @@ class PostgresStore:
                     gateway.connected_at,
                     gateway.last_seen_at,
                 ),
+            )
+            self._insert_audit(
+                cursor,
+                "gateway.connected",
+                actor_id,
+                gateway.gateway_id,
+                {
+                    "gateway_type": gateway.gateway_type,
+                    "connector_version": gateway.connector_version,
+                    "capabilities": [item.value for item in gateway.capabilities],
+                },
             )
 
     def heartbeat_gateway(self, gateway_id: str) -> GatewayConnection | None:
@@ -196,3 +246,53 @@ class PostgresStore:
             )
             rows = cursor.fetchall()
         return [GatewayConnection.model_validate(row[0]) for row in rows]
+
+    @staticmethod
+    def _insert_audit(
+        cursor: psycopg.Cursor,
+        action: str,
+        actor_id: str | None,
+        target_id: str | None,
+        details: dict[str, object],
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO audit_records (action, actor_id, target_id, details)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (action, actor_id, target_id, Jsonb(details)),
+        )
+
+    def write_audit(
+        self,
+        action: str,
+        actor_id: str | None,
+        target_id: str | None,
+        details: dict[str, object],
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            self._insert_audit(cursor, action, actor_id, target_id, details)
+
+    def list_audit(self, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT audit_id, occurred_at, actor_id, action, target_id, details
+                FROM audit_records
+                ORDER BY audit_id DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "audit_id": row[0],
+                "occurred_at": row[1].isoformat(),
+                "actor_id": row[2],
+                "action": row[3],
+                "target_id": row[4],
+                "details": row[5],
+            }
+            for row in rows
+        ]
