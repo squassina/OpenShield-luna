@@ -177,7 +177,7 @@ P1 adds the first network-observation pipeline. Suricata and Zeek remain externa
 
 - **Suricata EVE JSON:** alert, flow, DNS, HTTP, TLS, SSH, and anomaly records.
 - **Zeek JSON logs:** conn, DNS, HTTP, and SSL records.
-- Batches are limited to 500 records. Only documented fields are retained; arbitrary sensor fields and secret-like fields are discarded.
+- Batches are limited to 500 records and 5 MiB by declared HTTP Content-Length. Only documented fields are retained; arbitrary sensor fields and secret-like fields are discarded.
 - Event IDs are deterministic for retry-safe ingestion. Event type and timestamp are part of the identity to avoid collisions across record types.
 - Suricata alert severity is mapped to the common OpenShield severity model.
 
@@ -207,14 +207,16 @@ curl -X POST http://localhost:8000/api/v1/sensors/zeek-home/events \
 
 ### Network visibility API
 
-- `GET /api/v1/inventory/devices`: observed IP addresses, protocols, first/last seen, observation counts.
-- `GET /api/v1/inventory/topology`: observed source-to-destination edges and protocol counts. This is inferred from sensor connection events, not an authoritative physical topology.
-- `GET /api/v1/sensors`: sensor health based on event recency (healthy within five minutes, stale afterward, or no_data).
-- `GET /api/v1/events?integration_id=...&event_type=...&severity=...&limit=...`: filtered event exploration.
+- `GET /api/v1/inventory/devices`: observed, validated IP addresses, IP version/scope, protocols, first/last seen, and observation counts. Invalid, unspecified, and multicast addresses are excluded.
+- `GET /api/v1/inventory/topology`: observed source-to-destination edges, protocol counts, and inferred direction (`internal`, `outbound`, `inbound`, `external`, or `other`). This is not an authoritative physical topology.
+- `GET /api/v1/sensors`: sensor ingestion freshness based on the Node-generated `observed_at` timestamp (healthy within five minutes, stale afterward, or no_data). This confirms recent delivery to OpenShield, not sensor process or packet-capture health.
+- `GET /api/v1/events?integration_id=...&event_type=...&severity=...&limit=...`: filtered event exploration. Filters, ordering, and limits execute in PostgreSQL.
 
 The residential Node API is unauthenticated. Keep sensor ingestion endpoints and port 8000 restricted to the trusted LAN; do not expose them to the Internet. Configure Suricata/Zeek to send only the records needed for visibility. The P1 APIs do not block traffic or change gateway configuration.
 
-The full interactive web dashboard remains in P2, consistent with the product roadmap decision.
+Inventory and topology use database-side aggregation; the API does not load the full raw event history to calculate these views. Event retention, cursor pagination, sustained-load benchmarks, and database partitioning remain future hardening work.
+
+The full interactive web dashboard remains in P2, consistent with the product roadmap decision. Live Suricata/Zeek deployment validation is still pending; see the [technical debt register](docs/technical-debt.md).
 
 ## Security
 
