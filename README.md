@@ -219,12 +219,12 @@ Counters are process-local and reset on restart. Histograms, database-backed gau
 
 | Workstream | Status |
 |---|---|
-| Repository baseline and docs | In progress |
+| Repository baseline and docs | Implemented |
 | Node API and health checks | Implemented |
 | Integration registry and capability model | Implemented (PostgreSQL-backed) |
 | OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; mocked tests, hardware pending) |
 | Versioned event schema and normalizer | Implemented |
-| Event ingestion | Implemented (PostgreSQL-backed; duplicate event IDs rejected) |
+| Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
 | Gateway connector protocol v1, identity binding, heartbeat, and durable event outbox | Implemented (PostgreSQL presence + bounded SQLite connector spool) |
@@ -235,11 +235,11 @@ Counters are process-local and reset on restart. Histograms, database-backed gau
 | Structured logging | Implemented |
 | Metrics | Implemented (admin-protected Prometheus counters; process-local) |
 | OpenWrt RPC credentials via deployment environment and config secret rejection | Implemented (static env secrets; rotation pending) |
-| Disconnect/recovery and real gateway validation | Pending |
+| Disconnect/recovery | Implemented (CI-simulated durable outbox); physical gateway validation pending |
 | Docker-first runtime, lint, and test environment | Implemented |
 | CI and automated tests | Implemented; runs in Docker |
 
-CI uses Docker Compose for lint and tests, so local validation and CI share the same Python/container build. Ruff checks are kept clean, and pytest treats warnings as errors. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
+CI uses Docker Compose for lint and tests, so local validation and CI share the same Python/container build. Ruff checks are kept clean, and pytest treats warnings as errors. P0 software scope is implemented and CI-validated; physical OpenWrt compatibility and forwarding-independence acceptance remain pending until the hardware runbook is executed. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
 
 ## Security
 
