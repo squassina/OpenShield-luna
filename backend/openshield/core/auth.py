@@ -27,6 +27,7 @@ class Permission(StrEnum):
     GATEWAY_HEARTBEAT = "gateway:heartbeat"
     GATEWAY_READ = "gateway:read"
     AUDIT_READ = "audit:read"
+    METRICS_READ = "metrics:read"
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
