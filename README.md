@@ -31,13 +31,17 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 - Unit/API tests.
 - Bearer API-key authentication with SHA-256 key hashes supplied through environment configuration.
 - Role-based authorization for admin, operator, reader, and gateway principals.
+- Versioned gateway connector handshake (`openshield.gateway.v1`) authenticated with a gateway-scoped API key.
+- Gateway identity bound to the API key ID, read-only capability advertisement, and authenticated heartbeat.
+- In-memory gateway presence/status with a 90-second freshness window and admin-only status inspection.
 - Fail-closed behavior: protected endpoints return 503 when authentication configuration is missing or invalid.
 
 ### Deliberate P0 limitations
 
 - Authentication currently uses static API keys; rotation, revocation workflow, identity federation, and gateway mTLS bootstrap remain future work.
 - API key hashes are configured through `OPENSHIELD_API_KEYS`; raw API keys are never stored by the application.
-- OpenWrt adapter is a safe stub; authenticated gateway transport is not implemented.
+- OpenWrt adapter is a safe stub; no on-device OpenWrt connector agent or outbound transport client is implemented yet. The current protocol is the authenticated gateway-to-Node API contract.
+- Gateway connection state is in-memory and is lost on Node restart; heartbeat freshness is evaluated when status is queried (90-second timeout).
 - Registry and events are in-memory; PostgreSQL persistence/migrations remain pending.
 - Audit trail is not yet durable. Authentication decisions are not currently persisted as audit records.
 - No metrics exporter, reconnect loop, or hardware validation exists.
@@ -113,6 +117,24 @@ curl http://localhost:8000/api/v1/integrations \
 
 Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints and makes readiness return `503`. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
 
+## Gateway connector protocol v1
+
+A gateway connects using a dedicated API key whose configured `key_id` must equal the gateway's `gateway_id`. The key must have the `gateway` role. The connector sends `openshield.gateway.v1` with its type, version, and declared capabilities:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/gateway/connect \\
+  -H "Authorization: Bearer $OPENSHIELD_GATEWAY_API_KEY" \\
+  -H 'Content-Type: application/json' \\
+  -d '{"protocol_version":"openshield.gateway.v1","gateway_id":"test-gateway","gateway_type":"openwrt","connector_version":"0.1.0","capabilities":["discover","health_check","read_events"]}'
+
+curl -X POST http://localhost:8000/api/v1/gateway/heartbeat \\
+  -H "Authorization: Bearer $OPENSHIELD_GATEWAY_API_KEY" \\
+  -H 'Content-Type: application/json' \\
+  -d '{"protocol_version":"openshield.gateway.v1"}'
+```
+
+Only `discover`, `health_check`, and `read_events` can currently be advertised. Configuration writes and action execution are rejected. Administrators can inspect `GET /api/v1/gateways`; a gateway is reported as stale after 90 seconds without a heartbeat. This initial registry is in-memory. It is a protocol/API foundation, not yet an installable OpenWrt-side daemon; gateway forwarding remains independent of the Node.
+
 ## API quick start
 
 Register an OpenWrt integration (requires `integrations:write`):
@@ -152,7 +174,9 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Event ingestion | Implemented (in-memory) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
-| Key rotation/revocation and gateway mTLS | Pending |
+| Gateway connector protocol v1, identity binding, and heartbeat | Implemented (Node API; in-memory) |
+| On-device OpenWrt connector agent and secure bootstrap/mTLS | Pending |
+| Key rotation/revocation | Pending |
 | Durable persistence and audit | Pending |
 | Structured logging | Implemented |
 | Metrics | Pending |
