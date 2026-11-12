@@ -1,5 +1,6 @@
 import threading
 from datetime import UTC, datetime
+
 import psycopg
 from psycopg.types.json import Jsonb
 
@@ -24,7 +25,7 @@ class PostgresStore:
         if not self._dsn:
             raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
         self.ensure_schema()
-        return psycopg.connect(self._dsn)
+        return psycopg.connect(self._dsn, connect_timeout=5)
 
     def ensure_schema(self) -> None:
         if self._schema_ready:
@@ -57,7 +58,7 @@ class PostgresStore:
                 )
                 """,
             ]
-            with psycopg.connect(self._dsn) as connection:
+            with psycopg.connect(self._dsn, connect_timeout=5) as connection:
                 with connection.cursor() as cursor:
                     for statement in statements:
                         cursor.execute(statement)
