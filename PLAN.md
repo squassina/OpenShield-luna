@@ -636,3 +636,24 @@ The Node now exposes an admin-protected Prometheus text endpoint at `GET /metric
 Remaining:
 - Counters reset on process restart.
 - Histograms/latency, database gauges, scrape deployment, alerting, and long-term metrics storage remain pending.
+
+
+## P0 implementation status — durable gateway event recovery
+
+The nearby-host connector now uses a local SQLite outbox:
+
+- Events are persisted before delivery and deleted only after the Node acknowledges them.
+- The connector drains pending events in batches and retries after reconnect.
+- When the Node is unavailable, the connector continues local OpenWrt discovery/health polling and queues resulting events.
+- Node event ingestion is idempotent: duplicate event IDs return HTTP 202 with `status=duplicate`, so retries after a lost response are safe.
+- Queue capacity is bounded at 10,000 pending events; the connector refuses new events when full rather than discarding older pending events.
+- SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; a newly created spool directory uses mode 0700.
+- Docker Compose mounts a named volume at `/var/lib/openshield`, preserving the spool across connector container restarts.
+
+Configuration:
+- `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`).
+
+Remaining:
+- Spool contents are not encrypted at rest; host/volume protection is required.
+- Queue capacity/usage metrics and alerting are pending.
+- A full hardware outage/recovery drill against a real OpenWrt router is pending.
