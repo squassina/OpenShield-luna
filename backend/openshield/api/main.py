@@ -1,7 +1,8 @@
 import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.responses import PlainTextResponse
 
 from openshield.core.auth import (
     Permission,
@@ -11,6 +12,7 @@ from openshield.core.auth import (
     require_permissions,
 )
 from openshield.core.logging import configure_logging
+from openshield.core.metrics import MetricsRegistry
 from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
@@ -27,9 +29,33 @@ app = FastAPI(
     description="Gateway-first network security and privacy intelligence node.",
 )
 
+
+@app.middleware("http")
+async def collect_http_metrics(request: Request, call_next) -> Response:
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "unmatched")
+    try:
+        response = await call_next(request)
+    except Exception:
+        metrics.increment(
+            "openshield_http_requests_total",
+            {"method": request.method, "route": route_path, "status": "500"},
+        )
+        raise
+    metrics.increment(
+        "openshield_http_requests_total",
+        {
+            "method": request.method,
+            "route": route_path,
+            "status": str(response.status_code),
+        },
+    )
+    return response
+
 store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
+metrics = MetricsRegistry()
 adapters = {"openwrt": OpenWrtAdapter()}
 
 
@@ -102,6 +128,7 @@ def connect_gateway(
     if principal.key_id != request.gateway_id:
         raise HTTPException(status_code=403, detail="Gateway identity does not match API key")
     connection = gateway_connections.connect(request, actor_id=principal.key_id)
+    metrics.increment("openshield_gateway_connections_total")
     return {
         "status": "connected",
         "gateway_id": connection.gateway_id,
@@ -124,6 +151,7 @@ def gateway_heartbeat(
     connection = gateway_connections.heartbeat(principal.key_id)
     if connection is None:
         raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
+    metrics.increment("openshield_gateway_heartbeats_total")
     return {
         "status": "acknowledged",
         "gateway_id": connection.gateway_id,
@@ -162,6 +190,7 @@ def ingest_event(
     principal: Annotated[Principal, Depends(require_permissions(Permission.EVENTS_WRITE))],
 ) -> dict[str, str]:
     if principal.role == Role.GATEWAY and event.source.integration_id != principal.key_id:
+        metrics.increment("openshield_gateway_event_source_denials_total")
         store.write_audit(
             "authorization.denied",
             principal.key_id,
@@ -181,6 +210,7 @@ def ingest_event(
         store.insert_event(event, actor_id=principal.key_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    metrics.increment("openshield_events_ingested_total")
     return {"status": "accepted", "event_id": event.event_id}
 
 
@@ -203,3 +233,15 @@ def list_audit_records(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict[str, object]]:
     return store.list_audit(limit)
+
+
+
+@app.get(
+    "/metrics",
+    response_class=PlainTextResponse,
+    tags=["metrics"],
+    dependencies=[Depends(require_permissions(Permission.METRICS_READ))],
+    include_in_schema=False,
+)
+def prometheus_metrics() -> PlainTextResponse:
+    return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
