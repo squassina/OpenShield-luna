@@ -419,3 +419,14 @@ def test_audit_log_is_admin_only() -> None:
 def test_audit_limit_is_bounded() -> None:
     response = client.get("/api/v1/audit?limit=501", headers=headers())
     assert response.status_code == 422
+
+
+
+def test_metrics_endpoint_is_admin_only_and_prometheus_formatted() -> None:
+    admin_response = client.get("/metrics", headers=headers())
+    assert admin_response.status_code == 200
+    assert "text/plain" in admin_response.headers["content-type"]
+    assert "openshield_http_requests_total" in admin_response.text
+
+    reader_response = client.get("/metrics", headers=headers(READER_KEY))
+    assert reader_response.status_code == 403
