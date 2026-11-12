@@ -49,9 +49,11 @@ def test_connector_agent_rejects_unsafe_heartbeat_interval() -> None:
 def test_connector_client_surfaces_transport_failures() -> None:
     from urllib.error import URLError
 
-    with patch("openshield.gateway.client.urlopen", side_effect=URLError("offline")):
-        with pytest.raises(GatewayTransportError, match="Unable to reach"):
-            make_client().heartbeat()
+    with (
+        patch("openshield.gateway.client.urlopen", side_effect=URLError("offline")),
+        pytest.raises(GatewayTransportError, match="Unable to reach"),
+    ):
+        make_client().heartbeat()
 
 
 def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.MonkeyPatch) -> None:
