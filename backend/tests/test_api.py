@@ -377,11 +377,15 @@ def test_persisted_state_survives_store_recreation() -> None:
     assert GatewayConnectionRegistry(restarted_store).get_status("test-gateway")["status"] == "connected"
 
 
-def test_duplicate_event_id_is_rejected() -> None:
+def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
     register_gateway()
     event = sample_event()
-    assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 202
-    assert client.post("/api/v1/events", headers=headers(), json=event).status_code == 409
+    first = client.post("/api/v1/events", headers=headers(), json=event)
+    duplicate = client.post("/api/v1/events", headers=headers(), json=event)
+    assert first.status_code == 202
+    assert first.json()["status"] == "accepted"
+    assert duplicate.status_code == 202
+    assert duplicate.json()["status"] == "duplicate"
 
 
 
