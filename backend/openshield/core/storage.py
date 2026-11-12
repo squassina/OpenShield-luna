@@ -58,32 +58,28 @@ class PostgresStore:
                 )
                 """,
             ]
-            with psycopg.connect(self._dsn, connect_timeout=5) as connection:
-                with connection.cursor() as cursor:
+            with psycopg.connect(self._dsn, connect_timeout=5) as connection, connection.cursor() as cursor:
                     for statement in statements:
                         cursor.execute(statement)
             self._schema_ready = True
 
     def is_ready(self) -> bool:
         try:
-            with self._connect() as connection:
-                with connection.cursor() as cursor:
+            with self._connect() as connection, connection.cursor() as cursor:
                     cursor.execute("SELECT 1")
                     return cursor.fetchone() == (1,)
         except (psycopg.Error, StorageConfigurationError):
             return False
 
     def reset(self) -> None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "TRUNCATE TABLE events, gateway_connections, integrations"
                 )
 
     def insert_integration(self, integration: Integration) -> None:
         payload = integration.model_dump(mode="json")
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO integrations (integration_id, payload)
@@ -97,8 +93,7 @@ class PostgresStore:
                     raise ValueError("Integration already exists")
 
     def get_integration(self, integration_id: str) -> Integration | None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM integrations WHERE integration_id = %s",
                     (integration_id,),
@@ -107,8 +102,7 @@ class PostgresStore:
         return Integration.model_validate(row[0]) if row else None
 
     def list_integrations(self) -> list[Integration]:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM integrations ORDER BY integration_id"
                 )
@@ -116,8 +110,7 @@ class PostgresStore:
         return [Integration.model_validate(row[0]) for row in rows]
 
     def insert_event(self, event: EventEnvelope) -> None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO events (event_id, payload)
@@ -131,8 +124,7 @@ class PostgresStore:
                     raise ValueError("Event already exists")
 
     def list_events(self) -> list[EventEnvelope]:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM events ORDER BY received_at, event_id"
                 )
@@ -141,8 +133,7 @@ class PostgresStore:
 
     def connect_gateway(self, gateway: GatewayConnection) -> None:
         payload = gateway.model_dump(mode="json")
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     """
                     INSERT INTO gateway_connections
@@ -162,8 +153,7 @@ class PostgresStore:
                 )
 
     def heartbeat_gateway(self, gateway_id: str) -> GatewayConnection | None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM gateway_connections WHERE gateway_id = %s",
                     (gateway_id,),
@@ -188,8 +178,7 @@ class PostgresStore:
         return updated
 
     def get_gateway(self, gateway_id: str) -> GatewayConnection | None:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM gateway_connections WHERE gateway_id = %s",
                     (gateway_id,),
@@ -198,8 +187,7 @@ class PostgresStore:
         return GatewayConnection.model_validate(row[0]) if row else None
 
     def list_gateways(self) -> list[GatewayConnection]:
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
+        with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT payload FROM gateway_connections ORDER BY gateway_id"
                 )
