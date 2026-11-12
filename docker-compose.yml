@@ -21,7 +21,6 @@ services:
       target: runtime
     container_name: openshield-node
     environment:
-      OPENSHIELD_API_KEYS: ${OPENSHIELD_API_KEYS:-}
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
     depends_on:
       openshield-db:
@@ -68,12 +67,10 @@ services:
     environment:
       OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}
       OPENSHIELD_GATEWAY_ID: ${OPENSHIELD_GATEWAY_ID:-}
-      OPENSHIELD_GATEWAY_API_KEY: ${OPENSHIELD_GATEWAY_API_KEY:-}
       OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL: ${OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL:-30}
       OPENSHIELD_OPENWRT_URL: ${OPENSHIELD_OPENWRT_URL:-}
       OPENSHIELD_OPENWRT_USERNAME: ${OPENSHIELD_OPENWRT_USERNAME:-}
       OPENSHIELD_OPENWRT_PASSWORD: ${OPENSHIELD_OPENWRT_PASSWORD:-}
-      OPENSHIELD_INTEGRATION_ID: ${OPENSHIELD_INTEGRATION_ID:-}
       OPENSHIELD_GATEWAY_SPOOL_PATH: ${OPENSHIELD_GATEWAY_SPOOL_PATH:-/var/lib/openshield/gateway-spool.sqlite3}
     volumes:
       - openshield-gateway-spool:/var/lib/openshield
