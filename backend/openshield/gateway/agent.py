@@ -36,13 +36,14 @@ def _flush_spool(
     client: GatewayConnectorClient,
     spool: GatewayEventSpool,
 ) -> bool:
-    for event in spool.pending():
-        try:
-            client.ingest_event(event)
-        except GatewayTransportError as exc:
-            logger.warning("Gateway event delivery deferred: %s", exc)
-            return False
-        spool.acknowledge(event.event_id)
+    while pending := spool.pending():
+        for event in pending:
+            try:
+                client.ingest_event(event)
+            except GatewayTransportError as exc:
+                logger.warning("Gateway event delivery deferred: %s", exc)
+                return False
+            spool.acknowledge(event.event_id)
     return True
 
 
