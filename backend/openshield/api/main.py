@@ -95,7 +95,7 @@ def discover_integration(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     try:
         return adapters[item.kind].discover(item)
-    except (OpenWrtRPCError, ValueError) as exc:
+    except (OpenWrtRPCError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -110,7 +110,7 @@ def check_integration_health(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     try:
         return adapters[item.kind].health_check(item)
-    except (OpenWrtRPCError, ValueError) as exc:
+    except (OpenWrtRPCError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
