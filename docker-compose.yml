@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: openshield-node
     ports:
       - "8000:8000"
@@ -12,3 +13,21 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+
+  openshield-test:
+    image: openshield-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    profiles: ["tools"]
+    command: ["pytest", "-v", "tests"]
+
+  openshield-lint:
+    image: openshield-dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    profiles: ["tools"]
+    command: ["ruff", "check", "openshield", "tests"]
