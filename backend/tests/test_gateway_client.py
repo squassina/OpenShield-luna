@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -202,7 +203,7 @@ def sample_gateway_event(event_id: str = "spooled-event") -> EventEnvelope:
     )
 
 
-def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path) -> None:
+def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path: Path) -> None:
     path = tmp_path / "gateway-spool.sqlite3"
     spool = GatewayEventSpool(str(path))
     event = sample_gateway_event()
@@ -216,7 +217,7 @@ def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path) -> None:
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_gateway_spool_enforces_capacity(tmp_path) -> None:
+def test_gateway_spool_enforces_capacity(tmp_path: Path) -> None:
     spool = GatewayEventSpool(str(tmp_path / "limited.sqlite3"), max_events=1)
     spool.enqueue(sample_gateway_event("event-one"))
     with pytest.raises(SpoolFullError, match="spool is full"):
@@ -226,7 +227,7 @@ def test_gateway_spool_enforces_capacity(tmp_path) -> None:
 
 def test_agent_retains_event_when_node_delivery_fails(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     from openshield.gateway import agent
 
@@ -242,7 +243,10 @@ def test_agent_retains_event_when_node_delivery_fails(
             return {"board": {"hostname": "router"}, "interfaces": []}
 
     spool = GatewayEventSpool(str(tmp_path / "offline.sqlite3"))
-    monkeypatch.setattr(agent.time, "sleep", lambda _delay: (_ for _ in ()).throw(KeyboardInterrupt))
+    def stop_agent(_delay: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", stop_agent)
     with pytest.raises(KeyboardInterrupt):
         run_agent(
             OfflineNodeClient(),
@@ -255,3 +259,42 @@ def test_agent_retains_event_when_node_delivery_fails(
     pending = spool.pending()
     assert len(pending) == 1
     assert pending[0].event_type == "gateway.discovery"
+
+
+
+def test_agent_collects_and_spools_health_while_node_is_offline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openshield.gateway import agent
+
+    class OfflineNodeClient:
+        def connect(self) -> dict[str, object]:
+            raise GatewayTransportError("node unavailable")
+
+    class FakeOpenWrtClient:
+        def discover(self) -> dict[str, object]:
+            return {"board": {"hostname": "router"}, "interfaces": []}
+
+        def health_check(self) -> dict[str, object]:
+            return {"status": "reachable", "hostname": "router"}
+
+    spool = GatewayEventSpool(str(tmp_path / "offline-connect.sqlite3"))
+
+    def stop_agent(_delay: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", stop_agent)
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(
+            OfflineNodeClient(),
+            heartbeat_interval=5,
+            openwrt_client=FakeOpenWrtClient(),
+            integration_id="test-gateway",
+            spool=spool,
+        )
+
+    assert [event.event_type for event in spool.pending()] == [
+        "gateway.discovery",
+        "gateway.health",
+    ]
