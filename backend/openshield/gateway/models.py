@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openshield.integrations.models import Capability
 
@@ -14,6 +14,14 @@ class GatewayConnectRequest(BaseModel):
     gateway_type: Literal["openwrt"]
     connector_version: str = Field(min_length=1, max_length=40)
     capabilities: list[Capability] = Field(max_length=16)
+
+    @field_validator("capabilities")
+    @classmethod
+    def validate_capabilities(cls, values: list[Capability]) -> list[Capability]:
+        allowed = {Capability.DISCOVER, Capability.HEALTH_CHECK, Capability.READ_EVENTS}
+        if len(values) != len(set(values)) or not set(values).issubset(allowed):
+            raise ValueError("Gateway advertised unsupported or duplicate capabilities")
+        return values
 
 
 class GatewayHeartbeatRequest(BaseModel):
