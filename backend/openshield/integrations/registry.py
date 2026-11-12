@@ -2,19 +2,25 @@ from openshield.integrations import models
 
 
 CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
-    "openwrt": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS, models.Capability.DISCOVER],
+    "openwrt": [
+        models.Capability.HEALTH_CHECK,
+        models.Capability.READ_EVENTS,
+        models.Capability.DISCOVER,
+    ],
 }
 
 
-class models.IntegrationRegistry:
+class IntegrationRegistry:
     """In-memory registry for the P0 API foundation; persistence is a follow-up."""
 
     def __init__(self) -> None:
         self._integrations: dict[str, models.Integration] = {}
 
-    def register(self, registration: models.models.IntegrationRegistration) -> models.Integration:
+    def register(
+        self, registration: models.IntegrationRegistration
+    ) -> models.Integration:
         if registration.integration_id in self._integrations:
-            raise ValueError("models.Integration already exists")
+            raise ValueError("Integration already exists")
         capabilities = CAPABILITIES_BY_KIND.get(registration.kind)
         if capabilities is None:
             raise ValueError("Unsupported integration kind")
