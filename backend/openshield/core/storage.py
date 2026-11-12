@@ -66,6 +66,20 @@ class PostgresStore:
                 ON events ((payload->>'severity'))
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS privacy_lists (
+                    integration_id TEXT NOT NULL,
+                    list_type TEXT NOT NULL CHECK (list_type IN ('allow', 'block')),
+                    domain TEXT NOT NULL,
+                    comment TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (integration_id, list_type, domain)
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS privacy_lists_domain_idx
+                ON privacy_lists (domain)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS gateway_connections (
                     gateway_id TEXT PRIMARY KEY,
                     payload JSONB NOT NULL,
@@ -107,7 +121,7 @@ class PostgresStore:
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, events, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
 
     def insert_integration(
@@ -288,6 +302,124 @@ class PostgresStore:
             row[0]: {"events_seen": row[1], "last_observed_at": row[2]}
             for row in rows
         }
+
+    def privacy_domain_stats(self, days: int = 30, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT payload->>'domain', COUNT(*),
+                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker'),
+                       COUNT(DISTINCT payload->>'client'),
+                       MAX((payload->>'observed_at')::timestamptz)
+                FROM events
+                WHERE payload->>'event_type' = 'privacy.dns.query'
+                  AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
+                GROUP BY payload->>'domain'
+                ORDER BY COUNT(*) DESC, payload->>'domain'
+                LIMIT %s
+                """,
+                (days, limit),
+            )
+            rows = cursor.fetchall()
+        return [
+            {"domain": r[0], "queries": r[1], "blocked": r[2], "tracker_queries": r[3],
+             "unique_clients": r[4], "last_seen": r[5].isoformat() if r[5] else None}
+            for r in rows
+        ]
+
+    def privacy_client_stats(self, days: int = 30, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(payload->>'client', 'unknown'), COUNT(*),
+                       COUNT(DISTINCT payload->>'domain'),
+                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker')
+                FROM events
+                WHERE payload->>'event_type' = 'privacy.dns.query'
+                  AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
+                GROUP BY COALESCE(payload->>'client', 'unknown')
+                ORDER BY COUNT(*) DESC
+                LIMIT %s
+                """,
+                (days, limit),
+            )
+            rows = cursor.fetchall()
+        return [
+            {"client": r[0], "queries": r[1], "unique_domains": r[2],
+             "blocked": r[3], "tracker_queries": r[4]}
+            for r in rows
+        ]
+
+    def privacy_trends(self, days: int = 30) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT date_trunc('day', (payload->>'occurred_at')::timestamptz)::date,
+                       COUNT(*),
+                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker'),
+                       COUNT(DISTINCT payload->>'domain')
+                FROM events
+                WHERE payload->>'event_type' = 'privacy.dns.query'
+                  AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
+                GROUP BY 1 ORDER BY 1
+                """,
+                (days,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {"date": r[0].isoformat(), "queries": r[1], "blocked": r[2],
+             "tracker_queries": r[3], "unique_domains": r[4]}
+            for r in rows
+        ]
+
+    def upsert_privacy_list(
+        self, integration_id: str, list_type: str, domain: str, comment: str = ""
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO privacy_lists (integration_id, list_type, domain, comment)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (integration_id, list_type, domain)
+                DO UPDATE SET comment = EXCLUDED.comment, updated_at = NOW()
+                """,
+                (integration_id, list_type, domain, comment),
+            )
+            self._insert_audit(cursor, "privacy.list.updated", None, domain,
+                               {"integration_id": integration_id, "list_type": list_type})
+
+    def list_privacy_lists(self, integration_id: str | None = None) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            if integration_id:
+                cursor.execute(
+                    "SELECT integration_id, list_type, domain, comment, updated_at FROM privacy_lists WHERE integration_id = %s ORDER BY list_type, domain",
+                    (integration_id,),
+                )
+            else:
+                cursor.execute(
+                    "SELECT integration_id, list_type, domain, comment, updated_at FROM privacy_lists ORDER BY integration_id, list_type, domain"
+                )
+            rows = cursor.fetchall()
+        return [
+            {"integration_id": r[0], "list_type": r[1], "domain": r[2],
+             "comment": r[3], "updated_at": r[4].isoformat()}
+            for r in rows
+        ]
+
+    def delete_privacy_list_item(self, integration_id: str, list_type: str, domain: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM privacy_lists WHERE integration_id = %s AND list_type = %s AND domain = %s RETURNING domain",
+                (integration_id, list_type, domain),
+            )
+            deleted = cursor.fetchone() is not None
+            if deleted:
+                self._insert_audit(cursor, "privacy.list.deleted", None, domain,
+                                   {"integration_id": integration_id, "list_type": list_type})
+        return deleted
 
     def connect_gateway(
         self, gateway: GatewayConnection, actor_id: str | None = None
