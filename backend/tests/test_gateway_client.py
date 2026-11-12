@@ -215,6 +215,12 @@ def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path: Path) -> N
     restarted_spool.acknowledge(event.event_id)
     assert restarted_spool.pending_count() == 0
     assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_gateway_spool_requires_absolute_path() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        GatewayEventSpool("relative-spool.sqlite3")
 
 
 def test_gateway_spool_enforces_capacity(tmp_path: Path) -> None:
