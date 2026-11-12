@@ -18,7 +18,7 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
-from openshield.privacy.providers import DnsProviderError, fetch_dns_records
+from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -468,6 +468,23 @@ def add_privacy_list_entry(entry: PrivacyListEntry) -> dict[str, object]:
         "integration_id": "openshield-local", "list_type": entry.list_type,
         "domain": domain, "comment": entry.comment,
     }
+
+
+@app.post("/api/v1/privacy/lists/{integration_id}/sync", status_code=200, tags=["privacy"])
+def sync_privacy_lists(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    entries = store.list_privacy_lists("openshield-local")
+    try:
+        result = sync_provider_lists(integration, entries)
+    except DnsProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    store.write_audit(
+        "privacy.provider_lists.synchronized", None, integration_id,
+        {"provider": integration.kind, "entry_count": len(entries), "result": result},
+    )
+    return {"integration_id": integration_id, "entries": len(entries), **result}
 
 
 @app.delete("/api/v1/privacy/lists/{list_type}/{domain}", status_code=204, tags=["privacy"])
