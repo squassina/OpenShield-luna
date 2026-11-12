@@ -533,3 +533,28 @@ OpenShield is successful when a user can:
 - Keep the network operating safely when OpenShield Node is unavailable.
 
 The first release should optimize for trust, safety, clarity, and a complete working vertical slice—not the number of integrations or the amount of automation.
+
+
+## P0 implementation status — OpenWrt read-only integration
+
+Current increment adds an authenticated, read-only OpenWrt rpcd/ubus client to the Node:
+
+- Session login followed by `system.board` and `network.interface.dump`.
+- Discovery returns normalized board identity and interface metadata.
+- Health check verifies RPC reachability and returns basic device identity.
+- HTTP timeout is bounded to 5 seconds; response bodies are capped at 1 MiB.
+- TLS certificate verification uses Python's default HTTPS behavior.
+- Credentials are supplied through deployment environment variables, never integration configuration.
+- Integration configuration rejects secret-like field names to prevent accidental API disclosure.
+- The adapter advertises only `discover` and `health_check`; it does not claim event reading or enforcement.
+- No firewall, routing, wireless, or forwarding mutation is implemented.
+
+Environment:
+- `OPENSHIELD_OPENWRT_USERNAME`
+- `OPENSHIELD_OPENWRT_PASSWORD`
+
+Validation boundary:
+- RPC behavior is covered with mocked transport tests.
+- Real OpenWrt hardware/version compatibility is not yet validated.
+- The nearby-host connector agent is not yet wired to this RPC client or event forwarding.
+- P0 remains incomplete until a real normalized gateway event reaches the Node, provenance is verified, durable audit/recovery requirements are addressed, and gateway independence is validated.
