@@ -204,7 +204,7 @@ The nearby-host connector writes discovery and health envelopes to a local SQLit
 - Default spool path: `/var/lib/openshield/gateway-spool.sqlite3`.
 - Docker Compose persists the directory in the `openshield-gateway-spool` named volume.
 - Queue capacity is bounded to 10,000 pending events; when full, new events are rejected and logged rather than deleting older pending events.
-- SQLite uses WAL and full synchronous mode; the database file is chmod 0600 and its newly created directory uses mode 0700.
+- SQLite uses WAL and full synchronous mode; the database file is chmod 0600 and its parent directory is enforced at mode 0700.
 - The spool is not encrypted at rest. Protect the Docker volume and host storage.
 
 ## Metrics
@@ -225,7 +225,7 @@ Counters are process-local and reset on restart. Histograms, database-backed gau
 | Event ingestion | Implemented (PostgreSQL-backed; duplicate event IDs rejected) |
 | API-key authentication | Implemented (static key hashes) |
 | RBAC | Implemented (admin, operator, reader, gateway) |
-| Gateway connector protocol v1, identity binding, heartbeat, and durable event outbox | Implemented (PostgreSQL presence + SQLite connector spool) |
+| Gateway connector protocol v1, identity binding, heartbeat, and durable event outbox | Implemented (PostgreSQL presence + bounded SQLite connector spool) |
 | Nearby-host connector agent with reconnecting HTTP client and discovery/health event forwarding | Implemented (mocked transport; hardware pending) |
 | On-device OpenWrt agent and secure bootstrap/mTLS | Pending |
 | Key rotation/revocation | Pending |
