@@ -19,7 +19,6 @@ class GatewayConnectorClient:
         self,
         node_url: str,
         gateway_id: str,
-        api_key: str,
         connector_version: str = "0.1.0",
         timeout: float = 10.0,
         capabilities: list[Capability] | None = None,
@@ -29,13 +28,10 @@ class GatewayConnectorClient:
             raise ValueError("Node URL must be an absolute HTTP(S) URL")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Node URL must not contain credentials, query, or fragment")
-        if len(api_key) < 32:
-            raise ValueError("Gateway API key must contain at least 32 characters")
         if not gateway_id:
             raise ValueError("Gateway ID is required")
         self._base_url = node_url.rstrip("/")
         self._gateway_id = gateway_id
-        self._api_key = api_key
         self._connector_version = connector_version
         self._timeout = timeout
         self._capabilities = capabilities or []
@@ -53,7 +49,7 @@ class GatewayConnectorClient:
     def heartbeat(self) -> dict[str, object]:
         return self._post(
             "/api/v1/gateway/heartbeat",
-            {"protocol_version": "openshield.gateway.v1"},
+            {"protocol_version": "openshield.gateway.v1", "gateway_id": self._gateway_id},
         )
 
     def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
@@ -64,7 +60,6 @@ class GatewayConnectorClient:
             f"{self._base_url}{path}",
             data=json.dumps(payload).encode("utf-8"),
             headers={
-                "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
