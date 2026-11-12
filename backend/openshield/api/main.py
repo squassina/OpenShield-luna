@@ -10,11 +10,11 @@ from openshield.core.auth import (
 )
 from openshield.core.logging import configure_logging
 from openshield.events.models import EventEnvelope
+from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
+from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
-from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
-from openshield.gateway.registry import GatewayConnectionRegistry
 
 configure_logging()
 
