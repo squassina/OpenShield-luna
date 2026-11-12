@@ -26,9 +26,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e "backend[dev]"
       - name: Lint
-        run: |
-          ruff check backend --select I --fix
-          git diff -- backend/openshield/integrations/registry.py
-          ruff check backend
+        run: ruff check backend
       - name: Test
         run: pytest backend/tests
