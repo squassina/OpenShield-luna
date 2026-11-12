@@ -1,7 +1,7 @@
 import os
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 
 from openshield.core.auth import (
     Permission,
@@ -52,14 +52,16 @@ def readiness() -> dict[str, str]:
     "/api/v1/integrations",
     status_code=status.HTTP_201_CREATED,
     tags=["integrations"],
-    dependencies=[Depends(require_permissions(Permission.INTEGRATIONS_WRITE))],
 )
-def register_integration(registration: IntegrationRegistration) -> dict[str, object]:
+def register_integration(
+    registration: IntegrationRegistration,
+    principal: Annotated[Principal, Depends(require_permissions(Permission.INTEGRATIONS_WRITE))],
+) -> dict[str, object]:
     adapter = adapters.get(registration.kind)
     if adapter is None:
         raise HTTPException(status_code=400, detail="Unsupported integration kind")
     try:
-        item = registry.register(registration)
+        item = registry.register(registration, actor_id=principal.key_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return item.model_dump(mode="json")
@@ -99,7 +101,7 @@ def connect_gateway(
 ) -> dict[str, object]:
     if principal.key_id != request.gateway_id:
         raise HTTPException(status_code=403, detail="Gateway identity does not match API key")
-    connection = gateway_connections.connect(request)
+    connection = gateway_connections.connect(request, actor_id=principal.key_id)
     return {
         "status": "connected",
         "gateway_id": connection.gateway_id,
@@ -160,6 +162,12 @@ def ingest_event(
     principal: Annotated[Principal, Depends(require_permissions(Permission.EVENTS_WRITE))],
 ) -> dict[str, str]:
     if principal.role == Role.GATEWAY and event.source.integration_id != principal.key_id:
+        store.write_audit(
+            "authorization.denied",
+            principal.key_id,
+            event.source.integration_id,
+            {"reason": "gateway_event_source_mismatch"},
+        )
         raise HTTPException(
             status_code=403,
             detail="Gateway cannot ingest events for another integration",
@@ -170,7 +178,7 @@ def ingest_event(
     if integration.kind != event.source.kind:
         raise HTTPException(status_code=400, detail="Event source kind does not match integration")
     try:
-        store.insert_event(event)
+        store.insert_event(event, actor_id=principal.key_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "accepted", "event_id": event.event_id}
@@ -183,3 +191,15 @@ def ingest_event(
 )
 def list_events() -> list[dict[str, object]]:
     return [event.model_dump(mode="json") for event in store.list_events()]
+
+
+
+@app.get(
+    "/api/v1/audit",
+    tags=["audit"],
+    dependencies=[Depends(require_permissions(Permission.AUDIT_READ))],
+)
+def list_audit_records(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> list[dict[str, object]]:
+    return store.list_audit(limit)
