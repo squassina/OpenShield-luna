@@ -138,7 +138,7 @@ class PostgresStore:
             rows = cursor.fetchall()
         return [Integration.model_validate(row[0]) for row in rows]
 
-    def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> None:
+    def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -150,7 +150,7 @@ class PostgresStore:
                 (event.event_id, Jsonb(event.model_dump(mode="json"))),
             )
             if cursor.fetchone() is None:
-                raise ValueError("Event already exists")
+                return False
             self._insert_audit(
                 cursor,
                 "event.ingested",
@@ -162,6 +162,7 @@ class PostgresStore:
                     "source_integration_id": event.source.integration_id,
                 },
             )
+        return True
 
     def list_events(self) -> list[EventEnvelope]:
         with self._connect() as connection, connection.cursor() as cursor:
