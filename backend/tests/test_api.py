@@ -269,3 +269,24 @@ def test_event_cursor_pagination_returns_no_duplicates() -> None:
 
 def test_event_endpoint_rejects_invalid_cursor() -> None:
     assert client.get("/api/v1/events?cursor=invalid").status_code == 422
+
+
+def test_disabled_sensor_rejects_ingestion() -> None:
+    response = client.post("/api/v1/integrations", json={
+        "integration_id": "sensor-disabled", "kind": "zeek", "display_name": "Disabled sensor",
+    })
+    assert response.status_code == 201
+    assert client.patch("/api/v1/integrations/sensor-disabled", json={"enabled": False}).status_code == 200
+    assert client.post("/api/v1/sensors/sensor-disabled/events", json=[{}]).status_code == 404
+
+
+def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() -> None:
+    from datetime import UTC, datetime, timedelta
+    from openshield.api import main
+    register_integration()
+    assert client.post("/api/v1/events", json=sample_event("retention-old")).status_code == 202
+    deleted = main.store.purge_events_before(
+        datetime.now(UTC) + timedelta(seconds=1), batch_size=1
+    )
+    assert deleted == 1
+    assert client.get("/api/v1/events").json()["items"] == []
