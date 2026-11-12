@@ -111,7 +111,7 @@ curl http://localhost:8000/api/v1/integrations \
 | `reader` | Read integrations and events |
 | `gateway` | Ingest events only |
 
-Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
+Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints and makes readiness return `503`. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
 
 ## API quick start
 
@@ -165,7 +165,7 @@ The initial CI run exposed Ruff violations in UTC handling, class attribute typi
 
 ## Security
 
-Until gateway mTLS/bootstrap, durable audit, key rotation/revocation, and deployment hardening are complete, run only in a trusted development environment. Store `.env` securely and never commit gateway credentials, API keys, private keys, key hashes, or real network event data.
+API-key authentication does not encrypt traffic; terminate HTTPS/TLS at the deployment boundary and never expose the development HTTP port to untrusted networks. Until gateway mTLS/bootstrap, durable audit, key rotation/revocation, and deployment hardening are complete, run only in a trusted development environment. Store `.env` securely and never commit gateway credentials, API keys, private keys, key hashes, or real network event data.
 
 ## License
 
