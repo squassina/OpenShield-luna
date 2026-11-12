@@ -208,6 +208,68 @@ class PostgresStore:
             rows = cursor.fetchall()
         return [EventEnvelope.model_validate(row[0]) for row in rows]
 
+    def list_inventory_observations(self, limit: int = 2000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH observations AS (
+                    SELECT
+                        COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS address,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                    UNION ALL
+                    SELECT
+                        COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS address,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                )
+                SELECT address, MIN(occurred_at), MAX(occurred_at),
+                       COUNT(*), ARRAY_AGG(DISTINCT protocol)
+                FROM observations
+                WHERE address IS NOT NULL
+                GROUP BY address
+                ORDER BY COUNT(*) DESC, address
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "ip_address": row[0], "first_seen": row[1], "last_seen": row[2],
+                "observations": row[3], "protocols": row[4],
+            }
+            for row in rows
+        ]
+
+    def list_topology_observations(self, limit: int = 5000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH connections AS (
+                    SELECT
+                        COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS source,
+                        COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS target,
+                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                    FROM events
+                )
+                SELECT source, target, protocol, COUNT(*)
+                FROM connections
+                WHERE source IS NOT NULL AND target IS NOT NULL
+                GROUP BY source, target, protocol
+                ORDER BY COUNT(*) DESC, source, target
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {"source": row[0], "target": row[1], "protocol": row[2], "observations": row[3]}
+            for row in rows
+        ]
+
     def sensor_event_stats(self) -> dict[str, dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
