@@ -32,13 +32,14 @@ def test_suricata_eve_alert_is_normalized_and_severity_mapped() -> None:
         "dest_ip": "198.51.100.20",
         "proto": "TCP",
         "flow_id": 123,
-        "alert": {"signature": "Test signature", "severity": 1},
+        "alert": {"signature": "Test signature", "severity": 1, "token": "must-not-be-retained"},
         "password": "must-not-be-retained",
     }, "sensor-suricata")
     assert event.event_type == "network.suricata.alert"
     assert event.severity.value == "high"
     assert event.payload["signature"] == "Test signature"
     assert "password" not in event.payload
+    assert "token" not in event.payload["alert"]
     assert event.source.kind == "suricata"
 
 
