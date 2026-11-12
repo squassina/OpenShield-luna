@@ -178,15 +178,25 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
                     body={"domain": domain, "comment": "OpenShield managed"},
                 )
                 added += 1
-        for list_type, domain in sorted(set(managed) - {
+        stale = set(managed) - {
             ("allow" if kind == "allow" else "deny", domain)
             for kind, domain in desired
-        }):
+        }
+        for list_type, domain in sorted(stale):
             _pihole_request(
                 base_url, f"/api/domains/{list_type}/exact/{quote(domain, safe='')}",
                 method="DELETE",
             )
             removed += 1
+        verified = _pihole_request(base_url, "/api/domains")
+        verified_items = verified.get("domains", []) if isinstance(verified, dict) else verified
+        verified_keys = {
+            (str(item.get("type")), str(item.get("domain")))
+            for item in verified_items if isinstance(item, dict)
+        }
+        expected = {("allow" if kind == "allow" else "deny", domain) for kind, domain in desired}
+        if not expected.issubset(verified_keys) or stale.intersection(verified_keys):
+            raise DnsProviderError("Pi-hole list synchronization could not be verified")
         return {"provider": "pihole", "added": added, "removed": removed}
 
     if integration.kind == "adguard":
@@ -212,11 +222,22 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             managed_rules.append(f"{'@@' if list_type == 'allow' else ''}||{domain}^")
         managed_rules.append(end)
         merged = preserved + managed_rules
+        previous_managed = (
+            rules[start:finish + 1]
+            if start is not None and finish is not None else []
+        )
         _request(
             f"{base_url}/control/filtering/set_rules", method="POST",
             headers={**headers, "Content-Type": "application/json"},
             body=json.dumps({"rules": merged}).encode(),
         )
-        return {"provider": "adguard", "added": len(desired), "removed": 0}
+        verified = _request(f"{base_url}/control/filtering/status", headers=headers)
+        verified_rules = verified.get("user_rules", []) if isinstance(verified, dict) else []
+        if verified_rules != merged:
+            raise DnsProviderError("AdGuard list synchronization could not be verified")
+        return {
+            "provider": "adguard", "added": len(desired),
+            "removed": max(0, len(previous_managed) - len(managed_rules)),
+        }
 
     raise DnsProviderError("Unsupported DNS provider for list synchronization")
