@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from openshield.core.auth import (
     Permission,
     Principal,
+    Role,
     authentication_is_configured,
     require_permissions,
 )
@@ -153,7 +154,12 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
     tags=["events"],
     dependencies=[Depends(require_permissions(Permission.EVENTS_WRITE))],
 )
-def ingest_event(event: EventEnvelope) -> dict[str, str]:
+def ingest_event(
+    event: EventEnvelope,
+    principal: Annotated[Principal, Depends(require_permissions(Permission.EVENTS_WRITE))],
+) -> dict[str, str]:
+    if principal.role == Role.GATEWAY and event.source.integration_id != principal.key_id:
+        raise HTTPException(status_code=403, detail="Gateway cannot ingest events for another integration")
     integration = registry.get(event.source.integration_id)
     if integration is None:
         raise HTTPException(status_code=400, detail="Unknown source integration")
