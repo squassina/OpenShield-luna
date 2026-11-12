@@ -74,8 +74,12 @@ services:
       OPENSHIELD_OPENWRT_USERNAME: ${OPENSHIELD_OPENWRT_USERNAME:-}
       OPENSHIELD_OPENWRT_PASSWORD: ${OPENSHIELD_OPENWRT_PASSWORD:-}
       OPENSHIELD_INTEGRATION_ID: ${OPENSHIELD_INTEGRATION_ID:-}
+      OPENSHIELD_GATEWAY_SPOOL_PATH: ${OPENSHIELD_GATEWAY_SPOOL_PATH:-/var/lib/openshield/gateway-spool.sqlite3}
+    volumes:
+      - openshield-gateway-spool:/var/lib/openshield
     restart: unless-stopped
 
 
 volumes:
   openshield-postgres-data:
+  openshield-gateway-spool:
