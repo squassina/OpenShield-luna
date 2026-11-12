@@ -307,16 +307,16 @@ class PostgresStore:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT payload->>'domain', COUNT(*),
-                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
-                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker'),
-                       COUNT(DISTINCT payload->>'client'),
+                SELECT payload #>> '{payload,domain}', COUNT(*),
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,status}' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,category}' = 'tracker'),
+                       COUNT(DISTINCT payload #>> '{payload,client}'),
                        MAX((payload->>'observed_at')::timestamptz)
                 FROM events
                 WHERE payload->>'event_type' = 'privacy.dns.query'
                   AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
-                GROUP BY payload->>'domain'
-                ORDER BY COUNT(*) DESC, payload->>'domain'
+                GROUP BY payload #>> '{payload,domain}'
+                ORDER BY COUNT(*) DESC, payload #>> '{payload,domain}'
                 LIMIT %s
                 """,
                 (days, limit),
@@ -332,14 +332,14 @@ class PostgresStore:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COALESCE(payload->>'client', 'unknown'), COUNT(*),
-                       COUNT(DISTINCT payload->>'domain'),
-                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
-                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker')
+                SELECT COALESCE(payload #>> '{payload,client}', 'unknown'), COUNT(*),
+                       COUNT(DISTINCT payload #>> '{payload,domain}'),
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,status}' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,category}' = 'tracker')
                 FROM events
                 WHERE payload->>'event_type' = 'privacy.dns.query'
                   AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
-                GROUP BY COALESCE(payload->>'client', 'unknown')
+                GROUP BY COALESCE(payload #>> '{payload,client}', 'unknown')
                 ORDER BY COUNT(*) DESC
                 LIMIT %s
                 """,
@@ -358,9 +358,9 @@ class PostgresStore:
                 """
                 SELECT date_trunc('day', (payload->>'occurred_at')::timestamptz)::date,
                        COUNT(*),
-                       COUNT(*) FILTER (WHERE payload->>'status' = 'blocked'),
-                       COUNT(*) FILTER (WHERE payload->>'category' = 'tracker'),
-                       COUNT(DISTINCT payload->>'domain')
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,status}' = 'blocked'),
+                       COUNT(*) FILTER (WHERE payload #>> '{payload,category}' = 'tracker'),
+                       COUNT(DISTINCT payload #>> '{payload,domain}')
                 FROM events
                 WHERE payload->>'event_type' = 'privacy.dns.query'
                   AND (payload->>'occurred_at')::timestamptz >= NOW() - (%s * INTERVAL '1 day')
