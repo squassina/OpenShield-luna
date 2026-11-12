@@ -207,9 +207,8 @@ def main() -> None:
     openwrt_values = (openwrt_url, openwrt_username, openwrt_password)
     if any(openwrt_values) and not all(openwrt_values):
         raise SystemExit(
-            "OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, "
-            "OPENSHIELD_OPENWRT_PASSWORD must be configured together with "
-            "the OpenWrt URL and username"
+            "OPENSHIELD_OPENWRT_URL, OPENSHIELD_OPENWRT_USERNAME, and "
+            "OPENSHIELD_OPENWRT_PASSWORD must be configured together"
         )
     openwrt_client = None
     capabilities = []
