@@ -17,7 +17,7 @@ class IntegrationRegistry:
         self._integrations: dict[str, models.Integration] = {}
 
     def register(
-        self, registration: models.IntegrationRegistration
+        self, registration: models.IntegrationRegistration, actor_id: str | None = None
     ) -> models.Integration:
         capabilities = CAPABILITIES_BY_KIND.get(registration.kind)
         if capabilities is None:
@@ -27,7 +27,7 @@ class IntegrationRegistry:
             capabilities=capabilities,
         )
         if self._store is not None:
-            self._store.insert_integration(integration)
+            self._store.insert_integration(integration, actor_id)
         else:
             if integration.integration_id in self._integrations:
                 raise ValueError("Integration already exists")
