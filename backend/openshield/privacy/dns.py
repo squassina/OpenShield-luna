@@ -56,7 +56,7 @@ def normalize_dns_batch(kind: str, integration_id: str, records: list[dict[str, 
         if isinstance(timestamp, (int, float)):
             occurred_at = datetime.fromtimestamp(timestamp, UTC)
         elif isinstance(timestamp, str):
-            occurred_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            occurred_at = datetime.fromisoformat(timestamp)
             if occurred_at.tzinfo is None:
                 occurred_at = occurred_at.replace(tzinfo=UTC)
             else:
