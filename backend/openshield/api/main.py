@@ -257,33 +257,21 @@ def _classify_ip(value: object) -> tuple[str, str] | None:
 def list_network_devices(
     limit: Annotated[int, Query(ge=1, le=2000)] = 500,
 ) -> list[dict[str, object]]:
-    devices: dict[str, dict[str, Any]] = {}
-    for event in store.list_events():
-        payload = event.payload
-        addresses = [
-            payload.get(key) for key in ("src_ip", "dest_ip", "id.orig_h", "id.resp_h")
-        ]
-        for raw_address in addresses:
-            classified = _classify_ip(raw_address)
-            if classified is None:
-                continue
-            address, scope = classified
-            item = devices.setdefault(address, {
-                "ip_address": address, "ip_version": ipaddress.ip_address(address).version,
-                "scope": scope, "protocols": set(),
-                "first_seen": event.occurred_at, "last_seen": event.occurred_at,
-                "observations": 0,
-            })
-            item["protocols"].add(str(payload.get("proto") or payload.get("app_proto") or "unknown"))
-            item["first_seen"] = min(item["first_seen"], event.occurred_at)
-            item["last_seen"] = max(item["last_seen"], event.occurred_at)
-            item["observations"] += 1
-    result = [{
-        **item,
-        "protocols": sorted(item["protocols"]),
-        "first_seen": item["first_seen"].isoformat(),
-        "last_seen": item["last_seen"].isoformat(),
-    } for item in devices.values()]
+    result = []
+    for item in store.list_inventory_observations():
+        classified = _classify_ip(item["ip_address"])
+        if classified is None:
+            continue
+        address, scope = classified
+        result.append({
+            "ip_address": address,
+            "ip_version": ipaddress.ip_address(address).version,
+            "scope": scope,
+            "protocols": sorted(item["protocols"]),
+            "first_seen": item["first_seen"].isoformat(),
+            "last_seen": item["last_seen"].isoformat(),
+            "observations": item["observations"],
+        })
     result.sort(key=lambda item: item["observations"], reverse=True)
     return result[:limit]
 
@@ -292,29 +280,21 @@ def list_network_devices(
 def get_network_topology(
     limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
 ) -> dict[str, object]:
-    nodes: set[str] = set()
-    node_scopes: dict[str, str] = {}
     links: dict[tuple[str, str, str], int] = {}
-    for event in store.list_events():
-        payload = event.payload
-        source = payload.get("src_ip") or payload.get("id.orig_h")
-        target = payload.get("dest_ip") or payload.get("id.resp_h")
-        source_ip = _classify_ip(source)
-        target_ip = _classify_ip(target)
+    node_scopes: dict[str, str] = {}
+    for item in store.list_topology_observations():
+        source_ip = _classify_ip(item["source"])
+        target_ip = _classify_ip(item["target"])
         if source_ip is None or target_ip is None:
             continue
         source, source_scope = source_ip
         target, target_scope = target_ip
-        protocol = str(payload.get("proto") or payload.get("app_proto") or "unknown")
-        nodes.update((source, target))
         node_scopes[source] = source_scope
         node_scopes[target] = target_scope
-        key = (source, target, protocol)
-        links[key] = links.get(key, 0) + 1
+        links[(source, target, item["protocol"])] = item["observations"]
+
     edges = []
-    for (source, target, protocol), count in sorted(
-        links.items(), key=lambda item: item[1], reverse=True
-    )[:limit]:
+    for (source, target, protocol), count in list(links.items())[:limit]:
         source_scope = node_scopes[source]
         target_scope = node_scopes[target]
         if source_scope == "private" and target_scope == "public":
@@ -331,12 +311,13 @@ def get_network_topology(
             "source": source, "target": target, "protocol": protocol,
             "observations": count, "direction": direction,
         })
+    nodes = sorted(node_scopes)
     node_details = [
         {"ip_address": address, "scope": node_scopes[address],
          "ip_version": ipaddress.ip_address(address).version}
-        for address in sorted(nodes)
+        for address in nodes
     ]
-    return {"nodes": sorted(nodes), "node_details": node_details, "edges": edges}
+    return {"nodes": nodes, "node_details": node_details, "edges": edges}
 
 
 @app.get("/api/v1/audit", tags=["audit"])
