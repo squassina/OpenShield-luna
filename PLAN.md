@@ -582,3 +582,26 @@ Required connector variables:
 - `OPENSHIELD_INTEGRATION_ID`
 
 The integration must be registered on the Node before event forwarding. Hardware validation is still pending.
+
+
+## P0 implementation status — PostgreSQL persistence
+
+PostgreSQL 16 is now the source of truth for the initial Node state:
+
+- Integration registrations and capability/config metadata persist across Node restarts.
+- Versioned events persist with their complete envelope and source provenance.
+- Gateway connection records and heartbeat timestamps persist; the existing 90-second stale threshold is preserved.
+- Duplicate integration IDs and event IDs are rejected.
+- Schema creation is idempotent and performed automatically by the store.
+- Node readiness now checks both API-key configuration and database connectivity.
+- Docker Compose provides PostgreSQL with a named data volume; stopping the stack does not remove this volume.
+- The CI test service starts PostgreSQL and exercises persistence through a newly created store instance.
+
+Configuration:
+- `OPENSHIELD_POSTGRES_PASSWORD`
+- `OPENSHIELD_DATABASE_URL`
+
+Remaining:
+- Durable audit records are not implemented yet.
+- Formal versioned database migrations, backup/restore automation, pooling, and production hardening remain pending.
+- Local tests must run through Docker Compose so the PostgreSQL dependency is available.
