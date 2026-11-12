@@ -356,8 +356,6 @@ def test_integration_registration_rejects_secrets_in_config() -> None:
 
 
 def test_persisted_state_survives_store_recreation() -> None:
-    from openshield.api import main
-
     register_gateway("test-gateway")
     event = sample_event()
     event["source"] = {"integration_id": "test-gateway", "kind": "openwrt"}
