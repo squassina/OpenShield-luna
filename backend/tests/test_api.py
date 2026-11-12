@@ -37,6 +37,7 @@ def setup_function() -> None:
 
     main.registry._integrations.clear()
     main.events.clear()
+    main.gateway_connections._connections.clear()
 
 
 def headers(key: str = ADMIN_KEY) -> dict[str, str]:
@@ -162,6 +163,100 @@ def test_gateway_can_ingest_but_cannot_read_events() -> None:
 
     response = client.get("/api/v1/events", headers=headers(GATEWAY_KEY))
     assert response.status_code == 403
+
+
+
+def gateway_connect_payload() -> dict[str, object]:
+    return {
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "test-gateway",
+        "gateway_type": "openwrt",
+        "connector_version": "0.1.0",
+        "capabilities": ["discover", "health_check", "read_events"],
+    }
+
+
+def test_gateway_connect_requires_gateway_role_and_binds_identity() -> None:
+    response = client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=gateway_connect_payload(),
+    )
+    assert response.status_code == 201
+    assert response.json()["status"] == "connected"
+    assert response.json()["accepted_capabilities"] == [
+        "discover",
+        "health_check",
+        "read_events",
+    ]
+
+    mismatch = gateway_connect_payload()
+    mismatch["gateway_id"] = "another-gateway"
+    response = client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=mismatch,
+    )
+    assert response.status_code == 403
+
+
+def test_gateway_heartbeat_requires_existing_connection() -> None:
+    heartbeat = {"protocol_version": "openshield.gateway.v1"}
+    response = client.post(
+        "/api/v1/gateway/heartbeat",
+        headers=headers(GATEWAY_KEY),
+        json=heartbeat,
+    )
+    assert response.status_code == 409
+
+    client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=gateway_connect_payload(),
+    )
+    response = client.post(
+        "/api/v1/gateway/heartbeat",
+        headers=headers(GATEWAY_KEY),
+        json=heartbeat,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "acknowledged"
+
+
+def test_gateway_cannot_advertise_enforcement_capabilities() -> None:
+    payload = gateway_connect_payload()
+    payload["capabilities"] = ["execute_action"]
+    response = client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=payload,
+    )
+    assert response.status_code == 422
+
+
+def test_gateway_status_is_admin_only() -> None:
+    client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=gateway_connect_payload(),
+    )
+    response = client.get("/api/v1/gateways", headers=headers(GATEWAY_KEY))
+    assert response.status_code == 403
+
+    response = client.get("/api/v1/gateways", headers=headers())
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "connected"
+
+
+def test_gateway_protocol_version_is_validated() -> None:
+    payload = gateway_connect_payload()
+    payload["protocol_version"] = "openshield.gateway.v2"
+    response = client.post(
+        "/api/v1/gateway/connect",
+        headers=headers(GATEWAY_KEY),
+        json=payload,
+    )
+    assert response.status_code == 422
 
 
 def test_register_openwrt_and_probe() -> None:
