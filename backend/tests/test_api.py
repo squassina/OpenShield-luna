@@ -117,7 +117,7 @@ def test_gateway_cannot_advertise_enforcement_capabilities() -> None:
     assert client.post("/api/v1/gateway/connect", json=payload).status_code == 422
 
 
-def test_gateway_kind_mismatch_is_rejected() -> None:
+def test_gateway_rejects_unsupported_type() -> None:
     register_integration("home-gateway")
     payload = gateway_payload()
     payload["gateway_type"] = "other"
