@@ -1,7 +1,7 @@
 import json
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
 from openshield.gateway.models import GatewayConnectRequest
 
