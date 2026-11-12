@@ -2,8 +2,8 @@ import hashlib
 import hmac
 import json
 import os
-from enum import StrEnum
 from collections.abc import Callable
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
