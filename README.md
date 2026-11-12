@@ -79,7 +79,7 @@ Stop the API without deleting persisted Docker data:
 docker compose down
 ```
 
-Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the project dependencies from `backend/pyproject.toml`. Tests use `httpx2` with Starlette TestClient, and pytest treats all warnings as errors so deprecations cannot silently accumulate.
+Test and lint services use the `tools` profile and run on demand. They do not start with the API. The application image excludes development dependencies; the test/lint image installs the project dependencies from `backend/pyproject.toml`. Tests use `httpx2` with Starlette TestClient, and pytest treats all warnings as errors so deprecations cannot silently accumulate. Docker image installs explicitly acknowledge root execution to keep build logs clean; GitHub Actions uses checkout v5 (Node.js 24).
 
 ## API authentication and roles
 
@@ -161,7 +161,7 @@ curl -X POST http://localhost:8000/api/v1/events \
 | Docker-first runtime, lint, and test environment | Implemented |
 | CI and automated tests | Implemented; runs in Docker |
 
-The initial CI run exposed Ruff violations in UTC handling, class attribute typing, and import formatting. The final I001 issue was caused by one excess blank line after an import and was corrected. CI uses Docker Compose for lint and tests, so local validation and CI share the same Python/container build. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
+CI uses Docker Compose for lint and tests, so local validation and CI share the same Python/container build. Ruff checks are kept clean, and pytest treats warnings as errors. A P0 item is complete only when its exit criteria in PLAN.md are verified. This README is updated with each increment and must not imply production readiness before the remaining security and reliability work is complete.
 
 ## Security
 
