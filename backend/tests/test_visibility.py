@@ -84,7 +84,7 @@ def test_suricata_sensor_ingestion_is_idempotent_and_visible() -> None:
     assert first.json() == {"accepted": 1, "duplicates": 0, "received": 1}
     assert second.json() == {"accepted": 0, "duplicates": 1, "received": 1}
 
-    events = client.get("/api/v1/events?integration_id=sensor-suricata&severity=medium").json()
+    events = client.get("/api/v1/events?integration_id=sensor-suricata&severity=medium").json()["items"]
     assert len(events) == 1
     assert events[0]["event_type"] == "network.suricata.alert"
 
@@ -170,7 +170,7 @@ def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None
         "/api/v1/events?integration_id=sensor-suricata&event_type=network.suricata.alert&limit=1"
     )
     assert filtered.status_code == 200
-    assert len(filtered.json()) == 1
+    assert len(filtered.json()["items"]) == 1
     assert filtered.json()[0]["event_type"] == "network.suricata.alert"
 
 

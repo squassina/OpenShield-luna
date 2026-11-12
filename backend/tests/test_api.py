@@ -164,7 +164,7 @@ def test_gateway_rejects_unsupported_type() -> None:
 def test_ingest_event_preserves_source_provenance() -> None:
     register_integration()
     assert client.post("/api/v1/events", json=sample_event()).status_code == 202
-    stored = client.get("/api/v1/events").json()
+    stored = client.get("/api/v1/events").json()["items"]
     assert stored[0]["source"]["integration_id"] == "router-lab"
 
 
