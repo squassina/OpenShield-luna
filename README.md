@@ -107,11 +107,11 @@ curl http://localhost:8000/api/v1/integrations \
 | Role | Permissions |
 |---|---|
 | `admin` | Read/write integrations and events |
-| `operator` | Read/write integrations and events |
+| `operator` | Read integrations and read/ingest events |
 | `reader` | Read integrations and events |
 | `gateway` | Ingest events only |
 
-Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints. Authentication failures do not expose key material.
+Missing or invalid credentials return `401`; valid credentials without the required permission return `403`. Missing or malformed server-side key configuration returns `503` on protected endpoints. Keys shorter than 32 characters are rejected. Authentication failures do not expose key material.
 
 ## API quick start
 
@@ -119,7 +119,7 @@ Register an OpenWrt integration (requires `integrations:write`):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/integrations \
-  -H 'Authorization: Bearer $OPENSHIELD_API_KEY' \
+  -H "Authorization: Bearer $OPENSHIELD_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"integration_id":"openwrt-lab","kind":"openwrt","display_name":"Lab gateway","config":{"base_url":"https://192.0.2.1"}}'
 ```
@@ -128,14 +128,14 @@ List integrations (requires `integrations:read`):
 
 ```bash
 curl http://localhost:8000/api/v1/integrations \
-  -H 'Authorization: Bearer $OPENSHIELD_API_KEY'
+  -H "Authorization: Bearer $OPENSHIELD_API_KEY"
 ```
 
 Ingest a validated event (requires `events:write`):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/events \
-  -H 'Authorization: Bearer $OPENSHIELD_API_KEY' \
+  -H "Authorization: Bearer $OPENSHIELD_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"schema_version":"openshield.event.v1","event_id":"evt-001","source":{"integration_id":"openwrt-lab","kind":"openwrt"},"event_type":"gateway.health","occurred_at":"2026-01-01T12:00:00Z","observed_at":"2026-01-01T12:00:01Z","severity":"info","payload":{"status":"reachable"}}'
 ```
