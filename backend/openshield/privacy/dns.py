@@ -18,7 +18,7 @@ DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(
 
 def normalize_domain(value: Any) -> str:
     if not isinstance(value, str):
-        raise ValueError("DNS query requires a domain")
+        raise TypeError("DNS query requires a domain")
     domain = value.strip().rstrip(".").lower()
     try:
         domain = domain.encode("idna").decode("ascii")
