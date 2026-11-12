@@ -1,7 +1,10 @@
+from typing import Annotated
+
 from fastapi import Depends, FastAPI, HTTPException, status
 
 from openshield.core.auth import (
     Permission,
+    Principal,
     authentication_is_configured,
     require_permissions,
 )
@@ -10,6 +13,8 @@ from openshield.events.models import EventEnvelope
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
+from openshield.gateway.registry import GatewayConnectionRegistry
 
 configure_logging()
 
@@ -21,6 +26,7 @@ app = FastAPI(
 
 registry = IntegrationRegistry()
 events: list[EventEnvelope] = []
+gateway_connections = GatewayConnectionRegistry()
 adapters = {"openwrt": OpenWrtAdapter()}
 
 
@@ -75,6 +81,70 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
     return adapters[item.kind].probe(item)
+
+
+@app.post(
+    "/api/v1/gateway/connect",
+    status_code=status.HTTP_201_CREATED,
+    tags=["gateway"],
+)
+def connect_gateway(
+    request: GatewayConnectRequest,
+    principal: Annotated[
+        Principal, Depends(require_permissions(Permission.GATEWAY_CONNECT))
+    ],
+) -> dict[str, object]:
+    if principal.key_id != request.gateway_id:
+        raise HTTPException(status_code=403, detail="Gateway identity does not match API key")
+    connection = gateway_connections.connect(request)
+    return {
+        "status": "connected",
+        "gateway_id": connection.gateway_id,
+        "protocol_version": connection.protocol_version,
+        "accepted_capabilities": [item.value for item in connection.capabilities],
+        "connected_at": connection.connected_at.isoformat(),
+    }
+
+
+@app.post(
+    "/api/v1/gateway/heartbeat",
+    tags=["gateway"],
+)
+def gateway_heartbeat(
+    request: GatewayHeartbeatRequest,
+    principal: Annotated[
+        Principal, Depends(require_permissions(Permission.GATEWAY_HEARTBEAT))
+    ],
+) -> dict[str, object]:
+    connection = gateway_connections.heartbeat(principal.key_id)
+    if connection is None:
+        raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
+    return {
+        "status": "acknowledged",
+        "gateway_id": connection.gateway_id,
+        "last_seen_at": connection.last_seen_at.isoformat(),
+    }
+
+
+@app.get(
+    "/api/v1/gateways",
+    tags=["gateway"],
+    dependencies=[Depends(require_permissions(Permission.GATEWAY_READ))],
+)
+def list_gateways() -> list[dict[str, object]]:
+    return gateway_connections.list_status()
+
+
+@app.get(
+    "/api/v1/gateways/{gateway_id}",
+    tags=["gateway"],
+    dependencies=[Depends(require_permissions(Permission.GATEWAY_READ))],
+)
+def get_gateway_status(gateway_id: str) -> dict[str, object]:
+    gateway = gateway_connections.get_status(gateway_id)
+    if gateway is None:
+        raise HTTPException(status_code=404, detail="Gateway not found")
+    return gateway
 
 
 @app.post(
