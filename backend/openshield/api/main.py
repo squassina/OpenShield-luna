@@ -30,6 +30,7 @@ from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
+@asynccontextmanager
 async def _dns_polling_lifespan(app: FastAPI):
     interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "300")
     try:
