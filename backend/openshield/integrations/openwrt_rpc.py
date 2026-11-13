@@ -156,14 +156,14 @@ class OpenWrtRPCClient:
             )
             if isinstance(created.get("section"), str):
                 section = created["section"]
-        except OpenWrtRPCError as exc:
+        except OpenWrtRPCError:
             try:
                 existing = self.call("uci", "get", {"config": "firewall", "section": section})
             except OpenWrtRPCError:
-                raise exc
+                raise
             if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
                 return {"section": section, "verified": True, "already_present": True}
-            raise exc
+            raise OpenWrtRPCError("OpenWrt firewall rule could not be created")
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
             verified = self.call("uci", "get", {"config": "firewall", "section": section})
@@ -183,12 +183,12 @@ class OpenWrtRPCClient:
             raise ValueError("Invalid OpenShield firewall section")
         try:
             self.call("uci", "delete", {"config": "firewall", "section": section})
-        except OpenWrtRPCError as exc:
+        except OpenWrtRPCError:
             current = self.call("uci", "get", {"config": "firewall"})
             values = current.get("values")
             if isinstance(values, dict) and section not in values:
                 return {"section": section, "removed": True, "already_absent": True}
-            raise exc
+            raise
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
             current = self.call("uci", "get", {"config": "firewall"})

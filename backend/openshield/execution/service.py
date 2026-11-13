@@ -6,8 +6,8 @@ from uuid import uuid4
 from openshield.core.storage import PostgresStore
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.registry import IntegrationRegistry
-from openshield.privacy.providers import DnsProviderError, sync_provider_lists
 from openshield.policy.engine import enforcement_enabled, max_autonomy_level
+from openshield.privacy.providers import DnsProviderError, sync_provider_lists
 
 logger = logging.getLogger("openshield.execution")
 
