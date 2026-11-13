@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -60,8 +61,12 @@ def _provider_lookup(
     store: PostgresStore, integration: Integration, secret: dict[str, object],
     indicator_type: str, indicator_value: str,
 ) -> dict[str, object]:
+    cache_provider = integration.integration_id
+    if integration.kind == "misp":
+        base_url = integration.config.get("base_url")
+        cache_provider += ":" + hashlib.sha256(str(base_url).rstrip("/").encode()).hexdigest()[:12]
     cached = store.get_threat_intel_cache(
-        integration.integration_id, indicator_type, indicator_value,
+        cache_provider, indicator_type, indicator_value,
     )
     if cached is not None:
         return cached
@@ -84,7 +89,7 @@ def _provider_lookup(
     else:
         raise ThreatIntelProviderError("Unsupported threat intelligence provider")
     store.set_threat_intel_cache(
-        integration.integration_id, indicator_type, indicator_value,
+        cache_provider, indicator_type, indicator_value,
         result, CACHE_TTL_SECONDS,
     )
     return result
@@ -182,9 +187,12 @@ def enrich_events(
     )[:50])
     incidents: list[dict[str, object]] = []
     lookups = 0
+    failed_providers: set[str] = set()
     for (indicator_type, indicator_value), indicator_events in grouped.items():
         evidence: dict[str, dict[str, object]] = {}
         for integration in providers:
+            if integration.integration_id in failed_providers:
+                continue
             secret = credentials.get(integration.integration_id)
             if secret is None:
                 continue
@@ -196,6 +204,7 @@ def enrich_events(
                 )
                 lookups += 1
             except (ThreatIntelProviderError, ValueError):
+                failed_providers.add(integration.integration_id)
                 errors.append({
                     "integration_id": integration.integration_id,
                     "error": "provider_lookup_failed",

@@ -229,6 +229,10 @@ CREATE TABLE IF NOT EXISTS events (
         indicator_value = str(incident["indicator_value"])
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"{indicator_type}:{indicator_value}",),
+            )
+            cursor.execute(
                 """
                 SELECT incident_id, status, payload, first_seen_at, last_seen_at
                 FROM incidents
@@ -243,11 +247,26 @@ CREATE TABLE IF NOT EXISTS events (
                 merged_event_ids = sorted(set(existing.get("event_ids", [])) | set(event_ids))
                 merged_sources = sorted(set(existing.get("sources", [])) | set(incident.get("sources", [])))
                 merged_evidence = {**existing.get("intel_evidence", {}), **incident.get("intel_evidence", {})}
+                merged_source_events = {
+                    item["event_id"]: item
+                    for item in [*existing.get("source_events", []), *incident.get("source_events", [])]
+                    if isinstance(item, dict) and isinstance(item.get("event_id"), str)
+                }
                 payload = {
                     **existing, **incident, "incident_id": incident_id,
                     "status": status, "event_ids": merged_event_ids,
                     "sources": merged_sources, "intel_evidence": merged_evidence,
+                    "source_events": list(merged_source_events.values()),
+                    "created_at": existing.get("created_at", incident.get("created_at")),
                 }
+                old_score = int(existing.get("risk_score", 0))
+                if old_score > int(incident["risk_score"]):
+                    payload["risk_score"] = old_score
+                    payload["risk_level"] = existing.get("risk_level", incident.get("risk_level"))
+                    payload["risk_factors"] = existing.get("risk_factors", incident.get("risk_factors", []))
+                if status == "closed" and set(event_ids) - set(existing.get("event_ids", [])):
+                    status = "open"
+                    payload["status"] = status
                 first_seen = min(old_first, first_seen_at)
                 last_seen = max(old_last, last_seen_at)
                 cursor.execute(
