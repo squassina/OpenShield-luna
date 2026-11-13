@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
+from contextlib import asynccontextmanager
+import asyncio
+
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
@@ -21,15 +24,37 @@ from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.privacy.polling import run_dns_polling_loop
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
+async def _dns_polling_lifespan(app: FastAPI):
+    interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "300")
+    try:
+        interval = int(interval_raw)
+    except ValueError as exc:
+        raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be an integer") from exc
+    if interval < 0 or interval > 86400:
+        raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
+    task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
 app = FastAPI(
     title="OpenShield Node API",
     version="0.1.0",
     description="Gateway-first network security and privacy intelligence node.",
+    lifespan=_dns_polling_lifespan,
 )
 
 

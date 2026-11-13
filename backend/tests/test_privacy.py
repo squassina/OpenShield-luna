@@ -391,3 +391,41 @@ def test_sensor_integration_test_returns_push_endpoint() -> None:
     assert tested.status_code == 200
     assert tested.json()["mode"] == "push"
     assert tested.json()["ingestion_endpoint"] == "/api/v1/sensors/suricata-home/events"
+
+
+def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+
+    register_dns("pihole-home", "pihole")
+    register_dns("adguard-home", "adguard")
+    disabled = client.patch("/api/v1/integrations/adguard-home", json={"enabled": False})
+    assert disabled.status_code == 200
+    record = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "domain": "ads.doubleclick.net",
+        "client": "192.168.1.30",
+        "status": "blocked",
+    }
+    calls = []
+
+    def fake_fetch(integration):
+        calls.append(integration.integration_id)
+        return [record]
+
+    monkeypatch.setattr(polling, "fetch_dns_records", fake_fetch)
+
+    class Metrics:
+        def increment(self, name):
+            assert name == "openshield_events_ingested_total"
+
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert calls == ["pihole-home"]
+    assert outcomes == [{
+        "integration_id": "pihole-home", "status": "ok",
+        "received": 1, "accepted": 1, "duplicates": 0,
+    }]
+    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    assert len(events) == 1
+    assert events[0]["payload"]["domain"] == "ads.doubleclick.net"
+    assert any(item["action"] == "privacy.provider_poll.completed" for item in client.get("/api/v1/audit").json())
