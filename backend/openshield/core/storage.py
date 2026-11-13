@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS events (
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS policies (
                     policy_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -401,7 +402,73 @@ CREATE TABLE IF NOT EXISTS events (
                 WHERE incident_id = %s
                 ORDER BY created_at DESC LIMIT %s
                 """,
-                (incident_id, limit),
+                (limit,),
+            )
+            ids = [row[0] for row in cursor.fetchall()]
+        return [item for execution_id in ids if (item := self.get_response_execution(execution_id))]
+
+    def get_due_response_executions(self) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT execution_id FROM response_executions
+                WHERE status IN ('active', 'rollback_failed') AND expires_at IS NOT NULL AND expires_at <= NOW()
+                ORDER BY expires_at ASC LIMIT 50
+                """
+            )
+            ids = [row[0] for row in cursor.fetchall()]
+        return [item for execution_id in ids if (item := self.get_response_execution(execution_id))]
+
+    def has_active_response_execution(
+        self, indicator_type: str, indicator_value: str,
+        integration_id: str, exclude_execution_id: str | None = None,
+    ) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1 FROM response_executions
+                WHERE indicator_type = %s AND indicator_value = %s AND integration_id = %s
+                  AND status IN ('pending_gateway', 'active', 'rollback_pending')
+                  AND (%s IS NULL OR execution_id <> %s)
+                LIMIT 1
+                """,
+                (indicator_type, indicator_value, integration_id, exclude_execution_id, exclude_execution_id),
+            )
+            return cursor.fetchone() is not None
+
+    def enqueue_gateway_command(
+        self, command_id: str, gateway_id: str, execution_id: str,
+        action: str, payload: dict[str, object],
+    ) -> dict[str, object]:
+        now = datetime.now(UTC)
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO gateway_commands
+                    (command_id, gateway_id, execution_id, action, payload, status)
+                VALUES (%s, %s, %s, %s, %s, 'pending')
+                """,
+                (command_id, gateway_id, execution_id, action, Jsonb(payload)),
+            )
+            self._insert_audit(
+                cursor, "gateway.command.queued", None, command_id,
+                {"gateway_id": gateway_id, "execution_id": execution_id, "action": action},
+            )
+        return {
+            "command_id": command_id, "gateway_id": gateway_id, "execution_id": execution_id,
+            "action": action, "payload": payload, "status": "pending", "created_at": now.isoformat(),
+        }
+
+    def list_pending_gateway_commands(self, gateway_id: str, limit: int = 10) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT command_id, execution_id, action, payload, created_at
+                FROM gateway_commands
+                WHERE gateway_id = %s AND status = 'pending'
+                ORDER BY created_at ASC LIMIT %s
+                """,
+                (gateway_id, limit),
             )
             rows = cursor.fetchall()
         return [
