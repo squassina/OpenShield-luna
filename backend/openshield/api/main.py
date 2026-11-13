@@ -15,14 +15,13 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr
 
+from openshield.ai.orchestrator import investigate_incident
+from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
-from openshield.ai.orchestrator import investigate_incident
-from openshield.ai.providers import AIProviderError, test_ollama, test_openai
-from openshield.integrations.ai import AIProviderAdapter
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
