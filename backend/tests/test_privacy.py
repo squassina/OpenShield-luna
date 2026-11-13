@@ -717,3 +717,55 @@ def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch)
     _, final_cursor, done = providers.fetch_dns_records_page(integration, cursor)
     assert done
     assert final_cursor["complete"] is True
+
+
+def test_dns_polling_lifespan_starts_and_stops_worker(monkeypatch) -> None:
+    import asyncio
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "60")
+    stopped = asyncio.Event()
+
+    async def fake_worker(registry, store, metrics, interval):
+        assert interval == 60
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(main, "run_dns_polling_loop", fake_worker)
+
+    async def exercise_lifespan():
+        async with main._dns_polling_lifespan(main.app):
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise_lifespan())
+    assert stopped.is_set()
+
+
+def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+    from openshield.privacy.providers import DnsProviderError
+
+    register_dns()
+    attempts = []
+
+    def fake_fetch_page(integration, cursor):
+        attempts.append(integration.integration_id)
+        if len(attempts) == 1:
+            raise DnsProviderError("temporary provider outage")
+        return [], {"watermark": 1, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def increment(self, name):
+            raise AssertionError("No records should be ingested")
+
+    first = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    second = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert first[0]["status"] == "error"
+    assert second[0]["status"] == "ok"
+    assert attempts == ["pihole-home", "pihole-home"]
