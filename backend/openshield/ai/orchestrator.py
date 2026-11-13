@@ -121,7 +121,11 @@ def _cloud_context(incident: dict[str, object]) -> dict[str, object]:
                     "provider": "MISP",
                     "actionable_attribute_count": len(actionable),
                     "highest_threat_level": min(
-                        (int(attribute.get("threat_level_id", 4)) for attribute in actionable),
+                        (
+                            int(attribute.get("threat_level_id", 4))
+                            for attribute in actionable
+                            if str(attribute.get("threat_level_id", "4")).isdigit()
+                        ),
                         default=4,
                     ),
                 })
