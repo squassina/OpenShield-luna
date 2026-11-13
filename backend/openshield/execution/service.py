@@ -58,6 +58,7 @@ def execute_decision(
     if action == "block_domain":
         integration = registry.get(integration_id)
         if integration is None or integration.kind not in {"pihole", "adguard"}:
+            store.update_policy_decision(decision_id, "failed", {"reason": "dns_integration_unavailable"})
             raise ExecutionError("DNS enforcement integration is unavailable")
         existing = any(
             item.get("list_type") == "block" and item.get("domain") == indicator_value
@@ -105,8 +106,10 @@ def execute_decision(
     if action == "block_ip":
         integration = registry.get(integration_id)
         if integration is None or integration.kind != "openwrt":
+            store.update_policy_decision(decision_id, "failed", {"reason": "openwrt_integration_unavailable"})
             raise ExecutionError("OpenWrt gateway integration is unavailable")
         if not os.getenv("OPENSHIELD_GATEWAY_TOKEN") or not store.get_integration_secret(integration_id):
+            store.update_policy_decision(decision_id, "failed", {"reason": "openwrt_credentials_unavailable"})
             raise ExecutionError("Authenticated OpenWrt gateway credentials are not configured")
         execution = {
             "execution_id": execution_id, "decision_id": decision_id,

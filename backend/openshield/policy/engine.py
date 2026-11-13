@@ -133,5 +133,6 @@ def evaluate_policy(
         from openshield.execution.service import execute_decision
 
         execution = execute_decision(store, registry, gateway_registry, decision["decision_id"])
-        return {**decision, "execution": execution}
+        latest = store.get_policy_decision(decision["decision_id"]) or decision
+        return {**latest, "execution": execution}
     return decision
