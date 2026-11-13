@@ -78,12 +78,16 @@ def _pihole_records(base_url: str) -> list[dict]:
     for item in records:
         if not isinstance(item, dict):
             continue
+        cname_targets = item.get("cname_targets") or item.get("cname") or []
+        if isinstance(cname_targets, str):
+            cname_targets = [cname_targets]
         normalized.append({
             "domain": item.get("domain") or item.get("name"),
             "client": item.get("client") or item.get("client_ip"),
             "timestamp": item.get("timestamp") or item.get("time"),
             "status": item.get("status") or item.get("reply") or item.get("type"),
             "type": item.get("type") or item.get("query_type"),
+            "cname_targets": cname_targets if isinstance(cname_targets, list) else [],
         })
     return normalized
 
@@ -106,12 +110,19 @@ def _adguard_records(base_url: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         question = item.get("question") if isinstance(item.get("question"), dict) else {}
+        answer = item.get("answer") or item.get("Answer") or []
+        cname_targets = [
+            entry.get("value") or entry.get("data")
+            for entry in answer
+            if isinstance(entry, dict) and str(entry.get("type", "")).upper() in {"CNAME", "5"}
+        ] if isinstance(answer, list) else []
         normalized.append({
             "domain": question.get("host") or item.get("domain"),
             "client": item.get("client") or item.get("IP"),
             "timestamp": item.get("time") or item.get("timestamp"),
             "status": item.get("reason") or item.get("status"),
             "type": question.get("type") or item.get("type"),
+            "cname_targets": cname_targets,
         })
     return normalized
 

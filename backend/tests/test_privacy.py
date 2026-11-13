@@ -623,11 +623,14 @@ def test_dns_provider_cursor_can_be_reset_and_is_audited() -> None:
 def test_classification_metadata_uses_pinned_adguard_feed() -> None:
     from openshield.privacy.dns import CNAME_TRACKER_METADATA, classify_domain_metadata
 
-    result = classify_domain_metadata("api.clickaine.com")
+    direct = classify_domain_metadata("api.clickaine.com")
+    assert direct["category"] == "unclassified"
+    result = classify_domain_metadata("news.example.com", cname_targets=["api.clickaine.com"])
     assert result["category"] == "tracker"
     assert result["source"] == "adguard_cname_trackers"
     assert result["version"] == CNAME_TRACKER_METADATA["source_commit"]
     assert result["confidence"] == 0.98
+    assert result["matched_cname_target"] == "api.clickaine.com"
 
 
 def test_allow_override_precedes_tracker_classification_without_changing_dns_evidence() -> None:
@@ -662,3 +665,19 @@ def test_classification_override_api_persists_and_audits() -> None:
         item["action"] == "privacy.classification_override.updated"
         for item in client.get("/api/v1/audit").json()
     )
+
+
+def test_adguard_normalizer_preserves_observed_cname_targets(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    normalized = providers._normalize_adguard_records([{
+        "question": {"host": "news.example.com", "type": "A"},
+        "time": "2026-11-13T10:00:00Z",
+        "answer": [
+            {"type": "CNAME", "value": "api.clickaine.com"},
+            {"type": "A", "value": "192.0.2.10"},
+        ],
+    }])
+    assert normalized[0]["cname_targets"] == ["api.clickaine.com"]
+    events = normalize_dns_batch("adguard", "adguard-home", normalized)
+    assert events[0].payload["classification"]["source"] == "adguard_cname_trackers"

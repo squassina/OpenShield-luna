@@ -53,7 +53,8 @@ def normalize_domain(value: Any) -> str:
 
 
 def classify_domain_metadata(
-    domain: str, override: dict[str, object] | None = None
+    domain: str, override: dict[str, object] | None = None,
+    cname_targets: list[str] | None = None,
 ) -> dict[str, object]:
     if override:
         action = override.get("action")
@@ -69,11 +70,19 @@ def classify_domain_metadata(
             "updated_at": override.get("updated_at"), "confidence": 1.0,
             "reason": str(override.get("reason") or ""),
         }
-    if any(domain == suffix or domain.endswith("." + suffix) for suffix in CNAME_TRACKERS):
+    matched_cname = next(
+        (
+            target for target in (cname_targets or [])
+            if any(target == suffix or target.endswith("." + suffix) for suffix in CNAME_TRACKERS)
+        ),
+        None,
+    )
+    if matched_cname:
         return {
             "category": "tracker", "risk": "high", "source": "adguard_cname_trackers",
             "version": CNAME_TRACKER_METADATA.get("source_commit", "unknown"),
-            "updated_at": CNAME_TRACKER_METADATA.get("updated_at"), "confidence": 0.98,
+            "updated_at": CNAME_TRACKER_METADATA.get("updated_at"),
+            "confidence": 0.98, "matched_cname_target": matched_cname,
         }
     if any(domain == suffix or domain.endswith("." + suffix) for suffix in TRACKER_SUFFIXES):
         return {
@@ -132,7 +141,16 @@ def normalize_dns_batch(
             ]
             if matching:
                 override = max(matching, key=lambda item: len(item[0]))[1]
-        classification = classify_domain_metadata(domain, override)
+        cname_targets = raw.get("cname_targets")
+        if not isinstance(cname_targets, list):
+            cname_targets = []
+        normalized_cname_targets = []
+        for target in cname_targets:
+            try:
+                normalized_cname_targets.append(normalize_domain(target))
+            except (TypeError, ValueError):
+                continue
+        classification = classify_domain_metadata(domain, override, normalized_cname_targets)
         category, risk = str(classification["category"]), str(classification["risk"])
         event_id = hashlib.sha256(
             f"{kind}|{integration_id}|{occurred_at.isoformat()}|{domain}|{client}|{raw_status}".encode()
