@@ -138,12 +138,6 @@ class OpenWrtRPCClient:
         if direction not in {"source", "destination"}:
             raise ValueError("Firewall block direction must be source or destination")
         section = "os_" + re.sub(r"[^a-f0-9]", "", execution_id.lower())[:16]
-        try:
-            existing = self.call("uci", "get", {"config": "firewall", "section": section})
-            if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
-                return {"section": section, "verified": True, "already_present": True}
-        except OpenWrtRPCError:
-            pass
         values: dict[str, object] = {
             "name": f"OpenShield {section}",
             "proto": "all",
@@ -155,10 +149,21 @@ class OpenWrtRPCClient:
             values.update({"src": "wan", "dest": "lan", "src_ip": str(address)})
         else:
             values.update({"src": "lan", "dest": "wan", "dest_ip": str(address)})
-        self.call(
-            "uci", "add",
-            {"config": "firewall", "type": "rule", "name": section, "values": values},
-        )
+        try:
+            created = self.call(
+                "uci", "add",
+                {"config": "firewall", "type": "rule", "name": section, "values": values},
+            )
+            if isinstance(created.get("section"), str):
+                section = created["section"]
+        except OpenWrtRPCError as exc:
+            try:
+                existing = self.call("uci", "get", {"config": "firewall", "section": section})
+            except OpenWrtRPCError:
+                raise exc
+            if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
+                return {"section": section, "verified": True, "already_present": True}
+            raise exc
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
             verified = self.call("uci", "get", {"config": "firewall", "section": section})
@@ -176,10 +181,6 @@ class OpenWrtRPCClient:
     def remove_firewall_block(self, section: str) -> dict[str, object]:
         if not re.fullmatch(r"os_[a-f0-9]{1,16}", section):
             raise ValueError("Invalid OpenShield firewall section")
-        try:
-            self.call("uci", "get", {"config": "firewall", "section": section})
-        except OpenWrtRPCError:
-            return {"section": section, "removed": True, "already_absent": True}
         self.call("uci", "delete", {"config": "firewall", "section": section})
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
