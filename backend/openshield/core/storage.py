@@ -379,6 +379,26 @@ CREATE TABLE IF NOT EXISTS events (
             "created_at": now.isoformat(),
         }
 
+    def list_policy_decisions(self, limit: int = 100) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT decision_id, incident_id, policy_id, status, rationale,
+                       created_at, updated_at
+                FROM policy_decisions ORDER BY created_at DESC LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "decision_id": row[0], "incident_id": row[1], "policy_id": row[2],
+                "status": row[3], "rationale": row[4],
+                "created_at": row[5].isoformat(), "updated_at": row[6].isoformat(),
+            }
+            for row in rows
+        ]
+
     def get_policy_decision(self, decision_id: str) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -533,7 +553,7 @@ CREATE TABLE IF NOT EXISTS events (
                 """
                 SELECT 1 FROM response_executions
                 WHERE indicator_type = %s AND indicator_value = %s AND integration_id = %s
-                  AND status IN ('pending_gateway', 'active', 'rollback_pending')
+                  AND status IN ('pending_gateway', 'active', 'rollback_pending', 'rollback_failed')
                   AND (%s IS NULL OR execution_id <> %s)
                 LIMIT 1
                 """,
@@ -584,6 +604,18 @@ CREATE TABLE IF NOT EXISTS events (
             for row in rows
         ]
 
+    def has_pending_gateway_command(self, execution_id: str, action: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1 FROM gateway_commands
+                WHERE execution_id = %s AND action = %s AND status = 'pending'
+                LIMIT 1
+                """,
+                (execution_id, action),
+            )
+            return cursor.fetchone() is not None
+
     def get_gateway_command(self, command_id: str) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -608,18 +640,26 @@ CREATE TABLE IF NOT EXISTS events (
     ) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                """
-                UPDATE gateway_commands SET status = %s, result = %s, updated_at = NOW()
-                WHERE command_id = %s AND status = 'pending'
-                """,
-                (status, Jsonb(result), command_id),
+                "SELECT status, result FROM gateway_commands WHERE command_id = %s FOR UPDATE",
+                (command_id,),
             )
-            if cursor.rowcount == 0:
+            row = cursor.fetchone()
+            if row is None:
                 return None
-            self._insert_audit(
-                cursor, "gateway.command.completed", None, command_id,
-                {"status": status, "result_status": result.get("status")},
-            )
+            if row[0] == "pending":
+                cursor.execute(
+                    """
+                    UPDATE gateway_commands SET status = %s, result = %s, updated_at = NOW()
+                    WHERE command_id = %s
+                    """,
+                    (status, Jsonb(result), command_id),
+                )
+                self._insert_audit(
+                    cursor, "gateway.command.completed", None, command_id,
+                    {"status": status, "result_status": result.get("status")},
+                )
+            elif row[0] != status or row[1] != result:
+                return None
         return self.get_gateway_command(command_id)
 
     def get_emergency_stop(self) -> bool:
