@@ -181,21 +181,28 @@ class OpenWrtRPCClient:
     def remove_firewall_block(self, section: str) -> dict[str, object]:
         if not re.fullmatch(r"os_[a-f0-9]{1,16}", section):
             raise ValueError("Invalid OpenShield firewall section")
-        self.call("uci", "delete", {"config": "firewall", "section": section})
+        try:
+            self.call("uci", "delete", {"config": "firewall", "section": section})
+        except OpenWrtRPCError as exc:
+            current = self.call("uci", "get", {"config": "firewall"})
+            values = current.get("values")
+            if isinstance(values, dict) and section not in values:
+                return {"section": section, "removed": True, "already_absent": True}
+            raise exc
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
-            try:
-                self.call("uci", "get", {"config": "firewall", "section": section})
-            except OpenWrtRPCError:
-                self.call("uci", "confirm", {})
-                return {"section": section, "removed": True, "already_absent": False}
-            raise OpenWrtRPCError("OpenWrt firewall rule rollback verification failed")
+            current = self.call("uci", "get", {"config": "firewall"})
+            values = current.get("values")
+            if not isinstance(values, dict) or section in values:
+                raise OpenWrtRPCError("OpenWrt firewall rule rollback verification failed")
+            self.call("uci", "confirm", {})
         except OpenWrtRPCError:
             try:
                 self.call("uci", "revert", {"config": "firewall"})
             except OpenWrtRPCError:
                 pass
             raise
+        return {"section": section, "removed": True, "already_absent": False}
 
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")
