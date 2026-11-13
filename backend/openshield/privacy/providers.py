@@ -2,7 +2,7 @@ import base64
 import json
 import os
 import time
-from datetime import UTC, datetime
+from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen

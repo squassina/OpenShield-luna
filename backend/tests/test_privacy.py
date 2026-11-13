@@ -410,11 +410,11 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     }
     calls = []
 
-    def fake_fetch(integration):
+    def fake_fetch_page(integration, cursor):
         calls.append(integration.integration_id)
-        return [record]
+        return [record], {"watermark": 1, "complete": True}, True
 
-    monkeypatch.setattr(polling, "fetch_dns_records_page", lambda integration, cursor: ([record], {"watermark": 1, "complete": True}, True))
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
     class Metrics:
         def increment(self, name):
@@ -447,13 +447,13 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     register_dns("adguard-home", "adguard")
     calls = []
 
-    def fake_fetch(integration):
+    def fake_fetch_page(integration, cursor):
         calls.append(integration.integration_id)
         if integration.integration_id == "pihole-home":
             raise DnsProviderError("provider unavailable")
-        return []
+        return [], {"watermark": 1, "complete": True}, True
 
-    monkeypatch.setattr(polling, "fetch_dns_records_page", lambda integration, cursor: ([], {"watermark": 1, "complete": True}, True))
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
     class Metrics:
         def increment(self, name):
@@ -480,3 +480,92 @@ def test_disabled_dns_provider_cannot_be_manually_polled() -> None:
     assert client.post("/api/v1/privacy/sources/pihole-home/sync").status_code == 409
     source = client.get("/api/v1/privacy/sources").json()[0]
     assert source["status"] == "disabled"
+
+
+def test_provider_poll_cursor_persists_and_cascades_with_integration() -> None:
+    from openshield.api import main
+
+    register_dns()
+    state = {"watermark": 1234.5, "complete": True}
+    main.store.set_integration_poll_cursor("pihole-home", "pihole", state)
+    assert main.store.get_integration_poll_cursor("pihole-home") == state
+    assert client.delete("/api/v1/integrations/pihole-home").status_code == 204
+    assert main.store.get_integration_poll_cursor("pihole-home") is None
+
+
+def test_pihole_query_log_pagination_uses_fixed_window_and_offset(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    responses = [
+        {"queries": [{"domain": "one.example", "timestamp": 1500},
+                     {"domain": "two.example", "timestamp": 1499}]},
+        {"queries": [{"domain": "three.example", "timestamp": 1498}]},
+    ]
+    requests = []
+
+    def fake_request(base_url, path):
+        requests.append(path)
+        return responses.pop(0)
+
+    monkeypatch.setattr(providers, "_pihole_request", fake_request)
+    first, cursor, done = providers.fetch_dns_records_page(integration, page_size=2)
+    assert len(first) == 2 and not done
+    assert "start=0" in requests[0]
+    second, final_cursor, done = providers.fetch_dns_records_page(integration, cursor, page_size=2)
+    assert len(second) == 1 and done
+    assert "start=2" in requests[1]
+    assert final_cursor["complete"] is True
+    assert cursor["window_until"] == final_cursor["watermark"]
+
+
+def test_adguard_query_log_pagination_uses_older_than_watermark(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    responses = [
+        {"oldest": "2026-11-13T12:00:01Z", "data": [
+            {"question": {"host": "new.example"}, "time": "2026-11-13T12:00:02Z"},
+            {"question": {"host": "mid.example"}, "time": "2026-11-13T12:00:01Z"},
+        ]},
+        {"oldest": "2026-11-13T11:59:59Z", "data": [
+            {"question": {"host": "old.example"}, "time": "2026-11-13T11:59:59Z"},
+        ]},
+    ]
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requests.append(request.full_url)
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    first, cursor, done = providers.fetch_dns_records_page(
+        integration, {"watermark": datetime.fromisoformat("2026-11-13T12:00:00+00:00").timestamp()},
+        page_size=2,
+    )
+    assert len(first) == 2 and not done
+    assert "older_than=2026-11-13T12%3A00%3A01Z" in requests[1]
+    second, final_cursor, done = providers.fetch_dns_records_page(integration, cursor, page_size=2)
+    assert len(second) == 1 and done
+    assert final_cursor["complete"] is True
