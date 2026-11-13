@@ -1,0 +1,39 @@
+name: Update CNAME tracker feed
+
+on:
+  schedule:
+    - cron: "15 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Refresh and validate upstream feed
+        run: python scripts/update_cname_tracker_feed.py
+      - name: Open update pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet; then
+            echo "Tracker feed is already current."
+            exit 0
+          fi
+          branch="chore/update-cname-trackers-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add backend/openshield/privacy/data
+          git commit -m "chore: update CNAME tracker feed"
+          git push origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "chore: update CNAME tracker feed" \
+            --body "Automated weekly refresh of the pinned AdGuard CNAME tracker dataset. Review the upstream commit and feed diff before merging."

@@ -618,3 +618,47 @@ def test_dns_provider_cursor_can_be_reset_and_is_audited() -> None:
         item["action"] == "privacy.provider_poll.cursor_reset"
         for item in client.get("/api/v1/audit").json()
     )
+
+
+def test_classification_metadata_uses_pinned_adguard_feed() -> None:
+    from openshield.privacy.dns import CNAME_TRACKER_METADATA, classify_domain_metadata
+
+    result = classify_domain_metadata("api.clickaine.com")
+    assert result["category"] == "tracker"
+    assert result["source"] == "adguard_cname_trackers"
+    assert result["version"] == CNAME_TRACKER_METADATA["source_commit"]
+    assert result["confidence"] == 0.98
+
+
+def test_allow_override_precedes_tracker_classification_without_changing_dns_evidence() -> None:
+    overrides = {
+        "google-analytics.com": {
+            "action": "allow", "reason": "Approved analytics", "updated_at": "2026-11-13T10:00:00+00:00",
+        },
+    }
+    events = normalize_dns_batch("pihole", "pihole-home", [{
+        "domain": "metrics.google-analytics.com", "client": "192.168.1.30",
+        "timestamp": datetime.now(UTC).isoformat(), "status": "blocked",
+    }], classification_overrides=overrides)
+    payload = events[0].payload
+    assert payload["category"] == "allowed_override"
+    assert payload["classification"]["source"] == "user_override"
+    assert payload["classification"]["confidence"] == 1.0
+    assert payload["domain"] == "metrics.google-analytics.com"
+    assert payload["status"] == "blocked"
+
+
+def test_classification_override_api_persists_and_audits() -> None:
+    response = client.put(
+        "/api/v1/privacy/classifications/overrides/example.com",
+        json={"action": "allow", "reason": "Approved by household"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "allow"
+    listed = client.get("/api/v1/privacy/classifications/overrides").json()
+    assert listed["example.com"]["reason"] == "Approved by household"
+    assert client.delete("/api/v1/privacy/classifications/overrides/example.com").status_code == 204
+    assert any(
+        item["action"] == "privacy.classification_override.updated"
+        for item in client.get("/api/v1/audit").json()
+    )

@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -37,7 +37,7 @@ configure_logging()
 
 @asynccontextmanager
 async def _dns_polling_lifespan(app: FastAPI):
-    interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "300")
+    interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "60")
     try:
         interval = int(interval_raw)
     except ValueError as exc:
@@ -108,6 +108,11 @@ class PrivacyListEntry(BaseModel):
     list_type: str = Field(pattern=r"^(allow|block)$")
     domain: str = Field(min_length=3, max_length=253)
     comment: str = Field(default="", max_length=500)
+
+
+class ClassificationOverrideRequest(BaseModel):
+    action: Literal["allow", "tracker"]
+    reason: str = Field(default="", max_length=500)
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -457,7 +462,10 @@ def ingest_dns_queries(
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
     try:
-        events = normalize_dns_batch(integration.kind, integration_id, records)
+        events = normalize_dns_batch(
+            integration.kind, integration_id, records,
+            store.list_privacy_classification_overrides(),
+        )
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     accepted = duplicates = 0
@@ -480,7 +488,10 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     _record_poll_attempt(integration_id)
     try:
         records = fetch_dns_records(integration)
-        events = normalize_dns_batch(integration.kind, integration_id, records) if records else []
+        events = normalize_dns_batch(
+            integration.kind, integration_id, records,
+            store.list_privacy_classification_overrides(),
+        ) if records else []
     except (DnsProviderError, ValueError, TypeError, OverflowError) as exc:
         _record_poll_failure(integration_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -602,6 +613,34 @@ def privacy_report(
 @app.get("/api/v1/privacy/lists", tags=["privacy"])
 def list_privacy_lists(integration_id: str | None = None) -> list[dict[str, object]]:
     return store.list_privacy_lists(integration_id)
+
+
+@app.get("/api/v1/privacy/classifications/overrides", tags=["privacy"])
+def list_classification_overrides() -> dict[str, dict[str, object]]:
+    return store.list_privacy_classification_overrides()
+
+
+@app.put("/api/v1/privacy/classifications/overrides/{domain}", tags=["privacy"])
+def set_classification_override(
+    domain: str, request: ClassificationOverrideRequest
+) -> dict[str, object]:
+    try:
+        normalized = normalize_domain(domain)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    store.upsert_privacy_classification_override(normalized, request.action, request.reason)
+    return store.list_privacy_classification_overrides()[normalized]
+
+
+@app.delete("/api/v1/privacy/classifications/overrides/{domain}", tags=["privacy"])
+def delete_classification_override(domain: str) -> Response:
+    try:
+        normalized = normalize_domain(domain)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not store.delete_privacy_classification_override(normalized):
+        raise HTTPException(status_code=404, detail="Classification override not found")
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/privacy/lists", status_code=201, tags=["privacy"])

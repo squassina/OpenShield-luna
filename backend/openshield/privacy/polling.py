@@ -64,7 +64,10 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             complete = False
             while pages < 10 and not complete:
                 records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
-                events = normalize_dns_batch(integration.kind, integration.integration_id, records) if records else []
+                events = normalize_dns_batch(
+                    integration.kind, integration.integration_id, records,
+                    store.list_privacy_classification_overrides(),
+                ) if records else []
                 for event in events:
                     if store.insert_event(event):
                         accepted += 1
