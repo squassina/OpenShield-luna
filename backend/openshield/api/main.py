@@ -51,6 +51,12 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.threat_intel.engine import enrich_events
+from openshield.threat_intel.providers import (
+    ThreatIntelProviderError,
+    lookup_crowdsec,
+    lookup_misp,
+)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
