@@ -326,7 +326,7 @@ def fetch_dns_records_page(
 
     if integration.kind == "pihole":
         state = dict(cursor or {})
-        if state.get("complete") or not state:
+        if state.get("complete") or not state or "window_from" not in state:
             watermark = _time_value(state.get("watermark"))
             now = time.time()
             window_from = max(
