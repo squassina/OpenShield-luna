@@ -454,10 +454,10 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
             raise AssertionError("No events should be ingested")
 
     outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
-    assert calls == ["pihole-home", "adguard-home"]
+    assert calls == ["adguard-home", "pihole-home"]
     assert outcomes == [
-        {"integration_id": "pihole-home", "status": "error"},
         {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0},
+        {"integration_id": "pihole-home", "status": "error"},
     ]
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
