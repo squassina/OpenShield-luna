@@ -41,6 +41,8 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
     ],
     "crowdsec": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
     "misp": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
+    "ollama": [models.Capability.HEALTH_CHECK],
+    "openai": [models.Capability.HEALTH_CHECK],
 }
 
 
