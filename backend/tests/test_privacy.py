@@ -429,7 +429,8 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert len(events) == 1
     assert events[0]["payload"]["domain"] == "ads.doubleclick.net"
-    source = client.get("/api/v1/privacy/sources").json()[0]
+    source = next(item for item in client.get("/api/v1/privacy/sources").json()
+                   if item["integration_id"] == "pihole-home")
     assert source["status"] == "healthy"
     assert source["last_success_at"]
     assert source["last_imported"] == 1
