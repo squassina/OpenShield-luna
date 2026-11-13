@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS events (
                     PRIMARY KEY (incident_id, event_id)
                 )
                 """,
+                CREATE TABLE IF NOT EXISTS incident_investigations (
+                    investigation_id TEXT PRIMARY KEY,
+                    incident_id TEXT NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
+                    provider_integration_id TEXT NOT NULL,
+                    provider_kind TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    context_scope JSONB NOT NULL,
+                    result JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
                 """
                 CREATE TABLE IF NOT EXISTS integration_poll_cursors (
                     integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
@@ -176,8 +188,77 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, incident_events, incidents, threat_intel_cache, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, incident_investigations, incident_events, incidents, threat_intel_cache, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
+
+    def create_incident_investigation(
+        self, investigation_id: str, incident_id: str, provider_integration_id: str,
+        provider_kind: str, model: str, prompt_version: str,
+        context_scope: dict[str, object], result: dict[str, object],
+    ) -> dict[str, object]:
+        created_at = datetime.now(UTC)
+        payload = {
+            "investigation_id": investigation_id,
+            "incident_id": incident_id,
+            "provider_integration_id": provider_integration_id,
+            "provider_kind": provider_kind,
+            "model": model,
+            "prompt_version": prompt_version,
+            "context_scope": context_scope,
+            "result": result,
+            "created_at": created_at.isoformat(),
+        }
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO incident_investigations
+                    (investigation_id, incident_id, provider_integration_id, provider_kind,
+                     model, prompt_version, context_scope, result, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    investigation_id, incident_id, provider_integration_id, provider_kind,
+                    model, prompt_version, Jsonb(context_scope), Jsonb(result), created_at,
+                ),
+            )
+            self._insert_audit(
+                cursor, "incident.investigation.created", None, incident_id,
+                {
+                    "investigation_id": investigation_id,
+                    "provider_integration_id": provider_integration_id,
+                    "provider_kind": provider_kind,
+                    "model": model,
+                    "prompt_version": prompt_version,
+                    "context_scope": context_scope,
+                },
+            )
+        return payload
+
+    def list_incident_investigations(
+        self, incident_id: str, limit: int = 10
+    ) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT investigation_id, incident_id, provider_integration_id,
+                       provider_kind, model, prompt_version, context_scope, result, created_at
+                FROM incident_investigations
+                WHERE incident_id = %s
+                ORDER BY created_at DESC LIMIT %s
+                """,
+                (incident_id, limit),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "investigation_id": row[0], "incident_id": row[1],
+                "provider_integration_id": row[2], "provider_kind": row[3],
+                "model": row[4], "prompt_version": row[5],
+                "context_scope": row[6], "result": row[7],
+                "created_at": row[8].isoformat(),
+            }
+            for row in rows
+        ]
 
     def get_events_by_ids(self, event_ids: list[str]) -> list[EventEnvelope]:
         if not event_ids:
