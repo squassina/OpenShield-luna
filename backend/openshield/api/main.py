@@ -1,12 +1,11 @@
+import asyncio
 import base64
 import ipaddress
 import os
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
-
-from contextlib import asynccontextmanager
-import asyncio
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -23,8 +22,8 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
-from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.privacy.polling import run_dns_polling_loop
+from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
