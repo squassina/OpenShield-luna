@@ -632,7 +632,7 @@ def register_policy(request: PolicyCreateRequest) -> dict[str, object]:
 def patch_policy(policy_id: str, request: PolicyUpdateRequest) -> dict[str, object]:
     if store.get_policy(policy_id) is None:
         raise HTTPException(status_code=404, detail="Policy not found")
-    result = store.update_policy(policy_id, request.model_dump(exclude_unset=True))
+    result = store.update_policy(policy_id, request.model_dump(exclude_unset=True, exclude_none=True))
     if result is None:
         raise HTTPException(status_code=404, detail="Policy not found")
     return result

@@ -276,16 +276,15 @@ def test_openwrt_firewall_execution_uses_gateway_queue_and_ttl_rollback(monkeypa
     assert result["status"] == "rolled_back"
 
 
-def test_failed_gateway_rollback_is_requeued_until_acknowledged() -> None:
+def test_failed_gateway_rollback_is_requeued_until_acknowledged(monkeypatch) -> None:
     from openshield.api import main
 
     monkeypatch_env = {
         "OPENSHIELD_SECRET_KEY": Fernet.generate_key().decode(),
         "OPENSHIELD_GATEWAY_TOKEN": "gateway-test-token",
     }
-    import os
     for key, value in monkeypatch_env.items():
-        os.environ[key] = value
+        monkeypatch.setenv(key, value)
     _register("openwrt", "home-gateway")
     SecretStore(main.store).set("home-gateway", {
         "base_url": "https://192.0.2.1", "username": "openshield", "password": "router-password",
