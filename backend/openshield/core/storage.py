@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS events (
                     PRIMARY KEY (incident_id, event_id)
                 )
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS integration_poll_cursors (
                     integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
                     provider_kind TEXT NOT NULL,
