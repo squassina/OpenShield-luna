@@ -63,18 +63,6 @@ def execute_decision(
             item.get("list_type") == "block" and item.get("domain") == indicator_value
             for item in store.list_privacy_lists(integration_id)
         )
-        if not existing:
-            store.upsert_privacy_list(
-                integration_id, "block", indicator_value,
-                f"OpenShield managed execution {execution_id}",
-            )
-        try:
-            sync_result = sync_provider_lists(integration, store.list_privacy_lists(integration_id))
-        except (DnsProviderError, ValueError) as exc:
-            if not existing:
-                store.delete_privacy_list_item(integration_id, "block", indicator_value)
-            store.update_policy_decision(decision_id, "failed", {"reason": "dns_provider_sync_failed"})
-            raise ExecutionError("DNS provider did not confirm the block-list update") from exc
         now = datetime.now(UTC)
         execution = {
             "execution_id": execution_id, "decision_id": decision_id,
@@ -83,15 +71,31 @@ def execute_decision(
             "indicator_type": indicator_type, "indicator_value": indicator_value,
             "direction": direction, "status": "active", "ttl_seconds": ttl_seconds,
             "expires_at": now + timedelta(seconds=ttl_seconds),
-            "adapter_result": {
-                "created_by_execution": not existing,
-                "provider_result": sync_result,
-                "verified": True,
-            },
+            "adapter_result": {"created_by_execution": not existing, "verified": False},
         }
-        result = store.create_response_execution(execution)
+        store.create_response_execution(execution)
+        try:
+            if not existing:
+                store.upsert_privacy_list(
+                    integration_id, "block", indicator_value,
+                    f"OpenShield managed execution {execution_id}",
+                )
+            sync_result = sync_provider_lists(integration, store.list_privacy_lists(integration_id))
+        except (DnsProviderError, ValueError) as exc:
+            if not existing:
+                store.delete_privacy_list_item(integration_id, "block", indicator_value)
+            store.update_response_execution(
+                execution_id, "failed", {"error": "dns_provider_sync_failed"},
+            )
+            store.update_policy_decision(decision_id, "failed", {"reason": "dns_provider_sync_failed"})
+            raise ExecutionError("DNS provider did not confirm the block-list update") from exc
+        result = store.update_response_execution(
+            execution_id, "active",
+            {"created_by_execution": not existing, "provider_result": sync_result, "verified": True},
+            expires_at=now + timedelta(seconds=ttl_seconds),
+        )
         store.update_policy_decision(decision_id, "executed", {"execution_id": execution_id})
-        return result
+        return result or execution
 
     if action == "block_ip":
         integration = registry.get(integration_id)
@@ -99,9 +103,6 @@ def execute_decision(
             raise ExecutionError("OpenWrt gateway integration is unavailable")
         if not os.getenv("OPENSHIELD_GATEWAY_TOKEN") or not store.get_integration_secret(integration_id):
             raise ExecutionError("Authenticated OpenWrt gateway credentials are not configured")
-        gateway = gateway_registry.get_status(integration_id)
-        if gateway is None or gateway.get("status") != "connected":
-            raise ExecutionError("OpenWrt Gateway Connector is not connected")
         execution = {
             "execution_id": execution_id, "decision_id": decision_id,
             "incident_id": decision["incident_id"], "policy_id": policy["policy_id"],
@@ -111,10 +112,15 @@ def execute_decision(
             "expires_at": None, "adapter_result": {},
         }
         store.create_response_execution(execution)
-        store.enqueue_gateway_command(
-            str(uuid4()), integration_id, execution_id, "block_ip",
-            {"ip": indicator_value, "direction": direction},
-        )
+        try:
+            store.enqueue_gateway_command(
+                str(uuid4()), integration_id, execution_id, "block_ip",
+                {"ip": indicator_value, "direction": direction},
+            )
+        except Exception as exc:
+            store.update_response_execution(execution_id, "failed", {"error": "gateway_command_enqueue_failed"})
+            store.update_policy_decision(decision_id, "failed", {"reason": "gateway_command_enqueue_failed"})
+            raise ExecutionError("Unable to queue the OpenWrt firewall command") from exc
         store.update_policy_decision(decision_id, "executing", {"execution_id": execution_id})
         return execution
     raise ExecutionError("Unsupported enforcement action")
@@ -232,10 +238,11 @@ def expire_due_executions(
                 )
                 processed += 1
                 continue
-            store.enqueue_gateway_command(
-                str(uuid4()), integration_id, str(execution["execution_id"]), "unblock_ip",
-                {"section": section},
-            )
+            if not store.has_pending_gateway_command(str(execution["execution_id"]), "unblock_ip"):
+                store.enqueue_gateway_command(
+                    str(uuid4()), integration_id, str(execution["execution_id"]), "unblock_ip",
+                    {"section": section},
+                )
             store.update_response_execution(
                 str(execution["execution_id"]), "rollback_pending",
                 {"rollback": "gateway_unblock_queued"},
