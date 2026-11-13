@@ -685,6 +685,7 @@ def test_adguard_normalizer_preserves_observed_cname_targets(monkeypatch) -> Non
 
 def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch) -> None:
     import json
+
     from openshield.privacy import providers
 
     integration = Integration(
