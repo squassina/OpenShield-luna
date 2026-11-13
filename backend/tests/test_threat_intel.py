@@ -167,8 +167,12 @@ def test_enrichment_creates_incident_with_provenance_cache_and_false_positive_st
     assert calls["crowdsec"] == 1
 
     main.store.update_incident_status(incident["incident_id"], "false_positive", "Known benign test fixture")
-    repeated = engine.enrich_events(main.store, main.registry, [event.event_id])
+    second_event = _event("suricata-event-2")
+    main.store.insert_event(second_event)
+    repeated = engine.enrich_events(main.store, main.registry, [second_event.event_id])
     assert repeated["incidents"][0]["status"] == "false_positive"
+    assert set(repeated["incidents"][0]["event_ids"]) == {event.event_id, second_event.event_id}
+    assert len(main.store.get_incident_events(incident["incident_id"])) == 2
     assert calls["crowdsec"] == 1  # cache prevents another paid/provider lookup
 
 
@@ -219,3 +223,29 @@ def test_threat_intel_credentials_are_redacted_and_connection_test_is_explicit(m
     tested = client.post("/api/v1/integrations/crowdsec-home/test")
     assert tested.status_code == 200
     assert tested.json()["status"] == "connected"
+
+
+def test_enrichment_limits_unique_indicators_to_fifty(monkeypatch) -> None:
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    _register("suricata", "sensor-suricata")
+    _register("crowdsec", "crowdsec-home")
+    SecretStore(main.store).set("crowdsec-home", {"api_key": "crowdsec-key"})
+    events = []
+    for index in range(60):
+        event = _event(f"batch-event-{index}")
+        event = event.model_copy(update={"payload": {"src_ip": f"8.8.{index // 250}.{index % 250 + 1}"}})
+        main.store.insert_event(event)
+        events.append(event.event_id)
+    calls = []
+    monkeypatch.setattr(engine, "lookup_crowdsec", lambda ip, key: (
+        calls.append(ip) or {
+            "provider": "crowdsec", "indicator_type": "ip", "indicator_value": ip,
+            "matched": False, "reputation": "unknown",
+        }
+    ))
+    result = engine.enrich_events(main.store, main.registry, events)
+    assert result["indicators_considered"] == 50
+    assert result["indicators_truncated"] == 10
+    assert len(calls) == 50

@@ -365,6 +365,8 @@ Scope:
 - Incident timeline and investigation workflow.
 - Evidence provenance and false-positive handling.
 
+**Implementation status:** P3 software scope is implemented on the chained feature branch. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
+
 ### P4 — Hybrid AI Network Intelligence
 
 **Goal:** provide evidence-grounded investigation and recommendations.
