@@ -238,7 +238,8 @@ $("openwrt-form").addEventListener("submit",async event=>{
       method:"PUT",body:JSON.stringify({base_url,username,password})
     });
     $("openwrt-password").value="";
-    $("openwrt-status").textContent="Credentials encrypted and saved. Ensure OPENSHIELD_GATEWAY_ID matches "+id+" and the connector has OPENSHIELD_GATEWAY_TOKEN configured.";
+    const check=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test");
+    $("openwrt-status").textContent=check.message;
     showNotice("OpenWrt credentials saved securely.");await load();
   } catch(error) {
     $("openwrt-password").value="";

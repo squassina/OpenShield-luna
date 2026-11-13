@@ -385,9 +385,26 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
             "status": "connector_disconnected",
             "message": "Gateway Connector is not connected. Check its deployment and OPENSHIELD_GATEWAY_TOKEN.",
         }
+    health_events = store.list_events(integration_id, "gateway.health", limit=1)
+    if health_events:
+        health = health_events[0]
+        if health.payload.get("status") == "reachable":
+            return {
+                "status": "router_rpc_connected",
+                "message": "Gateway Connector and OpenWrt RPC are responding.",
+                "last_rpc_check": health.observed_at.isoformat(),
+                "gateway": gateway,
+            }
+        if health.payload.get("status") == "unavailable":
+            return {
+                "status": "router_rpc_failed",
+                "message": "Gateway Connector is online but OpenWrt RPC failed. Check router URL, RPC credentials, ACL permissions and TLS trust.",
+                "last_rpc_check": health.observed_at.isoformat(),
+                "gateway": gateway,
+            }
     return {
         "status": "connector_connected",
-        "message": "Gateway Connector is online. It receives encrypted-at-rest router credentials on connect and heartbeat.",
+        "message": "Gateway Connector is online. Waiting for its next OpenWrt RPC health check.",
         "gateway": gateway,
     }
 

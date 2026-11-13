@@ -143,6 +143,6 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 3. Enter the management URL and a dedicated read-only rpcd account, then save.
 4. The password is encrypted using `OPENSHIELD_SECRET_KEY`; it is never included in integration JSON or returned to the browser.
 5. The connector retrieves the configuration using its separate `OPENSHIELD_GATEWAY_TOKEN` and applies it on the next connect/heartbeat.
-6. Use the connector status in the Integrations API to confirm the connector is online. A successful connector heartbeat is not proof that router RPC credentials work; verify the discovery/health events.
+6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
 
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
