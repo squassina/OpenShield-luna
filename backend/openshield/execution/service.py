@@ -83,10 +83,15 @@ def execute_decision(
             sync_result = sync_provider_lists(integration, store.list_privacy_lists(integration_id))
         except (DnsProviderError, ValueError) as exc:
             if not existing:
-                store.delete_privacy_list_item(integration_id, "block", indicator_value)
-            store.update_response_execution(
-                execution_id, "failed", {"error": "dns_provider_sync_failed"},
-            )
+                store.update_response_execution(
+                    execution_id, "rollback_failed",
+                    {"created_by_execution": True, "error": "dns_provider_sync_failed"},
+                    expires_at=datetime.now(UTC),
+                )
+            else:
+                store.update_response_execution(
+                    execution_id, "failed", {"created_by_execution": False, "error": "dns_provider_sync_failed"},
+                )
             store.update_policy_decision(decision_id, "failed", {"reason": "dns_provider_sync_failed"})
             raise ExecutionError("DNS provider did not confirm the block-list update") from exc
         result = store.update_response_execution(
