@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 import os
 import time
@@ -122,6 +124,13 @@ def _configured_openwrt_client(config: object) -> OpenWrtRPCClient | None:
         return None
 
 
+def _openwrt_config_signature(config: object) -> str | None:
+    if not isinstance(config, dict):
+        return None
+    encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def run_agent(
     client: GatewayConnectorClient,
     heartbeat_interval: float = 30.0,
@@ -136,12 +145,14 @@ def run_agent(
 
     retry_delay = 1.0
     discovery_collected_offline = False
+    openwrt_config_signature: str | None = None
     while True:
         try:
             result = client.connect()
             if "openwrt_config" in result:
+                openwrt_config_signature = _openwrt_config_signature(result["openwrt_config"])
                 openwrt_client = _configured_openwrt_client(result["openwrt_config"])
-                if openwrt_client is not None and integration_id is None:
+                if integration_id is None:
                     integration_id = str(result.get("gateway_id") or "")
             logger.info("Gateway connected", extra={"gateway_id": result.get("gateway_id")})
             retry_delay = 1.0
@@ -182,9 +193,19 @@ def run_agent(
             try:
                 heartbeat = client.heartbeat()
                 if "openwrt_config" in heartbeat:
-                    openwrt_client = _configured_openwrt_client(heartbeat["openwrt_config"])
-                    if openwrt_client is not None and integration_id is None:
-                        integration_id = str(heartbeat.get("gateway_id") or "")
+                    signature = _openwrt_config_signature(heartbeat["openwrt_config"])
+                    if signature != openwrt_config_signature:
+                        openwrt_config_signature = signature
+                        openwrt_client = _configured_openwrt_client(heartbeat["openwrt_config"])
+                        if integration_id is None:
+                            integration_id = str(heartbeat.get("gateway_id") or "")
+                        if openwrt_client is not None and integration_id:
+                            discovery = openwrt_client.discover()
+                            _deliver_event(
+                                client,
+                                _event(integration_id, "gateway.discovery", discovery),
+                                spool,
+                            )
                 if spool is not None:
                     _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:

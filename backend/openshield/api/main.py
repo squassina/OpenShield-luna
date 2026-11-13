@@ -322,6 +322,11 @@ def save_openwrt_credentials(
     integration = registry.get(integration_id)
     if integration is None or integration.kind != "openwrt":
         raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    if not os.getenv("OPENSHIELD_GATEWAY_TOKEN"):
+        raise HTTPException(
+            status_code=503,
+            detail="Configure OPENSHIELD_GATEWAY_TOKEN on Node and connector before storing router credentials",
+        )
     try:
         parsed = urlsplit(credentials.base_url)
         if (
@@ -357,10 +362,7 @@ def delete_openwrt_credentials(integration_id: str) -> Response:
     integration = registry.get(integration_id)
     if integration is None or integration.kind != "openwrt":
         raise HTTPException(status_code=404, detail="OpenWrt integration not found")
-    try:
-        SecretStore(store).delete(integration_id)
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    store.delete_integration_secret(integration_id)
     registry.update(
         integration_id,
         IntegrationUpdate(config={
@@ -406,7 +408,7 @@ def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object
 
 
 @app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
-def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
+def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> dict[str, object]:
     # Residential mode: first connection provisions the local gateway integration.
     integration = registry.get(request.gateway_id)
     if integration is None:
@@ -423,10 +425,13 @@ def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
     elif integration.kind != request.gateway_type:
         raise HTTPException(status_code=409, detail="Gateway integration kind mismatch")
 
+    encrypted_secret = store.get_integration_secret(request.gateway_id)
+    if encrypted_secret and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
     try:
-        openwrt_config = SecretStore(store).get(connection.gateway_id) if store.get_integration_secret(connection.gateway_id) else None
+        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
@@ -440,13 +445,15 @@ def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
 
 
 @app.post("/api/v1/gateway/heartbeat", tags=["gateway"])
-def gateway_heartbeat(request: GatewayHeartbeatRequest) -> dict[str, object]:
+def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -> dict[str, object]:
     connection = gateway_connections.heartbeat(request.gateway_id)
     if connection is None:
         raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
+    encrypted_secret = store.get_integration_secret(connection.gateway_id)
+    if encrypted_secret and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     metrics.increment("openshield_gateway_heartbeats_total")
     try:
-        encrypted_secret = store.get_integration_secret(connection.gateway_id)
         openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

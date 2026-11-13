@@ -330,6 +330,7 @@ def test_openwrt_credentials_require_secret_key_and_validate_url(monkeypatch) ->
         json={"base_url": "https://192.0.2.1", "username": "rpc", "password": "secret"},
     )
     assert missing_key.status_code == 503
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
     invalid_url = client.put(
         "/api/v1/integrations/home-gateway/openwrt-credentials",
         json={"base_url": "https://user:pass@192.0.2.1", "username": "rpc", "password": "secret"},
@@ -368,3 +369,24 @@ def test_gateway_token_is_required_when_configured(monkeypatch) -> None:
         headers={"Authorization": "Bearer connector-test-token"},
     )
     assert response.status_code == 201
+
+
+def test_openwrt_secret_rotation_reencrypts_with_active_key(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.core.secrets import SecretStore
+
+    old_key = Fernet.generate_key().decode()
+    new_key = Fernet.generate_key().decode()
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", old_key)
+    register_integration("home-gateway")
+    SecretStore(__import__("openshield.api.main", fromlist=["store"]).store).set(
+        "home-gateway", {"username": "rpc", "password": "rotate-me"},
+    )
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", new_key)
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY_PREVIOUS", old_key)
+    from openshield.api import main
+    rotated = SecretStore(main.store).get("home-gateway")
+    assert rotated == {"username": "rpc", "password": "rotate-me"}
+    encrypted = main.store.get_integration_secret("home-gateway")
+    assert encrypted and Fernet(new_key.encode()).decrypt(encrypted)
