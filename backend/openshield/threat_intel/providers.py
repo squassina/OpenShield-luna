@@ -131,7 +131,7 @@ def lookup_misp(
             tag.get("name") for tag in tags
             if isinstance(tag, dict) and isinstance(tag.get("name"), str)
         ] if isinstance(tags, list) else []
-        to_ids = attribute.get("to_ids") in {True, 1, "1", "true"}
+        to_ids = attribute.get("to_ids") in {True, "1", "true"}
         try:
             threat_level_id = int(event.get("threat_level_id", 4))
         except (TypeError, ValueError):
