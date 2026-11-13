@@ -712,7 +712,7 @@ def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch)
         {"oldest": "", "data": []},
     ]
     monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse(responses.pop(0)))
-    _, cursor, done = providers.fetch_dns_records_page(integration, {"complete": True, "watermark": 1})
+    _, cursor, done = providers.fetch_dns_records_page(integration)
     assert not done
     _, final_cursor, done = providers.fetch_dns_records_page(integration, cursor)
     assert done
