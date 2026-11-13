@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS events (
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS policies (
                     policy_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -516,7 +517,7 @@ CREATE TABLE IF NOT EXISTS events (
             cursor.execute(
                 """
                 SELECT execution_id FROM response_executions
-                WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+                WHERE status IN ('active', 'rollback_failed') AND expires_at IS NOT NULL AND expires_at <= NOW()
                 ORDER BY expires_at ASC LIMIT 50
                 """
             )
