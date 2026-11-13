@@ -38,7 +38,8 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       </select>
       <input id="service-id" placeholder="Integration ID (e.g. pihole-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}">
       <input id="service-name" placeholder="Display name" required maxlength="120">
-      <input id="service-url" type="url" placeholder="Service URL (DNS providers only)">
+      <input id="service-url" type="url" placeholder="Service URL (DNS providers / MISP)">
+      <input id="service-key" type="password" placeholder="API key (CrowdSec / MISP)" autocomplete="off">
       <button class="primary" type="submit">Add service</button>
     </form>
     <div id="service-help" class="notice">DNS providers require a base URL. Provider passwords remain in server environment variables; they are never sent to or stored by the dashboard.</div>
@@ -81,6 +82,12 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
   <section class="columns">
     <article class="panel"><h2>Top queried domains</h2><div id="domains" class="table-wrap"></div></article>
     <article class="panel"><h2>Top clients / devices</h2><div id="devices" class="table-wrap"></div></article>
+  </section>
+  <section class="panel">
+    <h2>Threat intelligence incidents</h2>
+    <p>Enrich recent network and DNS observations against configured CrowdSec and MISP sources. Matches retain source evidence and can be acknowledged or marked false positive.</p>
+    <div class="toolbar"><button id="enrich-events" class="primary" type="button">Enrich recent events</button></div>
+    <div id="incidents" class="table-wrap"></div>
   </section>
   <section class="columns">
     <article class="panel"><h2>Network sensors</h2><div id="sensors" class="table-wrap"></div></article>
@@ -130,10 +137,11 @@ async function load() {
   $("refresh").disabled=true; showNotice("Refreshing dashboard…");
   try {
     const days=$("period").value;
-    const [report,sources,sensors,devices,integrations,lists,inventory]=await Promise.all([
+    const [report,sources,sensors,devices,integrations,lists,inventory,incidents]=await Promise.all([
       api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
       api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
-      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20")
+      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
+      api("/api/v1/incidents?limit=50")
     ]);
     $("queries").textContent=fmt(report.totals.queries);
     $("blocked").textContent=fmt(report.totals.blocked);
@@ -141,7 +149,8 @@ async function load() {
     $("block-rate").textContent=report.totals.block_rate_percent+"%";
     table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
-    renderSources(sources,integrations);
+    renderSources(sources,integrations)
+    renderIncidents(incidents);
     renderIntegrations(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
@@ -265,23 +274,34 @@ $("integration-edit-form").addEventListener("submit",async event=>{
 });
 $("service-kind").addEventListener("change",()=>{
   const kind=$("service-kind").value;
-  $("service-url").required=["pihole","adguard"].includes(kind);
-  $("service-url").disabled=!$("service-url").required;
-  $("service-help").textContent=$("service-url").required
-    ?"Enter the provider base URL. Credentials are configured on the OpenShield host through environment variables, never stored in integration configuration."
-    :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
+  const needsUrl=["pihole","adguard","misp"].includes(kind);
+  const needsKey=["crowdsec","misp"].includes(kind);
+  $("service-url").required=needsUrl;
+  $("service-url").disabled=!needsUrl;
+  $("service-key").required=needsKey;
+  $("service-key").disabled=!needsKey;
+  $("service-help").textContent=needsKey
+    ?"Enter the provider API key. It is encrypted at rest and never returned by integration APIs. MISP also requires its base URL."
+    :needsUrl
+      ?"Enter the DNS provider base URL. Provider credentials remain in server environment variables."
+      :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
 });
 $("service-kind").dispatchEvent(new Event("change"));
 $("service-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const kind=$("service-kind").value, id=$("service-id").value.trim();
   const payload={integration_id:id,kind,display_name:$("service-name").value.trim()};
-  if(["pihole","adguard"].includes(kind)) payload.config={base_url:$("service-url").value.trim()};
+  if(["pihole","adguard","misp"].includes(kind)) payload.config={base_url:$("service-url").value.trim()};
   const button=event.submitter; button.disabled=true;
   try {
     await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
     let result;
-    if(["pihole","adguard"].includes(kind)) {
+    if(["crowdsec","misp"].includes(kind)) {
+      await api("/api/v1/integrations/"+encodeURIComponent(id)+"/threat-intel-credentials",{
+        method:"PUT",body:JSON.stringify({api_key:$("service-key").value})
+      });
+      showNotice(payload.display_name+" registered. API key encrypted and saved; use Enrich recent events to run lookups.");
+    } else if(["pihole","adguard"].includes(kind)) {
       result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
       showNotice("Connected to "+payload.display_name+". "+fmt(result.records_available)+" DNS records available; no records imported by this test.");
     } else {
@@ -294,6 +314,25 @@ $("service-form").addEventListener("submit",async event=>{
   finally { button.disabled=false; }
 });
 
+function renderIncidents(items) {
+  const root=$("incidents");root.replaceChildren();
+  if(!items.length){const p=document.createElement("p");p.className="empty";p.textContent="No threat intelligence incidents. Enrich recent events after configuring a provider.";root.append(p);return;}
+  const table=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
+  ["Indicator","Risk","Score","Status","Sources","Actions"].forEach(value=>{const th=document.createElement("th");th.textContent=value;head.append(th);});
+  const thead=document.createElement("thead");thead.append(head);table.append(thead);
+  items.forEach(item=>{
+    const row=document.createElement("tr");
+    [item.indicator_value,item.risk_level,item.risk_score+"/100",item.status,(item.sources||[]).join(", ")].forEach(value=>{const td=document.createElement("td");td.textContent=value;row.append(td);});
+    const actions=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    for(const [label,status] of [["Acknowledge","acknowledged"],["False positive","false_positive"],["Close","closed"]]){
+      const button=actionButton(label,"",async()=>{try{await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id),{method:"PATCH",body:JSON.stringify({status,reason:"Updated from dashboard"})});await load();}catch(error){showNotice("Incident update failed: "+error.message,true);}});
+      wrap.append(button);
+    }
+    const evidence=actionButton("Evidence","",async()=>{try{const detail=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id));showNotice(detail.summary+" Evidence events: "+detail.timeline.length+". Factors: "+(detail.risk_factors||[]).map(x=>x.factor+" +"+x.points).join(", "));}catch(error){showNotice("Could not load incident evidence: "+error.message,true);}});
+    wrap.append(evidence);actions.append(wrap);row.append(actions);body.append(row);
+  });
+  table.append(body);root.append(table);
+}
 function renderTrend(rows) {
   const root=$("trend");root.replaceChildren();
   if(!rows.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS trend data yet";root.append(p);return;}
@@ -313,6 +352,19 @@ function renderSyncButtons() {
   providerIds.forEach(item=>{const button=document.createElement("button");button.textContent="Sync lists → "+item.display_name;button.addEventListener("click",async()=>{if(!confirm("Apply the current OpenShield allow/block lists to "+item.display_name+"? This changes DNS filtering."))return;button.disabled=true;try{const result=await api("/api/v1/privacy/lists/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Provider sync verified: "+fmt(result.added)+" added, "+fmt(result.removed)+" removed.");}catch(e){showNotice("Provider sync failed: "+e.message,true);}finally{button.disabled=false;}});root.append(button);});
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
+$("enrich-events").addEventListener("click",async event=>{
+  const button=event.currentTarget;button.disabled=true;
+  try {
+    const recent=await api("/api/v1/events?limit=100");
+    if(!recent.items.length){showNotice("No events are available for enrichment.");return;}
+    const result=await api("/api/v1/threat-intel/enrich",{
+      method:"POST",body:JSON.stringify({event_ids:recent.items.map(item=>item.event_id)})
+    });
+    showNotice("Enrichment complete: "+result.lookups+" provider lookups, "+result.incidents.length+" incident indicators, "+result.errors.length+" provider errors.");
+    await load();
+  } catch(error) { showNotice("Threat intelligence enrichment failed: "+error.message,true); }
+  finally { button.disabled=false; }
+});
 $("refresh").addEventListener("click",load);$("period").addEventListener("change",load);load();
 setInterval(()=>{if(!document.hidden)load();},60000);
 </script>

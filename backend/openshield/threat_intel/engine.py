@@ -137,6 +137,8 @@ def _risk_score(
             if threat_points:
                 factors.append({"factor": "misp_event_threat_level", "points": threat_points, "value": level})
     latest = max((event.occurred_at for event in events), default=datetime.now(UTC))
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=UTC)
     age_seconds = max(0, (datetime.now(UTC) - latest).total_seconds())
     recency = 10 if age_seconds <= 86400 else 5 if age_seconds <= 604800 else 0
     if recency:
@@ -197,8 +199,12 @@ def enrich_events(
         if not any(_matched(item) for item in evidence.values()):
             continue
         risk_score, risk_level, factors = _risk_score(indicator_events, evidence)
-        first_seen = min(event.occurred_at for event in indicator_events)
-        last_seen = max(event.occurred_at for event in indicator_events)
+        timestamps = [
+            event.occurred_at if event.occurred_at.tzinfo else event.occurred_at.replace(tzinfo=UTC)
+            for event in indicator_events
+        ]
+        first_seen = min(timestamps)
+        last_seen = max(timestamps)
         source_events = [
             {
                 "event_id": event.event_id,
