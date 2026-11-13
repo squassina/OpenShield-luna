@@ -141,9 +141,29 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 
 1. Open the **OpenWrt router** section.
 2. Keep gateway ID `home-gateway` unless `OPENSHIELD_GATEWAY_ID` is configured differently on the connector.
-3. Enter the management URL and a dedicated read-only rpcd account, then save.
+3. For discovery-only operation, enter the management URL and a dedicated read-only rpcd account, then save.
 4. The password is encrypted using `OPENSHIELD_SECRET_KEY`; it is never included in integration JSON or returned to the browser.
 5. The connector retrieves the configuration using its separate `OPENSHIELD_GATEWAY_TOKEN` and applies it on the next connect/heartbeat.
 6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
 
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
+
+
+## 10. P5 firewall response (opt-in; not enabled by default)
+
+P5 can add narrowly scoped temporary firewall rules through the Gateway Connector. This is separate from discovery and requires a dedicated rpcd account with explicitly granted UCI access to the `firewall` config. Do not grant arbitrary shell or unrestricted ubus access.
+
+1. Keep `OPENSHIELD_ENFORCEMENT_ENABLED=false` and `OPENSHIELD_MAX_AUTONOMY_LEVEL=0` during setup.
+2. Configure `OPENSHIELD_API_AUTH_ENABLED=true`, strong admin credentials, `OPENSHIELD_GATEWAY_TOKEN` on Node and connector, and an encrypted OpenWrt credential for the gateway integration.
+3. Create a dedicated rpcd ACL that permits only the required UCI methods (`get`, `add`, `delete`, `apply`, `confirm`, `revert`) against the `firewall` config. Keep `system.board` and `network.interface.dump` read-only. Review the ACL against the exact OpenWrt release before deployment.
+4. Configure a policy for an exact public IP indicator, explicit direction, minimum risk score, and TTL (maximum 24 hours). Source direction blocks WAN-to-LAN source traffic; destination direction blocks LAN-to-WAN destination traffic.
+5. Release the emergency stop only after admin authentication is enabled. Then set `OPENSHIELD_ENFORCEMENT_ENABLED=true` and choose `OPENSHIELD_MAX_AUTONOMY_LEVEL` deliberately.
+6. L0 observes only. L1 requires human approval. L2/L3 can execute automatically only when the policy explicitly sets `require_approval=false`, the global autonomy cap permits it, and the emergency stop is released.
+7. Every firewall rule is created under a deterministic `os_<execution-id>` UCI section, applied with UCI rollback protection, verified, and confirmed. The connector reports completion to Node. TTL expiry queues a matching UCI delete through the same authenticated gateway channel.
+8. Verify the execution status becomes `active`, then `rolled_back` after TTL. If rollback status is `rollback_failed`, the worker retries and the dashboard/API exposes the unresolved state. Do not assume a failed/unknown RPC result means the firewall rule is absent.
+
+DNS block policies use the existing Pi-hole/AdGuard list adapter. OpenShield records whether it created the block-list entry; TTL rollback never removes a pre-existing manual block entry.
+
+Emergency stop is active by default. Releasing it requires both `OPENSHIELD_ENFORCEMENT_ENABLED=true` and authenticated administration. The global autonomy cap defaults to 0. Never expose Node or router management RPC to the public Internet.
+
+**Hardware acceptance remains mandatory:** UCI method names/ACLs, firewall4 behavior, packet direction, apply/confirm rollback, and actual client connectivity must be verified on the target OpenWrt model/firmware before enabling automatic policies. CI mocks cannot establish physical router safety.
