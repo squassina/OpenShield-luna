@@ -6,7 +6,11 @@ from threading import Lock
 from typing import Any
 
 from openshield.privacy.dns import normalize_dns_batch
-from openshield.privacy.providers import DnsProviderError, fetch_dns_records_page
+from openshield.privacy.providers import (
+    DnsProviderCursorExpired,
+    DnsProviderError,
+    fetch_dns_records_page,
+)
 
 logger = logging.getLogger(__name__)
 DNS_PROVIDER_KINDS = {"pihole", "adguard"}
@@ -81,6 +85,14 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             outcomes.append({"integration_id": integration.integration_id, "status": "ok",
                              "received": received, "accepted": accepted, "duplicates": duplicates,
                              "pages": pages, "complete": complete})
+        except DnsProviderCursorExpired:
+            logger.warning("DNS provider cursor expired for integration %s", integration.integration_id)
+            _record_poll_failure(integration.integration_id)
+            store.write_audit(
+                "privacy.provider_poll.cursor_expired", None, integration.integration_id,
+                {"provider": integration.kind, "error": "cursor_expired"},
+            )
+            outcomes.append({"integration_id": integration.integration_id, "status": "cursor_expired"})
         except (DnsProviderError, ValueError, TypeError, OverflowError):
             logger.exception("DNS provider polling failed for integration %s", integration.integration_id)
             _record_poll_failure(integration.integration_id)

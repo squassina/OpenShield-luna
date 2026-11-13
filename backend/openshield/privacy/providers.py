@@ -16,6 +16,10 @@ class DnsProviderError(RuntimeError):
     pass
 
 
+class DnsProviderCursorExpired(DnsProviderError):
+    pass
+
+
 def _base_url(integration: Integration) -> str:
     value = integration.config.get("base_url")
     if not isinstance(value, str) or not value:
@@ -345,6 +349,10 @@ def fetch_dns_records_page(
         records = result.get("data", []) if isinstance(result, dict) else []
         if not isinstance(records, list):
             raise DnsProviderError("AdGuard query-log response has no data list")
+        if not records and state.get("older_than"):
+            raise DnsProviderCursorExpired(
+                "AdGuard query-log retention expired before the saved watermark; reset the cursor to resume"
+            )
         oldest = result.get("oldest") if isinstance(result, dict) else None
         if not oldest and records:
             oldest = records[-1].get("time") if isinstance(records[-1], dict) else None

@@ -500,6 +500,19 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
 
 
+@app.delete("/api/v1/privacy/sources/{integration_id}/cursor", tags=["privacy"])
+def reset_privacy_source_cursor(integration_id: str) -> dict[str, str]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    store.delete_integration_poll_cursor(integration_id)
+    store.write_audit(
+        "privacy.provider_poll.cursor_reset", None, integration_id,
+        {"provider": integration.kind, "reason": "administrator_requested"},
+    )
+    return {"status": "reset", "integration_id": integration_id}
+
+
 @app.get("/api/v1/privacy/sources", tags=["privacy"])
 def list_privacy_sources() -> list[dict[str, object]]:
     now = datetime.now(UTC)

@@ -224,6 +224,14 @@ class PostgresStore:
             row = cursor.fetchone()
         return row[0] if row else None
 
+    def delete_integration_poll_cursor(self, integration_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM integration_poll_cursors WHERE integration_id = %s RETURNING integration_id",
+                (integration_id,),
+            )
+            return cursor.fetchone() is not None
+
     def set_integration_poll_cursor(
         self, integration_id: str, provider_kind: str, value: dict[str, object]
     ) -> None:

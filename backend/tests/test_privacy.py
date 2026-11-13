@@ -569,3 +569,52 @@ def test_adguard_query_log_pagination_uses_older_than_watermark(monkeypatch) -> 
     assert "older_than=2026-11-13T12%3A00%3A01Z" in requests[1]
     assert len(second) == 1 and done
     assert final_cursor["complete"] is True
+
+
+def test_adguard_expired_pagination_cursor_is_reported_without_advancing(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+    from openshield.privacy.providers import DnsProviderCursorExpired
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return json.dumps({"oldest": "", "data": []}).encode()
+
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse())
+    try:
+        providers.fetch_dns_records_page(
+            integration, {"watermark": 1, "older_than": "2026-11-13T00:00:00Z"},
+        )
+    except DnsProviderCursorExpired as exc:
+        assert "retention expired" in str(exc)
+    else:
+        raise AssertionError("Expired provider cursor must not silently advance")
+
+
+def test_dns_provider_cursor_can_be_reset_and_is_audited() -> None:
+    from openshield.api import main
+
+    register_dns("adguard-home", "adguard")
+    main.store.set_integration_poll_cursor(
+        "adguard-home", "adguard", {"watermark": 1, "complete": True},
+    )
+    response = client.delete("/api/v1/privacy/sources/adguard-home/cursor")
+    assert response.status_code == 200
+    assert response.json()["status"] == "reset"
+    assert main.store.get_integration_poll_cursor("adguard-home") is None
+    assert any(
+        item["action"] == "privacy.provider_poll.cursor_reset"
+        for item in client.get("/api/v1/audit").json()
+    )

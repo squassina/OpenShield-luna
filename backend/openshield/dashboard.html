@@ -202,6 +202,7 @@ function renderSources(sources, integrations) {
     if(item) {
       const syncButton=actionButton("Sync now","",async()=>{try{const result=await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Sync complete: "+fmt(result.accepted)+" imported, "+fmt(result.duplicates)+" duplicates.");await load();}catch(error){showNotice("Sync failed: "+error.message,true);await load();}});
       syncButton.disabled=item.enabled===false;wrap.append(syncButton);
+      wrap.append(actionButton("Reset cursor","danger",async()=>{if(!confirm("Reset the saved query-log cursor for "+item.display_name+"? Older records that have already expired at the provider cannot be recovered."))return;try{await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/cursor",{method:"DELETE"});showNotice("Query-log cursor reset for "+item.display_name+". Collection will resume from the provider's current retention window.");await load();}catch(error){showNotice("Cursor reset failed: "+error.message,true);}}));
       wrap.append(actionButton("Edit","",()=>editIntegration(item)));
       wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
     }
