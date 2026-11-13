@@ -215,13 +215,14 @@ def test_cloud_investigation_requires_global_and_per_integration_opt_in(monkeypa
             main.store, main.registry, incident["incident_id"], "openai-cloud",
         )
     monkeypatch.setenv("OPENSHIELD_CLOUD_AI_ENABLED", "true")
-    integration = main.registry.get("openai-cloud")
-    main.registry.update("openai-cloud", integration.model_copy(update={
-        "config": {"model": "gpt-6-luna", "cloud_enabled": False},
-    }))
+    main.registry.register(IntegrationRegistration(
+        integration_id="openai-no-optin", kind="openai", display_name="OpenAI without opt-in",
+        config={"model": "gpt-6-luna", "cloud_enabled": False},
+    ))
+    SecretStore(main.store).set("openai-no-optin", {"api_key": "openai-secret-key"})
     with pytest.raises(ValueError, match="not been explicitly enabled"):
         orchestrator.investigate_incident(
-            main.store, main.registry, incident["incident_id"], "openai-cloud",
+            main.store, main.registry, incident["incident_id"], "openai-no-optin",
         )
 
 
