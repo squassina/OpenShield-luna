@@ -284,7 +284,7 @@ def _time_value(value: object) -> float | None:
         return float(value)
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            return datetime.fromisoformat(value).timestamp()
         except ValueError:
             return None
     return None
