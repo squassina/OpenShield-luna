@@ -103,6 +103,25 @@ def _collect_while_node_unavailable(
         )
 
 
+def _configured_openwrt_client(config: object) -> OpenWrtRPCClient | None:
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        logger.error("Node returned invalid OpenWrt connector configuration")
+        return None
+    base_url = config.get("base_url")
+    username = config.get("username")
+    password = config.get("password")
+    if not all(isinstance(value, str) and value for value in (base_url, username, password)):
+        logger.error("Node returned incomplete OpenWrt connector configuration")
+        return None
+    try:
+        return OpenWrtRPCClient(base_url, username, password)
+    except ValueError:
+        logger.error("Node returned invalid OpenWrt connector configuration")
+        return None
+
+
 def run_agent(
     client: GatewayConnectorClient,
     heartbeat_interval: float = 30.0,
@@ -112,14 +131,18 @@ def run_agent(
 ) -> None:
     if not 5 <= heartbeat_interval <= 60:
         raise ValueError("Heartbeat interval must be between 5 and 60 seconds")
-    if (openwrt_client is None) != (integration_id is None):
-        raise ValueError("OpenWrt client and integration ID must be configured together")
+    if openwrt_client is not None and integration_id is None:
+        raise ValueError("Integration ID is required when an OpenWrt client is configured")
 
     retry_delay = 1.0
     discovery_collected_offline = False
     while True:
         try:
             result = client.connect()
+            if "openwrt_config" in result:
+                openwrt_client = _configured_openwrt_client(result["openwrt_config"])
+                if openwrt_client is not None and integration_id is None:
+                    integration_id = str(result.get("gateway_id") or "")
             logger.info("Gateway connected", extra={"gateway_id": result.get("gateway_id")})
             retry_delay = 1.0
         except GatewayTransportError as exc:
@@ -157,7 +180,11 @@ def run_agent(
         while True:
             time.sleep(heartbeat_interval)
             try:
-                client.heartbeat()
+                heartbeat = client.heartbeat()
+                if "openwrt_config" in heartbeat:
+                    openwrt_client = _configured_openwrt_client(heartbeat["openwrt_config"])
+                    if openwrt_client is not None and integration_id is None:
+                        integration_id = str(heartbeat.get("gateway_id") or "")
                 if spool is not None:
                     _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:
@@ -231,13 +258,14 @@ def main() -> None:
         gateway_id=gateway_id,
         connector_version=os.getenv("OPENSHIELD_GATEWAY_CONNECTOR_VERSION", "0.1.0"),
         capabilities=capabilities,
+        gateway_token=os.getenv("OPENSHIELD_GATEWAY_TOKEN", ""),
     )
     try:
         run_agent(
             client,
             heartbeat_interval=interval,
             openwrt_client=openwrt_client,
-            integration_id=integration_id if openwrt_client is not None else None,
+            integration_id=integration_id,
             spool=spool,
         )
     except KeyboardInterrupt:

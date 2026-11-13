@@ -2,23 +2,30 @@ import asyncio
 import base64
 import ipaddress
 import os
+import secrets
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.storage import PostgresStore
+from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
+from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
@@ -63,6 +70,92 @@ app = FastAPI(
     description="Gateway-first network security and privacy intelligence node.",
     lifespan=_dns_polling_lifespan,
 )
+
+
+_AUTH_FAILURES: dict[str, tuple[float, int]] = {}
+_AUTH_FAILURES_LOCK = threading.Lock()
+
+
+def _gateway_token_valid(request: Request) -> bool:
+    expected = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
+    supplied = request.headers.get("authorization", "")
+    return bool(expected and supplied.startswith("Bearer ") and secrets.compare_digest(
+        supplied[7:], expected
+    ))
+
+
+def _api_auth_enabled() -> bool:
+    return os.getenv("OPENSHIELD_API_AUTH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+
+
+def _check_admin_auth(request: Request) -> Response | None:
+    if not _api_auth_enabled():
+        return None
+    username = os.getenv("OPENSHIELD_API_USERNAME", "")
+    password = os.getenv("OPENSHIELD_API_PASSWORD", "")
+    if not username or not password:
+        return JSONResponse(
+            {"detail": "API authentication is enabled but credentials are not configured"},
+            status_code=503,
+        )
+    remote = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with _AUTH_FAILURES_LOCK:
+        window, failures = _AUTH_FAILURES.get(remote, (now, 0))
+        if now - window >= 60:
+            window, failures = now, 0
+        if failures >= 5:
+            return JSONResponse({"detail": "Too many authentication attempts"}, status_code=429)
+    header = request.headers.get("authorization", "")
+    valid = False
+    if header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+            supplied_user, supplied_password = decoded.split(":", 1)
+            valid = secrets.compare_digest(supplied_user, username) and secrets.compare_digest(
+                supplied_password, password
+            )
+        except (ValueError, UnicodeDecodeError):
+            valid = False
+    if not valid:
+        with _AUTH_FAILURES_LOCK:
+            window, failures = _AUTH_FAILURES.get(remote, (now, 0))
+            if now - window >= 60:
+                window, failures = now, 0
+            _AUTH_FAILURES[remote] = (window, failures + 1)
+        return JSONResponse(
+            {"detail": "Authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="OpenShield", charset="UTF-8"'},
+        )
+    with _AUTH_FAILURES_LOCK:
+        _AUTH_FAILURES.pop(remote, None)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        if origin:
+            parsed = urlsplit(origin)
+            if parsed.netloc != request.headers.get("host") or parsed.scheme not in {"http", "https"}:
+                return JSONResponse({"detail": "Cross-origin state change rejected"}, status_code=403)
+    return None
+
+
+@app.middleware("http")
+async def authenticate_requests(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/health/") or path == "/metrics":
+        return await call_next(request)
+    is_gateway = path.startswith("/api/v1/gateway/") or path == "/api/v1/events"
+    if is_gateway:
+        expected = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
+        if expected and not _gateway_token_valid(request):
+            return JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
+        if _api_auth_enabled() and not expected:
+            return JSONResponse({"detail": "OPENSHIELD_GATEWAY_TOKEN is required when API authentication is enabled"}, status_code=503)
+        return await call_next(request)
+    denied = _check_admin_auth(request)
+    if denied is not None:
+        return denied
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -114,6 +207,12 @@ class PrivacyListEntry(BaseModel):
 class ClassificationOverrideRequest(BaseModel):
     action: Literal["allow", "tracker"]
     reason: str = Field(default="", max_length=500)
+
+
+class OpenWrtCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=512)
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -216,6 +315,96 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         }
     raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
 
+@app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
+def save_openwrt_credentials(
+    integration_id: str, credentials: OpenWrtCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    try:
+        parsed = urlsplit(credentials.base_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            raise ValueError("OpenWrt URL must be an absolute HTTP(S) URL without credentials")
+        OpenWrtRPCClient(credentials.base_url, credentials.username, credentials.password)
+        SecretStore(store).set(integration_id, credentials.model_dump())
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(
+        integration_id,
+        IntegrationUpdate(config={
+            **integration.config,
+            "base_url": credentials.base_url.rstrip("/"),
+            "credentials_configured": True,
+        }),
+    )
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "credentials_configured": True,
+        "secret_storage": "encrypted",
+        "message": "Credentials are encrypted at rest and delivered only to the authenticated gateway connector.",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
+def delete_openwrt_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    try:
+        SecretStore(store).delete(integration_id)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    registry.update(
+        integration_id,
+        IntegrationUpdate(config={
+            **integration.config,
+            "credentials_configured": False,
+        }),
+    )
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
+def test_openwrt_connector(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    if not integration.config.get("credentials_configured"):
+        raise HTTPException(status_code=409, detail="OpenWrt credentials are not configured")
+    gateway = gateway_connections.get_status(integration_id)
+    if gateway is None or gateway.get("status") != "connected":
+        return {
+            "status": "connector_disconnected",
+            "message": "Gateway Connector is not connected. Check its deployment and OPENSHIELD_GATEWAY_TOKEN.",
+        }
+    return {
+        "status": "connector_connected",
+        "message": "Gateway Connector is online. It receives encrypted-at-rest router credentials on connect and heartbeat.",
+        "gateway": gateway,
+    }
+
+
+@app.get("/api/v1/gateway/config/{gateway_id}", tags=["gateway"])
+def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object]:
+    if not _gateway_token_valid(request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
+    integration = registry.get(gateway_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="Gateway integration not found")
+    try:
+        credentials = SecretStore(store).get(gateway_id)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"gateway_id": gateway_id, "openwrt_config": credentials}
+
+
 @app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
 def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
     # Residential mode: first connection provisions the local gateway integration.
@@ -236,12 +425,17 @@ def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
 
     connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
+    try:
+        openwrt_config = SecretStore(store).get(connection.gateway_id) if store.get_integration_secret(connection.gateway_id) else None
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "connected",
         "gateway_id": connection.gateway_id,
         "protocol_version": connection.protocol_version,
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),
+        "openwrt_config": openwrt_config,
     }
 
 
@@ -251,10 +445,16 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest) -> dict[str, object]:
     if connection is None:
         raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
     metrics.increment("openshield_gateway_heartbeats_total")
+    try:
+        encrypted_secret = store.get_integration_secret(connection.gateway_id)
+        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "acknowledged",
         "gateway_id": connection.gateway_id,
         "last_seen_at": connection.last_seen_at.isoformat(),
+        "openwrt_config": openwrt_config,
     }
 
 

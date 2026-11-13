@@ -43,6 +43,16 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     </form>
     <div id="service-help" class="notice">DNS providers require a base URL. Provider passwords remain in server environment variables; they are never sent to or stored by the dashboard.</div>
     <div id="integrations" class="table-wrap"></div>
+    <h3>OpenWrt router</h3>
+    <p>Configure the router credentials here. Password is sent once to OpenShield, encrypted at rest, and never returned to the browser. The Gateway Connector must use the same gateway ID.</p>
+    <form id="openwrt-form" class="inline">
+      <input id="openwrt-id" value="home-gateway" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Gateway ID">
+      <input id="openwrt-url" type="url" placeholder="https://192.168.1.1" required aria-label="OpenWrt management URL">
+      <input id="openwrt-username" placeholder="RPC username" required autocomplete="username" aria-label="RPC username">
+      <input id="openwrt-password" type="password" placeholder="RPC password" required autocomplete="new-password" aria-label="RPC password">
+      <button class="primary" type="submit">Save router credentials</button>
+    </form>
+    <div id="openwrt-status" class="notice" role="status" aria-live="polite"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -210,6 +220,32 @@ function renderSources(sources, integrations) {
   });
   t.append(body);root.append(t);
 }
+$("openwrt-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("openwrt-id").value.trim(),base_url=$("openwrt-url").value.trim();
+  const username=$("openwrt-username").value,password=$("openwrt-password").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    if(!integrations.some(item=>item.integration_id===id)) {
+      await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+        integration_id:id,kind:"openwrt",display_name:"OpenWrt router",config:{base_url}
+      })});
+    } else if(integrations.find(item=>item.integration_id===id).kind!=="openwrt") {
+      throw new Error("This ID is already used by a non-OpenWrt integration.");
+    }
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/openwrt-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,username,password})
+    });
+    $("openwrt-password").value="";
+    $("openwrt-status").textContent="Credentials encrypted and saved. Ensure OPENSHIELD_GATEWAY_ID matches "+id+" and the connector has OPENSHIELD_GATEWAY_TOKEN configured.";
+    showNotice("OpenWrt credentials saved securely.");await load();
+  } catch(error) {
+    $("openwrt-password").value="";
+    $("openwrt-status").textContent="Could not save router credentials: "+error.message;
+    showNotice("OpenWrt setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
 $("cancel-integration-edit").addEventListener("click",()=>$("integration-dialog").close());
 $("integration-edit-form").addEventListener("submit",async event=>{
   event.preventDefault();

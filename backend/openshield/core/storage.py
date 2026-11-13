@@ -43,7 +43,14 @@ class PostgresStore:
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS events (
+                CREATE TABLE IF NOT EXISTS integration_secrets (
+                    integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
+                    encrypted_value BYTEA NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
+CREATE TABLE IF NOT EXISTS events (
                     event_id TEXT PRIMARY KEY,
                     payload JSONB NOT NULL,
                     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -137,8 +144,46 @@ class PostgresStore:
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
+
+    def set_integration_secret(self, integration_id: str, encrypted_value: bytes) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO integration_secrets (integration_id, encrypted_value)
+                VALUES (%s, %s)
+                ON CONFLICT (integration_id) DO UPDATE
+                SET encrypted_value = EXCLUDED.encrypted_value, updated_at = NOW()
+                """,
+                (integration_id, encrypted_value),
+            )
+            self._insert_audit(
+                cursor, "integration.secret.updated", None, integration_id,
+                {"encrypted": True},
+            )
+
+    def get_integration_secret(self, integration_id: str) -> bytes | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT encrypted_value FROM integration_secrets WHERE integration_id = %s",
+                (integration_id,),
+            )
+            row = cursor.fetchone()
+        return bytes(row[0]) if row else None
+
+    def delete_integration_secret(self, integration_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM integration_secrets WHERE integration_id = %s RETURNING integration_id",
+                (integration_id,),
+            )
+            deleted = cursor.fetchone() is not None
+            if deleted:
+                self._insert_audit(
+                    cursor, "integration.secret.deleted", None, integration_id, {},
+                )
+            return deleted
 
     def insert_integration(
         self, integration: Integration, actor_id: str | None = None

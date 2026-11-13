@@ -290,3 +290,81 @@ def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() 
     )
     assert deleted == 1
     assert client.get("/api/v1/events").json()["items"] == []
+
+
+def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    response = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={
+            "base_url": "https://192.0.2.1", "username": "rpc-user",
+            "password": "router-secret-value",
+        },
+    )
+    assert response.status_code == 200
+    assert "router-secret-value" not in response.text
+    integration = client.get("/api/v1/integrations").json()[0]
+    assert integration["config"]["credentials_configured"] is True
+    assert "password" not in str(integration)
+    from openshield.api import main
+    encrypted = main.store.get_integration_secret("home-gateway")
+    assert encrypted and b"router-secret-value" not in encrypted
+    config = client.get(
+        "/api/v1/gateway/config/home-gateway",
+        headers={"Authorization": "Bearer connector-test-token"},
+    )
+    assert config.status_code == 200
+    assert config.json()["openwrt_config"]["password"] == "router-secret-value"
+    assert client.get("/api/v1/gateway/config/home-gateway").status_code == 401
+
+
+def test_openwrt_credentials_require_secret_key_and_validate_url(monkeypatch) -> None:
+    register_integration("home-gateway")
+    monkeypatch.delenv("OPENSHIELD_SECRET_KEY", raising=False)
+    missing_key = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={"base_url": "https://192.0.2.1", "username": "rpc", "password": "secret"},
+    )
+    assert missing_key.status_code == 503
+    invalid_url = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={"base_url": "https://user:pass@192.0.2.1", "username": "rpc", "password": "secret"},
+    )
+    assert invalid_url.status_code == 422
+
+
+def test_api_basic_auth_and_csrf_protection(monkeypatch) -> None:
+    import base64
+
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
+    assert client.get("/api/v1/integrations").status_code == 401
+    credentials = base64.b64encode(b"admin:strong-test-password").decode()
+    headers = {"Authorization": "Basic " + credentials}
+    assert client.get("/api/v1/integrations", headers=headers).status_code == 200
+    assert client.post(
+        "/api/v1/integrations",
+        headers={**headers, "Origin": "https://attacker.example"},
+        json={"integration_id":"bad-origin","kind":"openwrt","display_name":"Bad"},
+    ).status_code == 403
+    assert client.post(
+        "/api/v1/integrations",
+        headers=headers,
+        json={"integration_id":"good-origin","kind":"openwrt","display_name":"Good"},
+    ).status_code == 201
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
+
+
+def test_gateway_token_is_required_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    assert client.post("/api/v1/gateway/connect", json=gateway_payload()).status_code == 401
+    response = client.post(
+        "/api/v1/gateway/connect", json=gateway_payload(),
+        headers={"Authorization": "Bearer connector-test-token"},
+    )
+    assert response.status_code == 201

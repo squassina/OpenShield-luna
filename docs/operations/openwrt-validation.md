@@ -15,13 +15,15 @@ Set these variables in the deployment .env:
 ```dotenv
 OPENSHIELD_NODE_URL=http://openshield-node:8000
 OPENSHIELD_GATEWAY_ID=home-gateway
-OPENSHIELD_OPENWRT_URL=https://<gateway-management-address>
-OPENSHIELD_OPENWRT_USERNAME=<read-only-rpc-user>
-OPENSHIELD_OPENWRT_PASSWORD=<rpc-password>
+OPENSHIELD_SECRET_KEY=<Fernet-key>
+OPENSHIELD_GATEWAY_TOKEN=<random-connector-token>
+OPENSHIELD_API_AUTH_ENABLED=true
+OPENSHIELD_API_USERNAME=<admin-user>
+OPENSHIELD_API_PASSWORD=<strong-admin-password>
 OPENSHIELD_GATEWAY_SPOOL_PATH=/var/lib/openshield/gateway-spool.sqlite3
 ```
 
-OpenWrt URL, username, and password must be configured together. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, and `network.interface.dump`. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network.
+Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, and `network.interface.dump`. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
 
 ## 3. Start and verify
 
@@ -107,6 +109,9 @@ Do not use `docker compose down -v` during validation; it deletes persistent vol
 
 Test one at a time:
 - Wrong OpenWrt password: discovery/health must fail safely; no credential appears in logs or API output.
+- Wrong gateway token: connector handshake and event delivery must be rejected with HTTP 401.
+- Wrong admin password: dashboard/API requests must be rejected; repeated failures are rate limited.
+- Cross-origin state-changing browser request: must be rejected with HTTP 403.
 - Node stopped during event delivery: event remains in the SQLite outbox and is retried.
 - Spool full: new event is rejected and logged; older pending events are not deleted.
 - Unknown event integration ID or mismatched source kind: Node rejects the event.
@@ -129,3 +134,15 @@ Record:
 - Any unexpected firewall/routing changes (expected: none).
 
 P0 hardware acceptance requires these checks on the actual target gateway. CI passing alone is not hardware validation.
+
+
+## 9. Configure OpenWrt from the dashboard
+
+1. Open the **OpenWrt router** section.
+2. Keep gateway ID `home-gateway` unless `OPENSHIELD_GATEWAY_ID` is configured differently on the connector.
+3. Enter the management URL and a dedicated read-only rpcd account, then save.
+4. The password is encrypted using `OPENSHIELD_SECRET_KEY`; it is never included in integration JSON or returned to the browser.
+5. The connector retrieves the configuration using its separate `OPENSHIELD_GATEWAY_TOKEN` and applies it on the next connect/heartbeat.
+6. Use the connector status in the Integrations API to confirm the connector is online. A successful connector heartbeat is not proof that router RPC credentials work; verify the discovery/health events.
+
+Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
