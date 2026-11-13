@@ -95,7 +95,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <button class="primary" type="submit">Add entry</button>
     </form>
     <div id="lists" class="table-wrap"></div>
-    <div class="notice">Provider synchronization writes the selected local lists to Pi-hole or AdGuard. It is an explicit configuration change. The Node API has no authentication; use only on a trusted LAN.</div>
+    <div class="notice">Provider synchronization writes the selected local lists to Pi-hole or AdGuard. It is an explicit configuration change. Admin Basic authentication is disabled by default; enable it for additional protection. Keep the Node API on a trusted LAN and never expose it directly to the Internet.</div>
     <div id="list-sync" class="toolbar"></div>
   </section>
 </main>

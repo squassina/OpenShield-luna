@@ -8,11 +8,11 @@ OpenShield integrates existing network and security tools. It normalizes signals
 
 OpenShield will evolve in three deployment stages:
 
-1. **Home (current):** no OpenShield user account, API key, or manual gateway registration. Node and connector communicate inside the trusted home network. First connector handshake automatically creates the gateway integration.
+1. **Home (current):** no OpenShield user account or manual gateway registration. Admin Basic authentication is optional and disabled by default. A separate gateway bearer token protects UI-managed router-secret delivery when enabled. First connector handshake automatically creates the gateway integration.
 2. **Business (future):** user and organization identities, gateway enrollment, roles, credential rotation, and stronger audit controls.
 3. **SaaS (future):** tenant isolation, organization administration, quotas, billing, and managed control plane.
 
-Authentication and authorization are intentionally disabled in the current residential stage. **Do not expose the Node API to the public Internet.** Keep port 8000 on a trusted LAN and do not configure Internet port forwarding to it. OpenWrt's own RPC login remains enabled because it protects access to the router; this is separate from OpenShield API authentication.
+Residential admin authentication remains disabled by default to preserve the home-user model. It can be enabled with HTTP Basic credentials; gateway-to-Node secret delivery uses a separate bearer token. **Do not expose the Node API to the public Internet.** Keep port 8000 on a trusted LAN and do not configure Internet port forwarding to it. OpenWrt's own RPC login remains enabled because it protects access to the router; this is separate from OpenShield API authentication.
 
 ## Architecture baseline
 
@@ -45,7 +45,7 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 ### Current residential API behavior
 
-All Node API endpoints are currently unauthenticated. No API key needs to be generated, registered, stored, or passed to the connector.
+The default residential profile keeps admin API authentication disabled. Optional HTTP Basic authentication protects the dashboard and administrative API when `OPENSHIELD_API_AUTH_ENABLED=true`. UI-managed router credentials require a separate `OPENSHIELD_GATEWAY_TOKEN` shared by Node and connector; it is not an admin API key.
 
 The connector defaults to gateway ID `home-gateway`. On its first `POST /api/v1/gateway/connect`, the Node creates an OpenWrt integration with the same ID. Heartbeats include the gateway ID. Discovery and health events use that ID as their source.
 
@@ -59,9 +59,9 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 
 ### Deliberate limitations
 
-- The API has no authentication, authorization, or tenant isolation in residential mode. Anyone who can reach the API can read or modify its data.
+- Admin Basic authentication is opt-in in residential mode; when disabled, anyone who can reach the API can read or modify its data. There are no user accounts, role separation, or tenant isolation.
 - Restrict Node access to a trusted LAN. Do not publish port 8000 to the Internet.
-- OpenWrt credentials are still required when the connector is configured to query the router. They are supplied only to the connector through environment variables and never stored in integration configuration.
+- OpenWrt credentials are entered through the dashboard and encrypted at rest with `OPENSHIELD_SECRET_KEY`. They are never returned by integration APIs or stored in integration JSON. The authenticated connector receives them on connect/heartbeat. Back up the encryption key securely.
 - OpenWrt RPC is read-only in this baseline. The connector does not modify firewall, routing, wireless, or forwarding settings.
 - PostgreSQL schema creation is idempotent; formal versioned migrations, backup/restore automation, pooling, and production database hardening remain pending.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
@@ -109,12 +109,11 @@ The connector runs on a nearby Linux/Docker host. Configure the Node URL and, op
 - `OPENSHIELD_NODE_URL` (default `http://openshield-node:8000`)
 - `OPENSHIELD_GATEWAY_ID` (default `home-gateway`)
 - `OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL` (default 30 seconds)
-- `OPENSHIELD_OPENWRT_URL`
-- `OPENSHIELD_OPENWRT_USERNAME`
-- `OPENSHIELD_OPENWRT_PASSWORD`
-- `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`)
+- `OPENSHIELD_GATEWAY_TOKEN` (same random token on Node and connector when using UI-managed router credentials)
+- `OPENSHIELD_GATEWAY_SPOOL_PATH`
+- `OPENSHIELD_OPENWRT_URL`, `OPENSHIELD_OPENWRT_USERNAME`, `OPENSHIELD_OPENWRT_PASSWORD` (legacy environment-based fallback; prefer dashboard setup) (default `/var/lib/openshield/gateway-spool.sqlite3`)
 
-OpenWrt URL, username, and password must be configured together. If configured, the connector advertises `discover` and `health_check`, performs discovery at startup, and sends health events after heartbeats. If omitted, the connector still registers its gateway presence but does not query OpenWrt.
+For dashboard-managed credentials, set `OPENSHIELD_SECRET_KEY` on Node and the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network.
 
 Start the optional connector profile:
 
@@ -135,7 +134,7 @@ No firewall, routing, wireless, or forwarding settings are modified. Real hardwa
 
 ## API quick reference
 
-The API is unauthenticated in residential mode. Examples:
+The API is unauthenticated by default in residential mode. If Basic authentication is enabled, use the browser's HTTP Basic prompt or pass `-u user:password` to curl. Gateway connect/heartbeat/event routes use the separate connector bearer token when configured. Examples:
 
 ```bash
 curl http://localhost:8000/api/v1/integrations
@@ -158,7 +157,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; physical validation tracked as technical debt #2) |
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
-| Residential API authentication | Disabled by product decision |
+| Residential admin authentication | Disabled by default; optional HTTP Basic, CSRF origin checks and failed-login rate limiting |
 | Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass |
 | PostgreSQL persistence and initial audit records | Implemented; audit hardening/retention pending |
 | Structured logging and Prometheus metrics | Implemented (process-local counters) |
