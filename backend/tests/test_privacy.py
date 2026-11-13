@@ -565,7 +565,7 @@ def test_adguard_query_log_pagination_uses_older_than_watermark(monkeypatch) -> 
         page_size=2,
     )
     assert len(first) == 2 and not done
-    assert "older_than=2026-11-13T12%3A00%3A01Z" in requests[1]
     second, final_cursor, done = providers.fetch_dns_records_page(integration, cursor, page_size=2)
+    assert "older_than=2026-11-13T12%3A00%3A01Z" in requests[1]
     assert len(second) == 1 and done
     assert final_cursor["complete"] is True
