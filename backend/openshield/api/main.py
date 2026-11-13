@@ -327,13 +327,30 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "imported": 0,
         }
     if item.kind in {"crowdsec", "misp"}:
-        if store.get_integration_secret(integration_id) is None:
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not secret or not isinstance(secret.get("api_key"), str):
             raise HTTPException(status_code=409, detail="Threat intelligence API key is not configured")
+        try:
+            if item.kind == "crowdsec":
+                result = lookup_crowdsec("8.8.8.8", secret["api_key"])
+                matches = int(bool(result.get("matched")))
+            else:
+                base_url = item.config.get("base_url")
+                if not isinstance(base_url, str):
+                    raise HTTPException(status_code=422, detail="MISP base URL is not configured")
+                result = lookup_misp(base_url, secret["api_key"], "ip", "192.0.2.1")
+                matches = len(result.get("attributes", []))
+        except ThreatIntelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
-            "status": "configured",
+            "status": "connected",
             "integration_id": integration_id,
             "provider": item.kind,
-            "message": "Credentials are stored encrypted. Run an enrichment lookup to validate provider access.",
+            "matches": matches,
+            "message": "Provider authentication and API request succeeded.",
         }
     if item.kind in {"suricata", "zeek"}:
         return {

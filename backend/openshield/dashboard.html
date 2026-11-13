@@ -35,6 +35,8 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
         <option value="adguard">AdGuard Home</option>
         <option value="suricata">Suricata</option>
         <option value="zeek">Zeek</option>
+        <option value="crowdsec">CrowdSec CTI</option>
+        <option value="misp">MISP</option>
       </select>
       <input id="service-id" placeholder="Integration ID (e.g. pihole-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}">
       <input id="service-name" placeholder="Display name" required maxlength="120">
@@ -300,7 +302,8 @@ $("service-form").addEventListener("submit",async event=>{
       await api("/api/v1/integrations/"+encodeURIComponent(id)+"/threat-intel-credentials",{
         method:"PUT",body:JSON.stringify({api_key:$("service-key").value})
       });
-      showNotice(payload.display_name+" registered. API key encrypted and saved; use Enrich recent events to run lookups.");
+      result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
+      showNotice(payload.display_name+" connected. "+result.message);
     } else if(["pihole","adguard"].includes(kind)) {
       result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
       showNotice("Connected to "+payload.display_name+". "+fmt(result.records_available)+" DNS records available; no records imported by this test.");

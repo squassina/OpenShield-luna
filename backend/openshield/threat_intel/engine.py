@@ -176,6 +176,10 @@ def enrich_events(
     for event in events:
         for indicator in extract_indicators(event):
             grouped.setdefault(indicator, []).append(event)
+    indicators_total = len(grouped)
+    grouped = dict(sorted(
+        grouped.items(), key=lambda item: (len(item[1]), item[0]), reverse=True,
+    )[:50])
     incidents: list[dict[str, object]] = []
     lookups = 0
     for (indicator_type, indicator_value), indicator_events in grouped.items():
@@ -246,5 +250,6 @@ def enrich_events(
         "lookups": lookups,
         "events_considered": len(events),
         "indicators_considered": len(grouped),
+        "indicators_truncated": max(0, indicators_total - len(grouped)),
         "errors": errors,
     }
