@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS events (
                     PRIMARY KEY (incident_id, event_id)
                 )
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS incident_investigations (
                     investigation_id TEXT PRIMARY KEY,
                     incident_id TEXT NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
