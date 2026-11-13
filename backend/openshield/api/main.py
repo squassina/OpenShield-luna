@@ -249,6 +249,11 @@ class AIInvestigationRequest(BaseModel):
     provider_id: str = Field(min_length=2, max_length=64)
 
 
+class GatewayCommandResultRequest(BaseModel):
+    status: Literal["completed", "failed"]
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
 
 
@@ -701,6 +706,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
     }
 
 
@@ -723,6 +729,24 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         "last_seen_at": connection.last_seen_at.isoformat(),
         "openwrt_config": openwrt_config,
     }
+
+
+@app.post("/api/v1/gateway/commands/{gateway_id}/{command_id}/result", tags=["gateway"])
+def report_gateway_command_result(
+    gateway_id: str, command_id: str, request: GatewayCommandResultRequest,
+    http_request: Request,
+) -> dict[str, object]:
+    command = store.get_gateway_command(command_id)
+    if command is None or command["gateway_id"] != gateway_id:
+        raise HTTPException(status_code=404, detail="Gateway command not found")
+    if store.get_integration_secret(gateway_id) and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
+    try:
+        return process_gateway_command_result(
+            store, command_id, request.status, request.result,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/gateways", tags=["gateway"])
