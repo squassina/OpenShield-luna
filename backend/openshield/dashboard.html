@@ -274,6 +274,7 @@ function renderSyncButtons() {
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
 $("refresh").addEventListener("click",load);$("period").addEventListener("change",load);load();
+setInterval(()=>{if(!document.hidden)load();},60000);
 </script>
 </body>
 </html>

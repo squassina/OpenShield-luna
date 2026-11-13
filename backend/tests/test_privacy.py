@@ -429,3 +429,36 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     assert len(events) == 1
     assert events[0]["payload"]["domain"] == "ads.doubleclick.net"
     assert any(item["action"] == "privacy.provider_poll.completed" for item in client.get("/api/v1/audit").json())
+
+
+
+def test_background_dns_polling_records_provider_failure_and_continues(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+    from openshield.privacy.providers import DnsProviderError
+
+    register_dns("pihole-home", "pihole")
+    register_dns("adguard-home", "adguard")
+    calls = []
+
+    def fake_fetch(integration):
+        calls.append(integration.integration_id)
+        if integration.integration_id == "pihole-home":
+            raise DnsProviderError("provider unavailable")
+        return []
+
+    monkeypatch.setattr(polling, "fetch_dns_records", fake_fetch)
+
+    class Metrics:
+        def increment(self, name):
+            raise AssertionError("No events should be ingested")
+
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert calls == ["pihole-home", "adguard-home"]
+    assert outcomes == [
+        {"integration_id": "pihole-home", "status": "error"},
+        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0},
+    ]
+    audit = client.get("/api/v1/audit").json()
+    assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
+    assert any(item["action"] == "privacy.provider_poll.completed" for item in audit)

@@ -273,3 +273,8 @@ For provider exporters, records can also be pushed to `POST /api/v1/dns/{integra
 Tracker classification uses a small curated suffix set; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
 
 Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the unauthenticated Node API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
+
+
+## DNS provider polling
+
+Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Node startup and then at the configured interval. The default interval is 300 seconds. Set `OPENSHIELD_DNS_POLL_INTERVAL_SECONDS=0` to disable background polling, or choose a value from 1 to 86400. Provider failures are isolated per integration and recorded in the audit log; duplicate events remain idempotent. The dashboard refreshes its data every 60 seconds while the page is open.
