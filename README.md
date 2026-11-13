@@ -289,7 +289,6 @@ DNS classifications are descriptive privacy signals, not threat verdicts. OpenSh
 
 P3 adds optional CrowdSec CTI and MISP integrations, encrypted provider API keys, bounded on-demand IOC enrichment, a six-hour provider cache, deterministic explainable risk scoring, incident timelines, and audited false-positive/acknowledge/close workflows. See [the threat intelligence runbook](docs/operations/threat-intelligence.md). No P3 finding authorizes network enforcement; P5 owns policy and response.
 
-
 ## pfSense CE read-only integration
 
 OpenShield can connect to pfSense Community Edition through the **community-maintained pfSense REST API v2 package** ([documentation](https://pfrest.org/)). This package is not built into pfSense CE. An administrator must install and configure it separately, enable API-key authentication, and grant only the read privileges required by the selected endpoints. OpenShield never installs packages or changes pfSense configuration.
@@ -312,3 +311,6 @@ The REST API package must expose these endpoints for the installed version and t
 OpenShield connects to the Wazuh Server API with a dedicated API user and reads manager metadata/status plus up to 500 agent records. Credentials are encrypted at rest. The connector uses POST only for JWT login and GET for diagnostics; it does not modify Wazuh. Use a least-privilege account (the built-in `readonly` role or equivalent) and a TLS certificate trusted by the OpenShield Node. See [Wazuh integration setup](docs/operations/wazuh.md).
 
 Grafana read-only integration setup: [docs/operations/grafana.md](docs/operations/grafana.md).
+## P4 — Hybrid AI investigations
+
+P4 adds a local Ollama runtime and an optional OpenAI Responses API adapter. Local inference is the default privacy posture. Cloud use requires both the global `OPENSHIELD_CLOUD_AI_ENABLED=true` switch and an explicit per-integration consent checkbox. Cloud requests contain only aggregate risk factors, event-type/severity counts, and normalized provider reputation categories; they omit indicator values, hostnames, MACs, event IDs, integration IDs, and raw event payloads. AI output is schema-validated, versioned, stored, and audited. Models cannot call tools or execute policy/response actions. See [the AI investigation runbook](docs/operations/ai-investigation.md).
