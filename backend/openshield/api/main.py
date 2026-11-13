@@ -379,9 +379,12 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             models = test_ollama(base_url)
         except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured Ollama model is not installed")
         return {
             "status": "connected", "integration_id": integration_id,
-            "provider": "ollama", "models": models,
+            "provider": "ollama", "models": models, "model_available": True,
         }
     if item.kind == "openai":
         if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
@@ -399,9 +402,12 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             models = test_openai(api_key)
         except AIProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured OpenAI model is not available to this API key")
         return {
             "status": "connected", "integration_id": integration_id,
-            "provider": "openai", "models_available": len(models),
+            "provider": "openai", "models_available": len(models), "model_available": True,
         }
     if item.kind in {"suricata", "zeek"}:
         return {
@@ -419,6 +425,8 @@ def save_ai_credentials(
     integration = registry.get(integration_id)
     if integration is None or integration.kind != "openai":
         raise HTTPException(status_code=404, detail="OpenAI integration not found")
+    if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
     if not os.getenv("OPENSHIELD_SECRET_KEY"):
         raise HTTPException(status_code=503, detail="OPENSHIELD_SECRET_KEY is required for provider credentials")
     if integration.config.get("cloud_enabled") is not True:

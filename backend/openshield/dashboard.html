@@ -315,7 +315,10 @@ $("service-form").addEventListener("submit",async event=>{
   if(kind==="openai") payload.config={...payload.config,cloud_enabled:$("service-cloud").checked};
   const button=event.submitter; button.disabled=true;
   try {
-    await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
+    const existing=await api("/api/v1/integrations");
+    const current=existing.find(item=>item.integration_id===id);
+    if(current && current.kind!==kind)throw new Error("This integration ID is already used by another provider.");
+    if(!current)await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
     let result;
     if(kind==="openai") {
       await api("/api/v1/integrations/"+encodeURIComponent(id)+"/ai-credentials",{
