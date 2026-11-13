@@ -27,8 +27,6 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.integrations.threat_intel import ThreatIntelAdapter
-from openshield.threat_intel.engine import enrich_events
-from openshield.threat_intel.providers import ThreatIntelProviderError, lookup_crowdsec, lookup_misp
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.polling import (
@@ -40,6 +38,12 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.threat_intel.engine import enrich_events
+from openshield.threat_intel.providers import (
+    ThreatIntelProviderError,
+    lookup_crowdsec,
+    lookup_misp,
+)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
