@@ -319,6 +319,9 @@ $("service-form").addEventListener("submit",async event=>{
     const current=existing.find(item=>item.integration_id===id);
     if(current && current.kind!==kind)throw new Error("This integration ID is already used by another provider.");
     if(!current)await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
+    else if(payload.config)await api("/api/v1/integrations/"+encodeURIComponent(id),{
+      method:"PATCH",body:JSON.stringify({display_name:payload.display_name,config:payload.config})
+    });
     let result;
     if(kind==="openai") {
       await api("/api/v1/integrations/"+encodeURIComponent(id)+"/ai-credentials",{

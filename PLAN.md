@@ -380,6 +380,8 @@ Scope:
 - Explanations, summaries, and recommendations.
 - AI governance, evaluation, and prompt-injection resilience.
 
+**Implementation status:** P4 software scope is implemented on the chained feature branch. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
+
 ### P5 — Autonomous Response
 
 **Goal:** safely execute bounded, authorized network responses.
