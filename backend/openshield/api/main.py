@@ -22,7 +22,13 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
-from openshield.privacy.polling import run_dns_polling_loop
+from openshield.privacy.polling import (
+    _record_poll_attempt,
+    _record_poll_failure,
+    _record_poll_success,
+    get_poll_status,
+    run_dns_polling_loop,
+)
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
@@ -469,10 +475,12 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    _record_poll_attempt(integration_id)
     try:
         records = fetch_dns_records(integration)
         events = normalize_dns_batch(integration.kind, integration_id, records) if records else []
     except (DnsProviderError, ValueError, TypeError, OverflowError) as exc:
+        _record_poll_failure(integration_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     accepted = duplicates = 0
     for event in events:
@@ -481,6 +489,12 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
             metrics.increment("openshield_events_ingested_total")
         else:
             duplicates += 1
+    _record_poll_success(integration_id, accepted, duplicates)
+    store.write_audit(
+        "privacy.provider_poll.completed", None, integration_id,
+        {"provider": integration.kind, "received": len(events),
+         "accepted": accepted, "duplicates": duplicates, "trigger": "manual"},
+    )
     return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
 
 
@@ -494,14 +508,26 @@ def list_privacy_sources() -> list[dict[str, object]]:
             continue
         source = stats.get(integration.integration_id, {})
         latest = source.get("last_observed_at")
+        poll = get_poll_status(integration.integration_id)
+        last_success = poll.get("last_success_at")
         age = now - latest if latest else None
+        source_status = (
+            "failed" if poll.get("status") == "failed"
+            else "healthy" if last_success or (age is not None and age <= timedelta(minutes=5))
+            else "stale" if age is not None
+            else "no_data"
+        )
         result.append({
             "integration_id": integration.integration_id,
             "kind": integration.kind,
             "display_name": integration.display_name,
-            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
-                else "stale" if age is not None else "no_data",
+            "status": source_status,
             "last_query_at": latest.isoformat() if latest else None,
+            "last_attempt_at": poll.get("last_attempt_at"),
+            "last_success_at": last_success,
+            "last_imported": poll.get("last_imported", 0),
+            "last_duplicates": poll.get("last_duplicates", 0),
+            "last_error": poll.get("last_error"),
             "queries_seen": source.get("queries_seen", 0),
             "freshness_basis": "node_observed_at",
         })

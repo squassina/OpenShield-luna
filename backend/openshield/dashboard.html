@@ -192,14 +192,15 @@ function renderSources(sources, integrations) {
   if(!sources.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS sources configured";root.append(p);return;}
   const byId=new Map(integrations.map(item=>[item.integration_id,item]));
   const t=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
-  ["Provider","Status","Queries","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
+  ["Provider","Status","Queries","Last success","Last error","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
   const thead=document.createElement("thead");thead.append(head);t.append(thead);
   sources.forEach(source=>{
     const tr=document.createElement("tr");
-    [source.display_name,source.status,fmt(source.queries_seen)].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
+    [source.display_name,source.status,fmt(source.queries_seen),source.last_success_at||"Never",source.last_error||"—"].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
     const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
     const item=byId.get(source.integration_id);
     if(item) {
+      wrap.append(actionButton("Sync now","",async()=>{try{const result=await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Sync complete: "+fmt(result.accepted)+" imported, "+fmt(result.duplicates)+" duplicates.");await load();}catch(error){showNotice("Sync failed: "+error.message,true);await load();}}));
       wrap.append(actionButton("Edit","",()=>editIntegration(item)));
       wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
     }

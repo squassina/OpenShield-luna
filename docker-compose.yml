@@ -22,7 +22,7 @@ services:
     container_name: openshield-node
     environment:
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
-      OPENSHIELD_DNS_POLL_INTERVAL_SECONDS: ${OPENSHIELD_DNS_POLL_INTERVAL_SECONDS:-300}
+      OPENSHIELD_DNS_POLL_INTERVAL_SECONDS: ${OPENSHIELD_DNS_POLL_INTERVAL_SECONDS:-60}
     depends_on:
       openshield-db:
         condition: service_healthy

@@ -428,6 +428,10 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert len(events) == 1
     assert events[0]["payload"]["domain"] == "ads.doubleclick.net"
+    source = client.get("/api/v1/privacy/sources").json()[0]
+    assert source["status"] == "healthy"
+    assert source["last_success_at"]
+    assert source["last_imported"] == 1
     assert any(item["action"] == "privacy.provider_poll.completed" for item in client.get("/api/v1/audit").json())
 
 
@@ -462,3 +466,6 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
     assert any(item["action"] == "privacy.provider_poll.completed" for item in audit)
+    sources = {item["integration_id"]: item for item in client.get("/api/v1/privacy/sources").json()}
+    assert sources["pihole-home"]["status"] == "failed"
+    assert sources["pihole-home"]["last_error"] == "Provider polling failed"
