@@ -499,7 +499,13 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
 
 
 @app.post("/api/v1/events", status_code=202, tags=["events"])
-def ingest_event(event: EventEnvelope) -> dict[str, str]:
+def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
+    if (
+        event.source.kind == "openwrt"
+        and store.get_integration_secret(event.source.integration_id)
+        and not _gateway_token_valid(request)
+    ):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
     integration = registry.get(event.source.integration_id)
     if integration is None:
         raise HTTPException(status_code=400, detail="Unknown source integration")

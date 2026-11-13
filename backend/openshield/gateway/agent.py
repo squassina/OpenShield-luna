@@ -259,14 +259,13 @@ def main() -> None:
             "OPENSHIELD_OPENWRT_PASSWORD must be configured together"
         )
     openwrt_client = None
-    capabilities = []
+    capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
     if all(openwrt_values):
         openwrt_client = OpenWrtRPCClient(
             base_url=openwrt_url,
             username=openwrt_username,
             password=openwrt_password,
         )
-        capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
 
     spool = GatewayEventSpool(
         os.getenv(

@@ -390,3 +390,19 @@ def test_openwrt_secret_rotation_reencrypts_with_active_key(monkeypatch) -> None
     assert rotated == {"username": "rpc", "password": "rotate-me"}
     encrypted = main.store.get_integration_secret("home-gateway")
     assert encrypted and Fernet(new_key.encode()).decrypt(encrypted)
+
+
+def test_admin_auth_rate_limits_repeated_failures(monkeypatch) -> None:
+    import base64
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
+    monkeypatch.setattr(main.time, "monotonic", lambda: 12345.0)
+    bad = {"Authorization": "Basic " + base64.b64encode(b"admin:wrong").decode()}
+    for _ in range(5):
+        assert client.get("/api/v1/integrations", headers=bad).status_code == 401
+    assert client.get("/api/v1/integrations", headers=bad).status_code == 429
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")

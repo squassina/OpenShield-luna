@@ -16,6 +16,7 @@ Set these variables in the deployment .env:
 OPENSHIELD_NODE_URL=http://openshield-node:8000
 OPENSHIELD_GATEWAY_ID=home-gateway
 OPENSHIELD_SECRET_KEY=<Fernet-key>
+OPENSHIELD_SECRET_KEY_PREVIOUS=<old-key-during-rotation>
 OPENSHIELD_GATEWAY_TOKEN=<random-connector-token>
 OPENSHIELD_API_AUTH_ENABLED=true
 OPENSHIELD_API_USERNAME=<admin-user>
