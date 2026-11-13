@@ -20,6 +20,9 @@ from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
+from openshield.ai.orchestrator import investigate_incident
+from openshield.ai.providers import AIProviderError, test_ollama, test_openai
+from openshield.integrations.ai import AIProviderAdapter
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
@@ -245,6 +248,8 @@ adapters = {
     "adguard": DnsPrivacyAdapter("adguard"),
     "crowdsec": ThreatIntelAdapter("crowdsec"),
     "misp": ThreatIntelAdapter("misp"),
+    "ollama": AIProviderAdapter("ollama"),
+    "openai": AIProviderAdapter("openai"),
 }
 
 
@@ -317,6 +322,14 @@ class IncidentStatusRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class AIProviderCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class AIInvestigationRequest(BaseModel):
+    provider_id: str = Field(min_length=2, max_length=64)
+
+
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
 
 
@@ -386,6 +399,8 @@ def probe_integration(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     result = adapters[item.kind].probe(item)
     if item.kind in {"crowdsec", "misp"}:
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    if item.kind == "openai":
         result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
     return result
 
@@ -558,6 +573,38 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "provider": item.kind,
             "matches": matches,
             "message": "Provider authentication and API request succeeded.",
+        }
+    if item.kind == "ollama":
+        base_url = item.config.get("base_url", "http://localhost:11434")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
+        try:
+            models = test_ollama(base_url)
+        except (AIProviderError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "ollama", "models": models,
+        }
+    if item.kind == "openai":
+        if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+            raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
+        if item.config.get("cloud_enabled") is not True:
+            raise HTTPException(status_code=409, detail="Cloud AI is not explicitly enabled for this integration")
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        api_key = secret.get("api_key") if secret else None
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
+        try:
+            models = test_openai(api_key)
+        except AIProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "openai", "models_available": len(models),
         }
     if item.kind in {"suricata", "zeek"}:
         return {
