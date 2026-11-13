@@ -875,6 +875,7 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         "gateway_id": connection.gateway_id,
         "last_seen_at": connection.last_seen_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
     }
 
 
