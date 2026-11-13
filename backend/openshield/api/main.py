@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
-from openshield.core.storage import PostgresStore
 from openshield.core.secrets import SecretConfigurationError, SecretStore
+from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
