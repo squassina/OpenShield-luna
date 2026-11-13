@@ -397,6 +397,8 @@ Scope:
 - Emergency stop / kill switch.
 - Complete decision and execution audit.
 
+**Implementation status:** P5 software implementation is underway on the chained branch. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
+
 ### P6 — Enterprise Readiness
 
 **Goal:** support broader operational use where validated by demand.
