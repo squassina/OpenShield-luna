@@ -158,7 +158,7 @@ const table = (target, headers, rows) => {
   const t=document.createElement("table"), thead=document.createElement("thead"), tr=document.createElement("tr");
   headers.forEach(h=>{const th=document.createElement("th");th.textContent=h;tr.append(th);});thead.append(tr);t.append(thead);
   const tbody=document.createElement("tbody");
-  rows.forEach(row=>{const line=document.createElement("tr");row.forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");line.append(td);});tbody.append(line);});
+  rows.forEach(row=>{const line=document.createElement("tr");row.forEach(value=>{const td=document.createElement("td");if(value instanceof Node)td.append(value);else td.textContent=String(value??"—");line.append(td);});tbody.append(line);});
   t.append(tbody);root.append(t);
 };
 let providerIds=[];
@@ -427,10 +427,13 @@ function renderPolicyPanel(policyState,decisions,executions,control,integrations
     fmt(item.ttl_seconds)+"s",item.require_approval?"Required":"Policy-controlled",item.enabled?"Enabled":"Disabled",
     actionButton(item.enabled?"Disable":"Enable","",async()=>{try{await api("/api/v1/policies/"+encodeURIComponent(item.policy_id),{method:"PATCH",body:JSON.stringify({enabled:!item.enabled})});await load();}catch(error){showNotice("Policy update failed: "+error.message,true);}})
   ]));
-  table("policy-decisions",["Incident","Policy","Decision","Reasons","Actions"],decisions.map(item=>[
-    item.incident_id,item.policy_id,item.status,(item.rationale.reasons||[]).join(", "),
-    item.status==="pending_approval"?actionButton("Approve","",async()=>{try{await api("/api/v1/policy-decisions/"+encodeURIComponent(item.decision_id)+"/approve",{method:"POST"});await load();}catch(error){showNotice("Approval failed: "+error.message,true);}}):item.status==="pending_approval"? "": "—"
-  ]));
+  table("policy-decisions",["Incident","Policy","Decision","Reasons","Actions"],decisions.map(item=>{
+    if(item.status!=="pending_approval")return [item.incident_id,item.policy_id,item.status,(item.rationale.reasons||[]).join(", "),"—"];
+    const actions=document.createElement("div");actions.className="actions";
+    actions.append(actionButton("Approve","",async()=>{try{await api("/api/v1/policy-decisions/"+encodeURIComponent(item.decision_id)+"/approve",{method:"POST"});await load();}catch(error){showNotice("Approval failed: "+error.message,true);}}));
+    actions.append(actionButton("Reject","danger",async()=>{try{await api("/api/v1/policy-decisions/"+encodeURIComponent(item.decision_id)+"/reject",{method:"POST",body:JSON.stringify({reason:"Rejected from dashboard"})});await load();}catch(error){showNotice("Rejection failed: "+error.message,true);}}));
+    return [item.incident_id,item.policy_id,item.status,(item.rationale.reasons||[]).join(", "),actions];
+  }));
   table("executions",["Indicator","Action","Gateway / DNS","Status","Expires","TTL"],executions.map(item=>[
     item.indicator_value,item.action,item.integration_id,item.status,item.expires_at||"—",fmt(item.ttl_seconds)+"s"
   ]));
