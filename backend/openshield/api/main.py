@@ -21,6 +21,19 @@ from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
+from openshield.execution.service import (
+    ExecutionError,
+    approve_decision,
+    process_gateway_command_result,
+    reject_decision,
+)
+from openshield.execution.worker import run_expiration_loop
+from openshield.policy.engine import (
+    create_policy,
+    enforcement_enabled,
+    evaluate_policy,
+    max_autonomy_level,
+)
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
