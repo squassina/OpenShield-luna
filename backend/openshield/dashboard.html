@@ -200,7 +200,8 @@ function renderSources(sources, integrations) {
     const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
     const item=byId.get(source.integration_id);
     if(item) {
-      wrap.append(actionButton("Sync now","",async()=>{try{const result=await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Sync complete: "+fmt(result.accepted)+" imported, "+fmt(result.duplicates)+" duplicates.");await load();}catch(error){showNotice("Sync failed: "+error.message,true);await load();}}));
+      const syncButton=actionButton("Sync now","",async()=>{try{const result=await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Sync complete: "+fmt(result.accepted)+" imported, "+fmt(result.duplicates)+" duplicates.");await load();}catch(error){showNotice("Sync failed: "+error.message,true);await load();}});
+      syncButton.disabled=item.enabled===false;wrap.append(syncButton);
       wrap.append(actionButton("Edit","",()=>editIntegration(item)));
       wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
     }

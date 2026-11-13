@@ -469,3 +469,12 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     sources = {item["integration_id"]: item for item in client.get("/api/v1/privacy/sources").json()}
     assert sources["pihole-home"]["status"] == "failed"
     assert sources["pihole-home"]["last_error"] == "Provider polling failed"
+
+
+
+def test_disabled_dns_provider_cannot_be_manually_polled() -> None:
+    register_dns()
+    assert client.patch("/api/v1/integrations/pihole-home", json={"enabled": False}).status_code == 200
+    assert client.post("/api/v1/privacy/sources/pihole-home/sync").status_code == 409
+    source = client.get("/api/v1/privacy/sources").json()[0]
+    assert source["status"] == "disabled"

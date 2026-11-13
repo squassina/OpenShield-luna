@@ -475,6 +475,8 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    if not integration.enabled:
+        raise HTTPException(status_code=409, detail="DNS privacy integration is disabled")
     _record_poll_attempt(integration_id)
     try:
         records = fetch_dns_records(integration)
@@ -510,11 +512,15 @@ def list_privacy_sources() -> list[dict[str, object]]:
         latest = source.get("last_observed_at")
         poll = get_poll_status(integration.integration_id)
         last_success = poll.get("last_success_at")
-        age = now - latest if latest else None
+        last_success_at = datetime.fromisoformat(last_success) if isinstance(last_success, str) else None
+        success_age = now - last_success_at if last_success_at else None
+        observed_age = now - latest if latest else None
         source_status = (
-            "failed" if poll.get("status") == "failed"
-            else "healthy" if last_success or (age is not None and age <= timedelta(minutes=5))
-            else "stale" if age is not None
+            "disabled" if not integration.enabled
+            else "failed" if poll.get("status") == "failed"
+            else "healthy" if (success_age is not None and success_age <= timedelta(minutes=5))
+                or (success_age is None and observed_age is not None and observed_age <= timedelta(minutes=5))
+            else "stale" if last_success_at or latest
             else "no_data"
         )
         result.append({

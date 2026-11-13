@@ -277,4 +277,4 @@ Allow/block entries are OpenShield local desired state. They affect providers on
 
 ## DNS provider polling
 
-Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Node startup and then at the configured interval. The default interval is 300 seconds. Set `OPENSHIELD_DNS_POLL_INTERVAL_SECONDS=0` to disable background polling, or choose a value from 1 to 86400. Provider failures are isolated per integration and recorded in the audit log; duplicate events remain idempotent. The dashboard refreshes its data every 60 seconds while the page is open.
+Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Node startup and then at the configured interval. The default interval is 60 seconds. Set `OPENSHIELD_DNS_POLL_INTERVAL_SECONDS=0` to disable background polling, or choose a value from 1 to 86400. Provider failures are isolated per integration and recorded in the audit log; duplicate events remain idempotent. The dashboard refreshes its data every 60 seconds while the page is open.
