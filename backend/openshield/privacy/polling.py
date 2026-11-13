@@ -37,13 +37,18 @@ def _record_poll_success(integration_id: str, accepted: int, duplicates: int) ->
         }
 
 
-def _record_poll_failure(integration_id: str) -> None:
+def _record_poll_failure(integration_id: str, message: str = "Provider polling failed") -> None:
     with _STATUS_LOCK:
         _POLL_STATUS[integration_id] = {
             **_POLL_STATUS.get(integration_id, {}),
             "status": "failed", "last_attempt_at": datetime.now(UTC).isoformat(),
-            "last_error": "Provider polling failed",
+            "last_error": message,
         }
+
+
+def reset_poll_status(integration_id: str) -> None:
+    with _STATUS_LOCK:
+        _POLL_STATUS.pop(integration_id, None)
 
 
 def get_poll_status(integration_id: str) -> dict[str, object]:
@@ -90,7 +95,9 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
                              "pages": pages, "complete": complete})
         except DnsProviderCursorExpired:
             logger.warning("DNS provider cursor expired for integration %s", integration.integration_id)
-            _record_poll_failure(integration.integration_id)
+            _record_poll_failure(
+                integration.integration_id, "Provider query-log cursor expired; reset required",
+            )
             store.write_audit(
                 "privacy.provider_poll.cursor_expired", None, integration.integration_id,
                 {"provider": integration.kind, "error": "cursor_expired"},

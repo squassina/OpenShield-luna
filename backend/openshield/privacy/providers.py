@@ -264,34 +264,11 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
 
 
 def _normalize_pihole_records(records: list[object]) -> list[dict]:
-    normalized = []
-    for item in records:
-        if not isinstance(item, dict):
-            continue
-        normalized.append({
-            "domain": item.get("domain") or item.get("name"),
-            "client": item.get("client") or item.get("client_ip"),
-            "timestamp": item.get("timestamp") or item.get("time"),
-            "status": item.get("status") or item.get("reply") or item.get("type"),
-            "type": item.get("type") or item.get("query_type"),
-        })
-    return normalized
+    return _normalize_pihole_records(records)
 
 
 def _normalize_adguard_records(records: list[object]) -> list[dict]:
-    normalized = []
-    for item in records:
-        if not isinstance(item, dict):
-            continue
-        question = item.get("question") if isinstance(item.get("question"), dict) else {}
-        normalized.append({
-            "domain": question.get("host") or item.get("domain"),
-            "client": item.get("client") or item.get("IP"),
-            "timestamp": item.get("time") or item.get("timestamp"),
-            "status": item.get("reason") or item.get("status"),
-            "type": question.get("type") or item.get("type"),
-        })
-    return normalized
+    return _normalize_adguard_records(records)
 
 
 def _time_value(value: object) -> float | None:
@@ -344,6 +321,7 @@ def fetch_dns_records_page(
             state = {
                 "watermark": watermark if watermark is not None else time.time() - 86400,
                 "older_than": None, "pages": 0, "newest": None,
+                "bootstrap": watermark is None,
             }
         params = {"limit": page_size}
         if state.get("older_than"):
@@ -360,10 +338,13 @@ def fetch_dns_records_page(
         records = result.get("data", []) if isinstance(result, dict) else []
         if not isinstance(records, list):
             raise DnsProviderError("AdGuard query-log response has no data list")
-        if not records and state.get("older_than"):
+        if not records and state.get("older_than") and not state.get("bootstrap"):
             raise DnsProviderCursorExpired(
                 "AdGuard query-log retention expired before the saved watermark; reset the cursor to resume"
             )
+        if not records and state.get("older_than") and state.get("bootstrap"):
+            boundary = _time_value(state.get("older_than")) or float(state["watermark"])
+            return [], {"watermark": boundary, "complete": True}, True
         oldest = result.get("oldest") if isinstance(result, dict) else None
         if not oldest and records:
             oldest = records[-1].get("time") if isinstance(records[-1], dict) else None

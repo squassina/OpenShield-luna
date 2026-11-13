@@ -27,6 +27,7 @@ from openshield.privacy.polling import (
     _record_poll_failure,
     _record_poll_success,
     get_poll_status,
+    reset_poll_status,
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
@@ -517,6 +518,7 @@ def reset_privacy_source_cursor(integration_id: str) -> dict[str, str]:
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
     store.delete_integration_poll_cursor(integration_id)
+    reset_poll_status(integration_id)
     store.write_audit(
         "privacy.provider_poll.cursor_reset", None, integration_id,
         {"provider": integration.kind, "reason": "administrator_requested"},

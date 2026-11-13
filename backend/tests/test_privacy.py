@@ -681,3 +681,39 @@ def test_adguard_normalizer_preserves_observed_cname_targets(monkeypatch) -> Non
     assert normalized[0]["cname_targets"] == ["api.clickaine.com"]
     events = normalize_dns_batch("adguard", "adguard-home", normalized)
     assert events[0].payload["classification"]["source"] == "adguard_cname_trackers"
+
+
+def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch) -> None:
+    import json
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    responses = [
+        {"oldest": "2026-11-13T11:59:00Z", "data": [
+            {"question": {"host": "recent.example"}, "time": "2026-11-13T12:00:00Z"},
+        ]},
+        {"oldest": "", "data": []},
+    ]
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse(responses.pop(0)))
+    _, cursor, done = providers.fetch_dns_records_page(integration, {"complete": True, "watermark": 1})
+    assert not done
+    _, final_cursor, done = providers.fetch_dns_records_page(integration, cursor)
+    assert done
+    assert final_cursor["complete"] is True
