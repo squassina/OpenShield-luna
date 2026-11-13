@@ -36,8 +36,11 @@ def create_policy(
         raise ValueError("block_domain requires a Pi-hole or AdGuard integration")
     if action == "block_ip" and integration.kind != "openwrt":
         raise ValueError("block_ip requires an OpenWrt gateway integration")
-    if action == "block_ip" and not os.getenv("OPENSHIELD_GATEWAY_TOKEN"):
-        raise ValueError("OpenWrt enforcement requires OPENSHIELD_GATEWAY_TOKEN")
+    if action == "block_ip" and (
+        not os.getenv("OPENSHIELD_GATEWAY_TOKEN")
+        or not store.get_integration_secret(integration.integration_id)
+    ):
+        raise ValueError("OpenWrt enforcement requires a gateway token and encrypted router credentials")
     policy = {
         "policy_id": str(uuid4()),
         "name": str(data["name"]).strip(),
