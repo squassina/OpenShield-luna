@@ -13,7 +13,6 @@ from openshield.ai.providers import (
 )
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
-from openshield.integrations.models import Integration
 from openshield.integrations.registry import IntegrationRegistry
 
 PROMPT_VERSION = "openshield.incident-investigation.v1"
