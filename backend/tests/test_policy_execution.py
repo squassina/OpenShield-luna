@@ -9,11 +9,11 @@ from fastapi.testclient import TestClient
 from openshield.api.main import app
 from openshield.core.secrets import SecretStore
 from openshield.events.models import EventEnvelope, EventSource, Severity
+from openshield.execution import service as execution_service
 from openshield.gateway.agent import _process_gateway_commands
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.policy.engine import create_policy, evaluate_policy
-from openshield.execution import service as execution_service
 
 client = TestClient(app)
 
@@ -208,8 +208,6 @@ def test_l2_automatic_execution_requires_explicit_policy_and_global_enable(monke
 
 
 def test_policy_rejects_indicator_mismatch_private_ip_and_wrong_adapter() -> None:
-    from openshield.api import main
-
     _register("pihole", "pihole-home")
     _register("openwrt", "home-gateway")
     _incident()
@@ -295,7 +293,7 @@ def test_failed_gateway_rollback_is_requeued_until_acknowledged(monkeypatch) -> 
         "integration_id":"home-gateway","min_risk_score":70,"autonomy_level":1,
         "ttl_seconds":600,"require_approval":True,"direction":"destination"})
     decision=main.store.create_policy_decision("decision-1",incident["incident_id"],"policy-1","approved",{})
-    execution=main.store.create_response_execution({
+    main.store.create_response_execution({
         "execution_id":"execution-1","decision_id":decision["decision_id"],
         "incident_id":incident["incident_id"],"policy_id":"policy-1","integration_id":"home-gateway",
         "action":"block_ip","indicator_type":"ip","indicator_value":"8.8.8.8",
