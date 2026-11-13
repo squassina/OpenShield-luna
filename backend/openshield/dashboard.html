@@ -37,11 +37,15 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
         <option value="zeek">Zeek</option>
         <option value="crowdsec">CrowdSec CTI</option>
         <option value="misp">MISP</option>
+        <option value="ollama">Ollama (local AI)</option>
+        <option value="openai">OpenAI (cloud AI)</option>
       </select>
       <input id="service-id" placeholder="Integration ID (e.g. pihole-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}">
       <input id="service-name" placeholder="Display name" required maxlength="120">
       <input id="service-url" type="url" placeholder="Service URL (DNS providers / MISP)">
-      <input id="service-key" type="password" placeholder="API key (CrowdSec / MISP)" autocomplete="off">
+      <input id="service-key" type="password" placeholder="API key (CrowdSec / MISP / OpenAI)" autocomplete="off">
+      <input id="service-model" placeholder="Model (AI providers)" autocomplete="off">
+      <label><input id="service-cloud" type="checkbox"> Allow sanitized cloud data</label>
       <button class="primary" type="submit">Add service</button>
     </form>
     <div id="service-help" class="notice">DNS providers require a base URL. Provider passwords remain in server environment variables; they are never sent to or stored by the dashboard.</div>
@@ -90,6 +94,8 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <p>Enrich recent network and DNS observations against configured CrowdSec and MISP sources. Matches retain source evidence and can be acknowledged or marked false positive.</p>
     <div class="toolbar"><button id="enrich-events" class="primary" type="button">Enrich recent events</button></div>
     <div id="incidents" class="table-wrap"></div>
+    <div class="toolbar"><select id="ai-provider" aria-label="AI provider"><option value="">Select AI provider</option></select></div>
+    <div id="ai-results" aria-live="polite"></div>
   </section>
   <section class="columns">
     <article class="panel"><h2>Network sensors</h2><div id="sensors" class="table-wrap"></div></article>
@@ -152,7 +158,8 @@ async function load() {
     table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations)
-    renderIncidents(incidents);
+    renderIncidents(incidents)
+    renderAIProviders(integrations);
     renderIntegrations(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
@@ -276,29 +283,51 @@ $("integration-edit-form").addEventListener("submit",async event=>{
 });
 $("service-kind").addEventListener("change",()=>{
   const kind=$("service-kind").value;
-  const needsUrl=["pihole","adguard","misp"].includes(kind);
-  const needsKey=["crowdsec","misp"].includes(kind);
+  const needsUrl=["pihole","adguard","misp","ollama"].includes(kind);
+  const needsKey=["crowdsec","misp","openai"].includes(kind);
+  const needsModel=["ollama","openai"].includes(kind);
+  const needsCloud=kind==="openai";
   $("service-url").required=needsUrl;
   $("service-url").disabled=!needsUrl;
   $("service-key").required=needsKey;
   $("service-key").disabled=!needsKey;
-  $("service-help").textContent=needsKey
-    ?"Enter the provider API key. It is encrypted at rest and never returned by integration APIs. MISP also requires its base URL."
-    :needsUrl
-      ?"Enter the DNS provider base URL. Provider credentials remain in server environment variables."
-      :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
+  $("service-model").required=needsModel;
+  $("service-model").disabled=!needsModel;
+  $("service-cloud").disabled=!needsCloud;
+  $("service-cloud").checked=false;
+  $("service-help").textContent=needsCloud
+    ?"OpenAI is cloud processing. Check Allow sanitized cloud data explicitly, set OPENSHIELD_CLOUD_AI_ENABLED=true, and enter a model/API key. Only aggregate risk metadata is sent."
+    :kind==="ollama"
+      ?"Local Ollama runtime. Enter its reachable API URL and installed model name. Incident context stays on your local network."
+      :needsKey
+        ?"Enter the provider API key. It is encrypted at rest and never returned by integration APIs. MISP also requires its base URL."
+        :needsUrl
+          ?"Enter the DNS provider base URL. Provider credentials remain in server environment variables."
+          :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
 });
 $("service-kind").dispatchEvent(new Event("change"));
 $("service-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const kind=$("service-kind").value, id=$("service-id").value.trim();
   const payload={integration_id:id,kind,display_name:$("service-name").value.trim()};
-  if(["pihole","adguard","misp"].includes(kind)) payload.config={base_url:$("service-url").value.trim()};
+  if(["pihole","adguard","misp","ollama"].includes(kind)) payload.config={base_url:$("service-url").value.trim()};
+  if(["ollama","openai"].includes(kind)) payload.config={...(payload.config||{}),model:$("service-model").value.trim()};
+  if(kind==="openai") payload.config={...payload.config,cloud_enabled:$("service-cloud").checked};
   const button=event.submitter; button.disabled=true;
   try {
     await api("/api/v1/integrations",{method:"POST",body:JSON.stringify(payload)});
     let result;
-    if(["crowdsec","misp"].includes(kind)) {
+    if(kind==="openai") {
+      await api("/api/v1/integrations/"+encodeURIComponent(id)+"/ai-credentials",{
+        method:"PUT",body:JSON.stringify({api_key:$("service-key").value})
+      });
+      $("service-key").value="";
+      result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
+      showNotice(payload.display_name+" connected. "+result.models_available+" models available.");
+    } else if(kind==="ollama") {
+      result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
+      showNotice(payload.display_name+" connected. "+result.models.length+" local models available.");
+    } else if(["crowdsec","misp"].includes(kind)) {
       await api("/api/v1/integrations/"+encodeURIComponent(id)+"/threat-intel-credentials",{
         method:"PUT",body:JSON.stringify({api_key:$("service-key").value})
       });
@@ -318,6 +347,28 @@ $("service-form").addEventListener("submit",async event=>{
   finally { button.disabled=false; }
 });
 
+function renderAIProviders(integrations) {
+  const select=$("ai-provider"),current=select.value;select.replaceChildren();
+  const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select AI provider";select.append(placeholder);
+  integrations.filter(item=>["ollama","openai"].includes(item.kind)).forEach(item=>{
+    const option=document.createElement("option");option.value=item.integration_id;
+    option.textContent=item.display_name+" ("+item.kind+", "+(item.config.model||"model not set")+")";
+    select.append(option);
+  });
+  if([...select.options].some(option=>option.value===current))select.value=current;
+}
+function renderAIResult(investigation) {
+  const root=$("ai-results");root.replaceChildren();
+  const result=investigation.result||{};
+  const title=document.createElement("h3");title.textContent="AI investigation — "+investigation.provider_kind+" / "+investigation.model;root.append(title);
+  const summary=document.createElement("p");summary.textContent=result.summary+" (confidence "+Math.round((result.confidence||0)*100)+"%)";root.append(summary);
+  for(const [label,key] of [["Observed facts","observed_facts"],["Hypotheses","hypotheses"],["Recommendations","recommendations"],["Caveats","caveats"]]){
+    const values=result[key]||[];if(!values.length)continue;
+    const heading=document.createElement("strong");heading.textContent=label;root.append(heading);
+    const list=document.createElement("ul");values.forEach(value=>{const li=document.createElement("li");li.textContent=value;list.append(li);});root.append(list);
+  }
+  const scope=document.createElement("p");scope.className="empty";scope.textContent="Context scope: "+investigation.context_scope.mode+" · Prompt "+investigation.prompt_version;root.append(scope);
+}
 function renderIncidents(items) {
   const root=$("incidents");root.replaceChildren();
   if(!items.length){const p=document.createElement("p");p.className="empty";p.textContent="No threat intelligence incidents. Enrich recent events after configuring a provider.";root.append(p);return;}
@@ -333,7 +384,8 @@ function renderIncidents(items) {
       wrap.append(button);
     }
     const evidence=actionButton("Evidence","",async()=>{try{const detail=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id));showNotice(detail.summary+" Evidence events: "+detail.timeline.length+". Factors: "+(detail.risk_factors||[]).map(x=>x.factor+" +"+x.points).join(", "));}catch(error){showNotice("Could not load incident evidence: "+error.message,true);}});
-    wrap.append(evidence);actions.append(wrap);row.append(actions);body.append(row);
+    const investigate=actionButton("AI investigate","",async()=>{const provider_id=$("ai-provider").value;if(!provider_id){showNotice("Select an AI provider first.",true);return;}try{const result=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id)+"/investigate",{method:"POST",body:JSON.stringify({provider_id})});renderAIResult(result);}catch(error){showNotice("AI investigation failed: "+error.message,true);}});
+    wrap.append(evidence,investigate);actions.append(wrap);row.append(actions);body.append(row);
   });
   table.append(body);root.append(table);
 }
