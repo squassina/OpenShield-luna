@@ -138,6 +138,12 @@ class OpenWrtRPCClient:
         if direction not in {"source", "destination"}:
             raise ValueError("Firewall block direction must be source or destination")
         section = "os_" + re.sub(r"[^a-f0-9]", "", execution_id.lower())[:16]
+        try:
+            existing = self.call("uci", "get", {"config": "firewall", "section": section})
+        except OpenWrtRPCError:
+            existing = None
+        if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
+            return {"section": section, "verified": True, "already_present": True}
         values: dict[str, object] = {
             "name": f"OpenShield {section}",
             "proto": "all",
@@ -157,13 +163,10 @@ class OpenWrtRPCClient:
             if isinstance(created.get("section"), str):
                 section = created["section"]
         except OpenWrtRPCError:
-            try:
-                existing = self.call("uci", "get", {"config": "firewall", "section": section})
-            except OpenWrtRPCError:
-                raise
+            existing = self.call("uci", "get", {"config": "firewall", "section": section})
             if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
                 return {"section": section, "verified": True, "already_present": True}
-            raise OpenWrtRPCError("OpenWrt firewall rule could not be created")
+            raise
         try:
             self.call("uci", "apply", {"rollback": True, "timeout": 30})
             verified = self.call("uci", "get", {"config": "firewall", "section": section})
