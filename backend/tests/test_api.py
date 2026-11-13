@@ -406,3 +406,38 @@ def test_admin_auth_rate_limits_repeated_failures(monkeypatch) -> None:
         assert client.get("/api/v1/integrations", headers=bad).status_code == 401
     assert client.get("/api/v1/integrations", headers=bad).status_code == 429
     monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
+
+
+def test_openwrt_credentials_can_be_rotated_and_revoked(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    endpoint = "/api/v1/integrations/home-gateway/openwrt-credentials"
+    payload = {"base_url": "https://192.0.2.1", "username": "rpc", "password": "first-secret"}
+    assert client.put(endpoint, json=payload).status_code == 200
+    payload["password"] = "rotated-secret"
+    assert client.put(endpoint, json=payload).status_code == 200
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+    assert SecretStore(main.store).get("home-gateway")["password"] == "rotated-secret"
+    assert client.delete(endpoint).status_code == 204
+    assert main.store.get_integration_secret("home-gateway") is None
+    assert client.get("/api/v1/integrations").json()[0]["config"]["rpc_configured"] is False
+
+
+def test_openwrt_test_endpoint_distinguishes_missing_connector(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    response = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={"base_url": "https://192.0.2.1", "username": "rpc", "password": "secret"},
+    )
+    assert response.status_code == 200
+    check = client.get("/api/v1/integrations/home-gateway/test")
+    assert check.status_code == 200
+    assert check.json()["status"] == "connector_disconnected"

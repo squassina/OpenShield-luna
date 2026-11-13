@@ -863,3 +863,35 @@ def test_adguard_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None
     _, cursor, done = providers.fetch_dns_records_page(integration, {"complete": True, "watermark": 5000})
     assert done
     assert cursor["watermark"] == 1000.0
+
+
+def test_dns_provider_auth_failures_are_sanitized(monkeypatch) -> None:
+    from urllib.error import HTTPError
+
+    from openshield.privacy import providers
+    from openshield.privacy.providers import DnsProviderError
+
+    integration_pihole = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    integration_adguard = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    monkeypatch.setenv("OPENSHIELD_PIHOLE_PASSWORD", "pihole-private-password")
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_PASSWORD", "adguard-private-password")
+
+    def unauthorized(request, timeout):
+        raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(providers, "urlopen", unauthorized)
+    for integration in (integration_pihole, integration_adguard):
+        try:
+            providers.fetch_dns_records(integration)
+        except DnsProviderError as exc:
+            assert "private-password" not in str(exc)
+            assert "Unauthorized" not in str(exc)
+        else:
+            raise AssertionError("Provider authentication failure must be reported")
