@@ -770,3 +770,96 @@ def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> No
     assert first[0]["status"] == "error"
     assert second[0]["status"] == "ok"
     assert attempts == ["pihole-home", "pihole-home"]
+
+
+def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+
+    register_dns()
+    records = [
+        {"domain": f"query-{index}.example.net", "client": "192.168.1.30",
+         "timestamp": f"2026-11-13T12:00:0{index}+00:00", "status": "allowed"}
+        for index in range(3)
+    ]
+
+    def fake_fetch_page(integration, cursor):
+        if not cursor:
+            return records[:2], {"page": 1}, False
+        if cursor.get("page") == 1:
+            return records[2:], {"complete": True}, True
+        return records[2:], {"complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def __init__(self):
+            self.count = 0
+
+        def increment(self, name):
+            self.count += 1
+
+    metrics = Metrics()
+    first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    second = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert first[0]["accepted"] == 3
+    assert first[0]["pages"] == 2 and first[0]["complete"] is True
+    assert second[0]["accepted"] == 0
+    assert second[0]["duplicates"] == 1
+    assert metrics.count == 3
+    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    assert {event["payload"]["domain"] for event in events} == {
+        "query-0.example.net", "query-1.example.net", "query-2.example.net",
+    }
+
+
+def test_pihole_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    requests = []
+
+    def fake_request(base_url, path):
+        requests.append(path)
+        return {"queries": []}
+
+    monkeypatch.setattr(providers.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(providers, "_pihole_request", fake_request)
+    _, cursor, done = providers.fetch_dns_records_page(integration, {"watermark": 5000})
+    assert done
+    assert "from=999" in requests[0]
+    assert "until=1000" in requests[0]
+    assert cursor["watermark"] == 1000.0
+
+
+def test_adguard_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return json.dumps({
+                "oldest": "1970-01-01T00:16:39Z",
+                "data": [{"question": {"host": "recent.example"}, "time": "1970-01-01T00:16:40Z"}],
+            }).encode()
+
+    monkeypatch.setattr(providers.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse())
+    _, cursor, done = providers.fetch_dns_records_page(integration, {"complete": True, "watermark": 5000})
+    assert done
+    assert cursor["watermark"] == 1000.0

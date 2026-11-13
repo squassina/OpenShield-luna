@@ -328,9 +328,12 @@ def fetch_dns_records_page(
         state = dict(cursor or {})
         if state.get("complete") or not state:
             watermark = _time_value(state.get("watermark"))
-            window_from = max(0, (watermark - 1) if watermark is not None else time.time() - 86400)
+            now = time.time()
+            window_from = max(
+                0, min(watermark - 1, now - 1) if watermark is not None else now - 86400
+            )
             state = {
-                "window_from": window_from, "window_until": time.time(),
+                "window_from": window_from, "window_until": now,
                 "start": 0, "watermark": watermark,
             }
         params = {
@@ -352,8 +355,11 @@ def fetch_dns_records_page(
         state = dict(cursor or {})
         if not state or state.get("complete"):
             watermark = _time_value(state.get("watermark"))
+            now = time.time()
+            if watermark is not None:
+                watermark = min(watermark, now - 1)
             state = {
-                "watermark": watermark if watermark is not None else time.time() - 86400,
+                "watermark": watermark if watermark is not None else now - 86400,
                 "older_than": None, "pages": 0, "newest": None,
                 "bootstrap": watermark is None,
             }
