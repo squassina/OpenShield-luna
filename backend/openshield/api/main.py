@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
@@ -211,7 +211,7 @@ class ClassificationOverrideRequest(BaseModel):
 class OpenWrtCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=1, max_length=512)
+    password: SecretStr = Field(min_length=1, max_length=512)
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -334,7 +334,11 @@ def save_openwrt_credentials(
         ):
             raise ValueError("OpenWrt URL must be an absolute HTTP(S) URL without credentials")
         OpenWrtRPCClient(credentials.base_url, credentials.username, credentials.password)
-        SecretStore(store).set(integration_id, credentials.model_dump())
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url,
+            "username": credentials.username,
+            "password": credentials.password.get_secret_value(),
+        })
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -344,7 +348,7 @@ def save_openwrt_credentials(
         IntegrationUpdate(config={
             **integration.config,
             "base_url": credentials.base_url.rstrip("/"),
-            "credentials_configured": True,
+            "rpc_configured": True,
         }),
     )
     return {
@@ -366,7 +370,7 @@ def delete_openwrt_credentials(integration_id: str) -> Response:
         integration_id,
         IntegrationUpdate(config={
             **integration.config,
-            "credentials_configured": False,
+            "rpc_configured": False,
         }),
     )
     return Response(status_code=204)
@@ -377,7 +381,7 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind != "openwrt":
         raise HTTPException(status_code=404, detail="OpenWrt integration not found")
-    if not integration.config.get("credentials_configured"):
+    if not integration.config.get("rpc_configured"):
         raise HTTPException(status_code=409, detail="OpenWrt credentials are not configured")
     gateway = gateway_connections.get_status(integration_id)
     if gateway is None or gateway.get("status") != "connected":

@@ -308,7 +308,7 @@ def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(monkeypa
     assert response.status_code == 200
     assert "router-secret-value" not in response.text
     integration = client.get("/api/v1/integrations").json()[0]
-    assert integration["config"]["credentials_configured"] is True
+    assert integration["config"]["rpc_configured"] is True
     assert "password" not in str(integration)
     from openshield.api import main
     encrypted = main.store.get_integration_secret("home-gateway")
