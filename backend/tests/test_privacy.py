@@ -737,6 +737,11 @@ def test_dns_polling_lifespan_starts_and_stops_worker(monkeypatch) -> None:
 
     monkeypatch.setattr(main, "run_dns_polling_loop", fake_worker)
 
+    async def fake_expiration_worker(store, registry, interval_seconds=15):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "run_expiration_loop", fake_expiration_worker)
+
     async def exercise_lifespan():
         async with main._dns_polling_lifespan(main.app):
             await asyncio.sleep(0)

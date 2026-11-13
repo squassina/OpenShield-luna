@@ -62,15 +62,17 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
+    execution_task = asyncio.create_task(run_expiration_loop(store, registry))
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for background_task in (task, execution_task):
+            if background_task is not None:
+                background_task.cancel()
+                try:
+                    await background_task
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(
@@ -252,6 +254,42 @@ class AIInvestigationRequest(BaseModel):
 class GatewayCommandResultRequest(BaseModel):
     status: Literal["completed", "failed"]
     result: dict[str, Any] = Field(default_factory=dict)
+
+
+class PolicyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    indicator_type: Literal["ip", "domain"]
+    indicator_value: str = Field(min_length=3, max_length=253)
+    action: Literal["block_ip", "block_domain"]
+    integration_id: str = Field(min_length=2, max_length=64)
+    min_risk_score: int = Field(ge=0, le=100)
+    autonomy_level: int = Field(ge=0, le=3, default=0)
+    ttl_seconds: int = Field(ge=60, le=86400, default=3600)
+    require_approval: bool = True
+    direction: Literal["source", "destination"] = "destination"
+
+
+class PolicyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+    min_risk_score: int | None = Field(default=None, ge=0, le=100)
+    autonomy_level: int | None = Field(default=None, ge=0, le=3)
+    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
+    require_approval: bool | None = None
+    direction: Literal["source", "destination"] | None = None
+
+
+class PolicyEvaluationRequest(BaseModel):
+    policy_id: str = Field(min_length=2, max_length=64)
+
+
+class PolicyDecisionRejectionRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class EmergencyStopRequest(BaseModel):
+    active: bool
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -557,6 +595,102 @@ def update_incident_status(
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     return incident
+
+
+@app.get("/api/v1/policies", tags=["policy"])
+def list_policies() -> dict[str, object]:
+    return {
+        "items": store.list_policies(),
+        "max_autonomy_level": max_autonomy_level(),
+        "enforcement_enabled": enforcement_enabled(),
+        "emergency_stop_active": store.get_emergency_stop(),
+    }
+
+
+@app.post("/api/v1/policies", status_code=201, tags=["policy"])
+def register_policy(request: PolicyCreateRequest) -> dict[str, object]:
+    try:
+        return create_policy(store, registry, request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/api/v1/policies/{policy_id}", tags=["policy"])
+def patch_policy(policy_id: str, request: PolicyUpdateRequest) -> dict[str, object]:
+    if store.get_policy(policy_id) is None:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    result = store.update_policy(policy_id, request.model_dump(exclude_unset=True))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return result
+
+
+@app.get("/api/v1/policy-decisions", tags=["policy"])
+def list_policy_decisions(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[dict[str, object]]:
+    return store.list_policy_decisions(limit)
+
+
+@app.get("/api/v1/executions", tags=["execution"])
+def list_response_executions(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[dict[str, object]]:
+    return store.list_response_executions(limit)
+
+
+@app.get("/api/v1/control/emergency-stop", tags=["execution"])
+def get_emergency_stop() -> dict[str, object]:
+    return {
+        "active": store.get_emergency_stop(),
+        "enforcement_enabled": enforcement_enabled(),
+        "max_autonomy_level": max_autonomy_level(),
+    }
+
+
+@app.post("/api/v1/control/emergency-stop", tags=["execution"])
+def set_emergency_stop(request: EmergencyStopRequest) -> dict[str, object]:
+    if not request.active and not enforcement_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Releasing emergency stop requires enforcement enablement and authenticated administration",
+        )
+    store.set_emergency_stop(request.active)
+    return {"active": store.get_emergency_stop()}
+
+
+@app.post("/api/v1/incidents/{incident_id}/evaluate", tags=["policy"])
+def evaluate_incident_policy(
+    incident_id: str, request: PolicyEvaluationRequest
+) -> dict[str, object]:
+    try:
+        return evaluate_policy(
+            store, registry, incident_id, request.policy_id, gateway_connections,
+        )
+    except ExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/policy-decisions/{decision_id}/approve", tags=["policy"])
+def approve_policy_decision(decision_id: str) -> dict[str, object]:
+    try:
+        return approve_decision(store, registry, gateway_connections, decision_id)
+    except ExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/policy-decisions/{decision_id}/reject", tags=["policy"])
+def reject_policy_decision(
+    decision_id: str, request: PolicyDecisionRejectionRequest
+) -> dict[str, object]:
+    try:
+        return reject_decision(store, decision_id, request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
