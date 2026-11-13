@@ -302,6 +302,7 @@ $("service-form").addEventListener("submit",async event=>{
       await api("/api/v1/integrations/"+encodeURIComponent(id)+"/threat-intel-credentials",{
         method:"PUT",body:JSON.stringify({api_key:$("service-key").value})
       });
+      $("service-key").value="";
       result=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test",{method:"POST"});
       showNotice(payload.display_name+" connected. "+result.message);
     } else if(["pihole","adguard"].includes(kind)) {
