@@ -162,7 +162,8 @@ def test_privacy_source_health_reports_no_data_and_recent_ingestion() -> None:
         "client": "192.168.1.20",
     }])
     assert response.status_code == 202
-    source = client.get("/api/v1/privacy/sources").json()[0]
+    source = next(item for item in client.get("/api/v1/privacy/sources").json()
+                   if item["integration_id"] == "pihole-home")
     assert source["status"] == "healthy"
     assert source["queries_seen"] == 1
 
