@@ -50,6 +50,14 @@ class PostgresStore:
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS integration_poll_cursors (
+                    integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
+                    provider_kind TEXT NOT NULL,
+                    cursor JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS events_received_at_idx
                 ON events (received_at DESC)
                 """,
@@ -121,7 +129,7 @@ class PostgresStore:
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, integration_poll_cursors, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
 
     def insert_integration(
@@ -206,6 +214,30 @@ class PostgresStore:
                 {"kind": integration.kind, "history_preserved": True},
             )
         return True
+
+    def get_integration_poll_cursor(self, integration_id: str) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT cursor FROM integration_poll_cursors WHERE integration_id = %s",
+                (integration_id,),
+            )
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def set_integration_poll_cursor(
+        self, integration_id: str, provider_kind: str, value: dict[str, object]
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO integration_poll_cursors (integration_id, provider_kind, cursor)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (integration_id) DO UPDATE
+                SET provider_kind = EXCLUDED.provider_kind,
+                    cursor = EXCLUDED.cursor, updated_at = NOW()
+                """,
+                (integration_id, provider_kind, Jsonb(value)),
+            )
 
     def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:

@@ -414,7 +414,7 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
         calls.append(integration.integration_id)
         return [record]
 
-    monkeypatch.setattr(polling, "fetch_dns_records", fake_fetch)
+    monkeypatch.setattr(polling, "fetch_dns_records_page", lambda integration, cursor: ([record], {"watermark": 1, "complete": True}, True))
 
     class Metrics:
         def increment(self, name):
@@ -424,7 +424,7 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     assert calls == ["pihole-home"]
     assert outcomes == [{
         "integration_id": "pihole-home", "status": "ok",
-        "received": 1, "accepted": 1, "duplicates": 0,
+        "received": 1, "accepted": 1, "duplicates": 0, "pages": 1, "complete": True,
     }]
     events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert len(events) == 1
@@ -453,7 +453,7 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
             raise DnsProviderError("provider unavailable")
         return []
 
-    monkeypatch.setattr(polling, "fetch_dns_records", fake_fetch)
+    monkeypatch.setattr(polling, "fetch_dns_records_page", lambda integration, cursor: ([], {"watermark": 1, "complete": True}, True))
 
     class Metrics:
         def increment(self, name):
@@ -462,7 +462,7 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
     assert calls == ["adguard-home", "pihole-home"]
     assert outcomes == [
-        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0},
+        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0, "pages": 1, "complete": True},
         {"integration_id": "pihole-home", "status": "error"},
     ]
     audit = client.get("/api/v1/audit").json()

@@ -6,7 +6,7 @@ from threading import Lock
 from typing import Any
 
 from openshield.privacy.dns import normalize_dns_batch
-from openshield.privacy.providers import DnsProviderError, fetch_dns_records
+from openshield.privacy.providers import DnsProviderError, fetch_dns_records_page
 
 logger = logging.getLogger(__name__)
 DNS_PROVIDER_KINDS = {"pihole", "adguard"}
@@ -55,23 +55,32 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             continue
         _record_poll_attempt(integration.integration_id)
         try:
-            records = fetch_dns_records(integration)
-            events = normalize_dns_batch(integration.kind, integration.integration_id, records) if records else []
-            accepted = duplicates = 0
-            for event in events:
-                if store.insert_event(event):
-                    accepted += 1
-                    metrics.increment("openshield_events_ingested_total")
-                else:
-                    duplicates += 1
+            cursor = store.get_integration_poll_cursor(integration.integration_id)
+            accepted = duplicates = received = pages = 0
+            complete = False
+            while pages < 10 and not complete:
+                records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
+                events = normalize_dns_batch(integration.kind, integration.integration_id, records) if records else []
+                for event in events:
+                    if store.insert_event(event):
+                        accepted += 1
+                        metrics.increment("openshield_events_ingested_total")
+                    else:
+                        duplicates += 1
+                received += len(events)
+                store.set_integration_poll_cursor(integration.integration_id, integration.kind, next_cursor)
+                cursor = next_cursor
+                pages += 1
             _record_poll_success(integration.integration_id, accepted, duplicates)
             store.write_audit(
                 "privacy.provider_poll.completed", None, integration.integration_id,
-                {"provider": integration.kind, "received": len(events),
-                 "accepted": accepted, "duplicates": duplicates},
+                {"provider": integration.kind, "received": received,
+                 "accepted": accepted, "duplicates": duplicates, "pages": pages,
+                 "complete": complete},
             )
             outcomes.append({"integration_id": integration.integration_id, "status": "ok",
-                             "received": len(events), "accepted": accepted, "duplicates": duplicates})
+                             "received": received, "accepted": accepted, "duplicates": duplicates,
+                             "pages": pages, "complete": complete})
         except (DnsProviderError, ValueError, TypeError, OverflowError):
             logger.exception("DNS provider polling failed for integration %s", integration.integration_id)
             _record_poll_failure(integration.integration_id)

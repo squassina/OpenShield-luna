@@ -1,6 +1,8 @@
 import base64
 import json
 import os
+import time
+from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -244,3 +246,122 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         }
 
     raise DnsProviderError("Unsupported DNS provider for list synchronization")
+
+
+def _normalize_pihole_records(records: list[object]) -> list[dict]:
+    normalized = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({
+            "domain": item.get("domain") or item.get("name"),
+            "client": item.get("client") or item.get("client_ip"),
+            "timestamp": item.get("timestamp") or item.get("time"),
+            "status": item.get("status") or item.get("reply") or item.get("type"),
+            "type": item.get("type") or item.get("query_type"),
+        })
+    return normalized
+
+
+def _normalize_adguard_records(records: list[object]) -> list[dict]:
+    normalized = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        question = item.get("question") if isinstance(item.get("question"), dict) else {}
+        normalized.append({
+            "domain": question.get("host") or item.get("domain"),
+            "client": item.get("client") or item.get("IP"),
+            "timestamp": item.get("time") or item.get("timestamp"),
+            "status": item.get("reason") or item.get("status"),
+            "type": question.get("type") or item.get("type"),
+        })
+    return normalized
+
+
+def _time_value(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def fetch_dns_records_page(
+    integration: Integration, cursor: dict[str, object] | None = None, page_size: int = 500
+) -> tuple[list[dict], dict[str, object], bool]:
+    """Fetch one bounded provider page and return its resumable cursor and completion flag."""
+    if not 1 <= page_size <= 1000:
+        raise ValueError("page_size must be between 1 and 1000")
+    base_url = _base_url(integration)
+
+    if integration.kind == "pihole":
+        state = dict(cursor or {})
+        if state.get("complete") or not state:
+            watermark = _time_value(state.get("watermark"))
+            window_from = max(0, (watermark - 1) if watermark is not None else time.time() - 86400)
+            state = {
+                "window_from": window_from, "window_until": time.time(),
+                "start": 0, "watermark": watermark,
+            }
+        params = {
+            "from": state["window_from"], "until": state["window_until"],
+            "length": page_size, "start": int(state.get("start", 0)),
+        }
+        result = _pihole_request(base_url, f"/api/queries?{urlencode(params)}")
+        records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
+        if not isinstance(records, list):
+            raise DnsProviderError("Pi-hole query-log response has no query list")
+        done = len(records) < page_size
+        if done:
+            next_state = {"watermark": state["window_until"], "complete": True}
+        else:
+            next_state = {**state, "start": int(state.get("start", 0)) + len(records)}
+        return _normalize_pihole_records(records), next_state, done
+
+    if integration.kind == "adguard":
+        state = dict(cursor or {})
+        if not state or state.get("complete"):
+            watermark = _time_value(state.get("watermark"))
+            state = {
+                "watermark": watermark if watermark is not None else time.time() - 86400,
+                "older_than": None, "pages": 0, "newest": None,
+            }
+        params = {"limit": page_size}
+        if state.get("older_than"):
+            params["older_than"] = state["older_than"]
+        headers = {"Accept": "application/json"}
+        username = os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
+        password = os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
+        if bool(username) != bool(password):
+            raise DnsProviderError("AdGuard username and password must be configured together")
+        if username:
+            token = base64.b64encode(f"{username}:{password}".encode()).decode()
+            headers["Authorization"] = f"Basic {token}"
+        result = _request(f"{base_url}/control/querylog?{urlencode(params)}", headers=headers)
+        records = result.get("data", []) if isinstance(result, dict) else []
+        if not isinstance(records, list):
+            raise DnsProviderError("AdGuard query-log response has no data list")
+        oldest = result.get("oldest") if isinstance(result, dict) else None
+        if not oldest and records:
+            oldest = records[-1].get("time") if isinstance(records[-1], dict) else None
+        newest = state.get("newest")
+        if not newest and records and isinstance(records[0], dict):
+            newest = records[0].get("time")
+        oldest_epoch = _time_value(oldest)
+        done = not oldest or oldest_epoch is None or oldest_epoch <= float(state["watermark"])
+        if done:
+            newest_epoch = _time_value(newest)
+            watermark = max(float(state["watermark"]), newest_epoch or 0)
+            next_state = {"watermark": watermark, "complete": True}
+        else:
+            next_state = {
+                **state, "older_than": oldest, "pages": int(state.get("pages", 0)) + 1,
+                "newest": newest,
+            }
+        return _normalize_adguard_records(records), next_state, done
+
+    raise DnsProviderError("Unsupported DNS provider")
