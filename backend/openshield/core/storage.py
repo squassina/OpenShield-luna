@@ -379,9 +379,15 @@ CREATE TABLE IF NOT EXISTS events (
                 mac = device.get("mac_address")
                 if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
                     continue
-                try:
-                    ipaddress.IPv4Address(device.get("ip_address", ""))
-                except ipaddress.AddressValueError:
+                addresses = [
+                    device.get("ip_address"),
+                    *(device.get("ipv4_addresses") or []),
+                    *(device.get("ipv6_addresses") or []),
+                ]
+                if not any(
+                    isinstance(address, str) and _is_valid_ip_address(address)
+                    for address in addresses
+                ):
                     continue
                 normalized_mac = mac.lower()
                 cursor.execute(
