@@ -1,9 +1,10 @@
-import ipaddress
-import json
-import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+import ipaddress
+import json
+import re
 
 
 _MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
