@@ -17,9 +17,9 @@ form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline i
 footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.columns{grid-template-columns:1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr 1fr}.metric{font-size:23px}header{align-items:flex-start}}
 .topology-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
-.topology-gateway,.topology-interface{border:1px solid var(--border);border-radius:10px;padding:12px;min-width:0}
-.topology-interface{margin-top:10px;background:var(--surface)}
-.topology-device{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:9px 0;border-top:1px solid var(--border)}
+.topology-gateway,.topology-interface{border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.topology-interface{margin-top:10px;background:var(--panel2)}
+.topology-device{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:9px 0;border-top:1px solid var(--line)}
 .topology-device small{grid-column:1/-1;color:var(--muted);overflow-wrap:anywhere}
 .device-state{font-size:.78rem;font-weight:700}
 .device-state.online{color:#16834a}.device-state.offline{color:#b66b16}
@@ -369,13 +369,12 @@ function renderRouterTopology(data) {
     heading.textContent=(board.hostname||gateway.gateway_id)+" · "+gateway.gateway_id;
     panel.append(heading);
     const interfaces=Array.isArray(gateway.interfaces)?gateway.interfaces:[];
-    interfaces.forEach(iface=>{
+    const renderInterface=(iface,members)=>{
       const group=document.createElement("section");group.className="topology-interface";
       const title=document.createElement("h4");
-      title.textContent=(iface.name||"Interface")+" · "+(iface.device||iface.l3_device||"device unknown")+
+      title.textContent=(iface.name||"Unmapped")+" · "+(iface.device||iface.l3_device||"device unknown")+
         (iface.up===true?" · up":iface.up===false?" · down":"");
       group.append(title);
-      const members=devices.filter(item=>item.gateway_id===gateway.gateway_id&&item.interface===(iface.name||""));
       if(!members.length){const empty=document.createElement("p");empty.className="empty";empty.textContent="No neighbor entries";group.append(empty);}
       members.forEach(item=>{
         const card=document.createElement("div");card.className="topology-device";
@@ -389,7 +388,13 @@ function renderRouterTopology(data) {
         card.append(name,state,meta,detail);group.append(card);
       });
       panel.append(group);
-    });
+    };
+    const mapped=new Set(interfaces.map(item=>item.name));
+    interfaces.forEach(iface=>renderInterface(
+      iface,devices.filter(item=>item.gateway_id===gateway.gateway_id&&item.interface===(iface.name||""))
+    ));
+    const unmapped=devices.filter(item=>item.gateway_id===gateway.gateway_id&&!mapped.has(item.interface));
+    if(unmapped.length)renderInterface({name:"Unmapped"},unmapped);
     root.append(panel);
   });
 }
