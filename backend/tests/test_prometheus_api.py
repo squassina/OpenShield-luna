@@ -1,3 +1,4 @@
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api import main
@@ -12,8 +13,6 @@ def setup_function() -> None:
 
 
 def test_prometheus_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypatch):
-    from cryptography.fernet import Fernet
-
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     registered = client.post("/api/v1/integrations", json={
         "integration_id": "prometheus-home",
