@@ -17,7 +17,7 @@ Policies define a minimum incident risk score, provider/gateway, action, TTL (60
 - The global kill switch blocks new execution, cancels pending approvals/queued actions, and requests rollback for active actions. In-flight gateway results are reconciled; an action applied during the stop is immediately queued for rollback.
 - DNS blocks are written to the OpenShield-managed local list, synchronized to one selected provider, and verified by the provider adapter.
 - OpenWrt firewall blocks use only the custom `openshield-firewall.block_ip/unblock_ip` rpcd object. The connector cannot run arbitrary shell commands or modify general UCI firewall configuration.
-- Firewall blocks are applied to the dedicated `inet fw4` set and carry an nftables element timeout. The timeout remains effective if the Node or connector is unavailable.
+- Firewall blocks are applied to the dedicated `inet fw4` set and carry an nftables element timeout. The timeout remains effective if the Node or connector is unavailable. A firewall4 reload/restart recreates the table and clears dynamic set elements; this fails open, so verify and re-evaluate active actions after a firewall reload.
 - Gateway callbacks must report the expected IP and operation result; the Node validates this evidence before marking an action active or rolled back.
 - DNS synchronization failure triggers local compensation. If compensation/rollback fails, the action enters `rollback_pending` and retries with bounded exponential backoff.
 - Each action has a unique ownership marker. Rollback removes only the entry owned by that action; pre-existing/manual blocks are not removed.
@@ -38,6 +38,19 @@ ubus -v list openshield-firewall
 ```
 
 The rpcd account must be assigned the `openshield` read/write ACL. The ACL grants read-only board/interface discovery and write access only to `block_ip` and `unblock_ip`. Do not grant `file.exec`, unrestricted UCI access, or general shell execution.
+
+Generate a password hash with `uhttpd -m '<strong-password>'`, then add a dedicated login in `/etc/config/rpcd` using the returned hash:
+
+```uci
+config login
+        option username 'openshield'
+        option password '<crypt-hash-from-uhttpd>'
+        list read 'openshield'
+        list write 'openshield'
+```
+
+Reload rpcd after changing ACL/login configuration. Preserve the custom files across sysupgrade by adding their absolute paths to `/etc/sysupgrade.conf`:
+`/usr/libexec/rpcd/openshield-firewall`, `/etc/nftables.d/openshield.nft`, and `/usr/share/rpcd/acl.d/openshield.json`.
 
 Configure the gateway connector with the same `OPENSHIELD_GATEWAY_TOKEN` as the Node. The connector advertises `execute_action` and `verify_action` only when this token is configured. The Node refuses to create firewall policies unless it has encrypted router credentials and a connector advertising both capabilities.
 
