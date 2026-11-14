@@ -22,6 +22,7 @@ class GatewayConnectorClient:
         connector_version: str = "0.1.0",
         timeout: float = 10.0,
         capabilities: list[Capability] | None = None,
+        gateway_token: str | None = None,
     ) -> None:
         parsed = urlsplit(node_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -35,6 +36,7 @@ class GatewayConnectorClient:
         self._connector_version = connector_version
         self._timeout = timeout
         self._capabilities = capabilities or []
+        self._gateway_token = gateway_token or ""
 
     def connect(self) -> dict[str, object]:
         request = GatewayConnectRequest(
@@ -62,6 +64,7 @@ class GatewayConnectorClient:
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                **({"Authorization": f"Bearer {self._gateway_token}"} if self._gateway_token else {}),
             },
             method="POST",
         )

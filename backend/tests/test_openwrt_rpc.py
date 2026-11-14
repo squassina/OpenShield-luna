@@ -28,6 +28,7 @@ def test_openwrt_rpc_authenticates_and_discovers_read_only_data() -> None:
         result = client.discover()
 
     assert result["board"]["hostname"] == "router"
+    assert result["board"]["release"]["version"] == "24.10"
     assert result["interfaces"][0]["name"] == "lan"
     assert result["interfaces"][0]["ipv4_address"] == ["192.0.2.1"]
     assert mocked.call_count == 3

@@ -43,6 +43,19 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     </form>
     <div id="service-help" class="notice">DNS providers require a base URL. Provider passwords remain in server environment variables; they are never sent to or stored by the dashboard.</div>
     <div id="integrations" class="table-wrap"></div>
+    <h3>OpenWrt router</h3>
+    <p>Configure the router credentials here. Password is sent once to OpenShield, encrypted at rest, and never returned to the browser. The Gateway Connector must use the same gateway ID.</p>
+    <form id="openwrt-form" class="inline">
+      <input id="openwrt-id" value="home-gateway" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Gateway ID">
+      <input id="openwrt-url" type="url" placeholder="https://192.168.1.1" required aria-label="OpenWrt management URL">
+      <input id="openwrt-username" placeholder="RPC username" required autocomplete="username" aria-label="RPC username">
+      <input id="openwrt-password" type="password" placeholder="RPC password" required autocomplete="new-password" aria-label="RPC password">
+      <button class="primary" type="submit">Save router credentials</button>
+    </form>
+    <div class="notice">Use a dedicated rpcd account with read-only access to <code>session.login</code>, <code>system.board</code> and <code>network.interface.dump</code>. Do not use the router root account. Prefer HTTPS with a trusted certificate. The connector runs near the router and opens an outbound connection to this Node; OpenShield does not change firewall, routing, wireless or DNS settings.</div>
+    <div id="openwrt-status" class="notice" role="status" aria-live="polite">Checking router status…</div>
+    <div id="openwrt-details" class="table-wrap"></div>
+    <div id="openwrt-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -85,7 +98,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <button class="primary" type="submit">Add entry</button>
     </form>
     <div id="lists" class="table-wrap"></div>
-    <div class="notice">Provider synchronization writes the selected local lists to Pi-hole or AdGuard. It is an explicit configuration change. The Node API has no authentication; use only on a trusted LAN.</div>
+    <div class="notice">Provider synchronization writes the selected local lists to Pi-hole or AdGuard. It is an explicit configuration change. Admin Basic authentication is disabled by default; enable it for additional protection. Keep the Node API on a trusted LAN and never expose it directly to the Internet.</div>
     <div id="list-sync" class="toolbar"></div>
   </section>
 </main>
@@ -133,6 +146,7 @@ async function load() {
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations);
     renderIntegrations(integrations);
+    await loadOpenWrtStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -187,19 +201,64 @@ function renderIntegrations(items) {
   });
   t.append(body);root.append(t);
 }
+async function loadOpenWrtStatus(integrations) {
+  const root=$("openwrt-status"),details=$("openwrt-details"),actions=$("openwrt-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="openwrt"&&value.config?.rpc_configured);
+  if(!item) {
+    root.textContent="No OpenWrt router credentials configured.";
+    return;
+  }
+  $("openwrt-id").value=item.integration_id;
+  $("openwrt-url").value=item.config?.base_url||"";
+  try {
+    const status=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/test");
+    root.textContent=item.display_name+" · "+status.message;
+    if(status.last_rpc_check) root.textContent+=" Last RPC check: "+new Date(status.last_rpc_check).toLocaleString();
+    if(status.router?.board) {
+      const board=status.router.board;
+      const interfaces=Array.isArray(status.router.interfaces)?status.router.interfaces:[];
+      const rows=[
+        ["Hostname",board.hostname],["Model",board.model],["System",board.system],
+        ["Kernel",board.kernel],["Firmware",board.release?.version||board.release?.revision],
+        ["Interfaces",interfaces.map(x=>x.name+" ("+(x.up?"up":"down")+") "+(x.ipv4_address||[]).join(", ")).join("; ")||"No interface details"]
+      ];
+      const table=document.createElement("table"),body=document.createElement("tbody");
+      rows.forEach(([label,value])=>{const tr=document.createElement("tr"),th=document.createElement("th"),td=document.createElement("td");th.textContent=label;td.textContent=String(value||"—");tr.append(th,td);body.append(tr);});
+      table.append(body);details.append(table);
+    }
+    if(status.status==="router_rpc_failed"||status.status==="router_rpc_stale") root.classList.add("error");
+    else root.classList.remove("error");
+  } catch(error) {
+    root.textContent="Router status unavailable: "+error.message;
+    root.classList.add("error");
+  }
+  actions.append(actionButton("Check status","",async()=>{try{await loadOpenWrtStatus(await api("/api/v1/integrations"));}catch(error){showNotice("Router status check failed: "+error.message,true);}}));
+  actions.append(actionButton("Remove saved credentials","danger",async()=>{
+    if(!confirm("Remove encrypted OpenWrt credentials for "+item.integration_id+"? The connector will stop polling the router."))return;
+    try {
+      await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/openwrt-credentials",{method:"DELETE"});
+      $("openwrt-password").value="";
+      showNotice("OpenWrt credentials removed.");await load();
+    } catch(error) { showNotice("Could not remove credentials: "+error.message,true); }
+  }));
+}
 function renderSources(sources, integrations) {
   const root=$("sources"); root.replaceChildren();
   if(!sources.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS sources configured";root.append(p);return;}
   const byId=new Map(integrations.map(item=>[item.integration_id,item]));
   const t=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
-  ["Provider","Status","Queries","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
+  ["Provider","Status","Queries","Last success","Last error","Actions"].forEach(v=>{const th=document.createElement("th");th.textContent=v;head.append(th);});
   const thead=document.createElement("thead");thead.append(head);t.append(thead);
   sources.forEach(source=>{
     const tr=document.createElement("tr");
-    [source.display_name,source.status,fmt(source.queries_seen)].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
+    [source.display_name,source.status,fmt(source.queries_seen),source.last_success_at||"Never",source.last_error||"—"].forEach(value=>{const td=document.createElement("td");td.textContent=value;tr.append(td);});
     const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
     const item=byId.get(source.integration_id);
     if(item) {
+      const syncButton=actionButton("Sync now","",async()=>{try{const result=await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Sync complete: "+fmt(result.accepted)+" imported, "+fmt(result.duplicates)+" duplicates.");await load();}catch(error){showNotice("Sync failed: "+error.message,true);await load();}});
+      syncButton.disabled=item.enabled===false;wrap.append(syncButton);
+      wrap.append(actionButton("Reset cursor","danger",async()=>{if(!confirm("Reset the saved query-log cursor for "+item.display_name+"? Older records that have already expired at the provider cannot be recovered."))return;try{await api("/api/v1/privacy/sources/"+encodeURIComponent(item.integration_id)+"/cursor",{method:"DELETE"});showNotice("Query-log cursor reset for "+item.display_name+". Collection will resume from the provider's current retention window.");await load();}catch(error){showNotice("Cursor reset failed: "+error.message,true);}}));
       wrap.append(actionButton("Edit","",()=>editIntegration(item)));
       wrap.append(actionButton("Delete","danger",()=>deleteIntegration(item)));
     }
@@ -207,6 +266,33 @@ function renderSources(sources, integrations) {
   });
   t.append(body);root.append(t);
 }
+$("openwrt-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("openwrt-id").value.trim(),base_url=$("openwrt-url").value.trim();
+  const username=$("openwrt-username").value,password=$("openwrt-password").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    if(!integrations.some(item=>item.integration_id===id)) {
+      await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+        integration_id:id,kind:"openwrt",display_name:"OpenWrt router",config:{base_url}
+      })});
+    } else if(integrations.find(item=>item.integration_id===id).kind!=="openwrt") {
+      throw new Error("This ID is already used by a non-OpenWrt integration.");
+    }
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/openwrt-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,username,password})
+    });
+    $("openwrt-password").value="";
+    const check=await api("/api/v1/integrations/"+encodeURIComponent(id)+"/test");
+    $("openwrt-status").textContent=check.message;
+    showNotice("OpenWrt credentials saved securely.");await load();
+  } catch(error) {
+    $("openwrt-password").value="";
+    $("openwrt-status").textContent="Could not save router credentials: "+error.message;
+    showNotice("OpenWrt setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
 $("cancel-integration-edit").addEventListener("click",()=>$("integration-dialog").close());
 $("integration-edit-form").addEventListener("submit",async event=>{
   event.preventDefault();
@@ -274,6 +360,7 @@ function renderSyncButtons() {
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
 $("refresh").addEventListener("click",load);$("period").addEventListener("change",load);load();
+setInterval(()=>{if(!document.hidden)load();},60000);
 </script>
 </body>
 </html>

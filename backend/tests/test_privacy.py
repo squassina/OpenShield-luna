@@ -162,7 +162,8 @@ def test_privacy_source_health_reports_no_data_and_recent_ingestion() -> None:
         "client": "192.168.1.20",
     }])
     assert response.status_code == 202
-    source = client.get("/api/v1/privacy/sources").json()[0]
+    source = next(item for item in client.get("/api/v1/privacy/sources").json()
+                   if item["integration_id"] == "pihole-home")
     assert source["status"] == "healthy"
     assert source["queries_seen"] == 1
 
@@ -391,3 +392,506 @@ def test_sensor_integration_test_returns_push_endpoint() -> None:
     assert tested.status_code == 200
     assert tested.json()["mode"] == "push"
     assert tested.json()["ingestion_endpoint"] == "/api/v1/sensors/suricata-home/events"
+
+
+def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+
+    register_dns("pihole-home", "pihole")
+    register_dns("adguard-home", "adguard")
+    disabled = client.patch("/api/v1/integrations/adguard-home", json={"enabled": False})
+    assert disabled.status_code == 200
+    record = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "domain": "ads.doubleclick.net",
+        "client": "192.168.1.30",
+        "status": "blocked",
+    }
+    calls = []
+
+    def fake_fetch_page(integration, cursor):
+        calls.append(integration.integration_id)
+        return [record], {"watermark": 1, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def increment(self, name):
+            assert name == "openshield_events_ingested_total"
+
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert calls == ["pihole-home"]
+    assert outcomes == [{
+        "integration_id": "pihole-home", "status": "ok",
+        "received": 1, "accepted": 1, "duplicates": 0, "pages": 1, "complete": True,
+    }]
+    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    assert len(events) == 1
+    assert events[0]["payload"]["domain"] == "ads.doubleclick.net"
+    source = next(item for item in client.get("/api/v1/privacy/sources").json()
+                   if item["integration_id"] == "pihole-home")
+    assert source["status"] == "healthy"
+    assert source["last_success_at"]
+    assert source["last_imported"] == 1
+    assert any(item["action"] == "privacy.provider_poll.completed" for item in client.get("/api/v1/audit").json())
+
+
+
+def test_background_dns_polling_records_provider_failure_and_continues(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+    from openshield.privacy.providers import DnsProviderError
+
+    register_dns("pihole-home", "pihole")
+    register_dns("adguard-home", "adguard")
+    calls = []
+
+    def fake_fetch_page(integration, cursor):
+        calls.append(integration.integration_id)
+        if integration.integration_id == "pihole-home":
+            raise DnsProviderError("provider unavailable")
+        return [], {"watermark": 1, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def increment(self, name):
+            raise AssertionError("No events should be ingested")
+
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert calls == ["adguard-home", "pihole-home"]
+    assert outcomes == [
+        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0, "pages": 1, "complete": True},
+        {"integration_id": "pihole-home", "status": "error"},
+    ]
+    audit = client.get("/api/v1/audit").json()
+    assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
+    assert any(item["action"] == "privacy.provider_poll.completed" for item in audit)
+    sources = {item["integration_id"]: item for item in client.get("/api/v1/privacy/sources").json()}
+    assert sources["pihole-home"]["status"] == "failed"
+    assert sources["pihole-home"]["last_error"] == "Provider polling failed"
+
+
+
+def test_disabled_dns_provider_cannot_be_manually_polled() -> None:
+    register_dns()
+    assert client.patch("/api/v1/integrations/pihole-home", json={"enabled": False}).status_code == 200
+    assert client.post("/api/v1/privacy/sources/pihole-home/sync").status_code == 409
+    source = client.get("/api/v1/privacy/sources").json()[0]
+    assert source["status"] == "disabled"
+
+
+def test_provider_poll_cursor_persists_and_cascades_with_integration() -> None:
+    from openshield.api import main
+
+    register_dns()
+    state = {"watermark": 1234.5, "complete": True}
+    main.store.set_integration_poll_cursor("pihole-home", "pihole", state)
+    assert main.store.get_integration_poll_cursor("pihole-home") == state
+    assert client.delete("/api/v1/integrations/pihole-home").status_code == 204
+    assert main.store.get_integration_poll_cursor("pihole-home") is None
+
+
+def test_pihole_query_log_pagination_uses_fixed_window_and_offset(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    responses = [
+        {"queries": [{"domain": "one.example", "timestamp": 1500},
+                     {"domain": "two.example", "timestamp": 1499}]},
+        {"queries": [{"domain": "three.example", "timestamp": 1498}]},
+    ]
+    requests = []
+
+    def fake_request(base_url, path):
+        requests.append(path)
+        return responses.pop(0)
+
+    monkeypatch.setattr(providers, "_pihole_request", fake_request)
+    first, cursor, done = providers.fetch_dns_records_page(integration, page_size=2)
+    assert len(first) == 2 and not done
+    assert "start=0" in requests[0]
+    second, final_cursor, done = providers.fetch_dns_records_page(integration, cursor, page_size=2)
+    assert len(second) == 1 and done
+    assert "start=2" in requests[1]
+    assert final_cursor["complete"] is True
+    assert cursor["window_until"] == final_cursor["watermark"]
+
+
+def test_adguard_query_log_pagination_uses_older_than_watermark(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    responses = [
+        {"oldest": "2026-11-13T12:00:01Z", "data": [
+            {"question": {"host": "new.example"}, "time": "2026-11-13T12:00:02Z"},
+            {"question": {"host": "mid.example"}, "time": "2026-11-13T12:00:01Z"},
+        ]},
+        {"oldest": "2026-11-13T11:59:59Z", "data": [
+            {"question": {"host": "old.example"}, "time": "2026-11-13T11:59:59Z"},
+        ]},
+    ]
+    requests = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    def fake_urlopen(request, timeout):
+        requests.append(request.full_url)
+        return FakeResponse(responses.pop(0))
+
+    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    first, cursor, done = providers.fetch_dns_records_page(
+        integration, {"watermark": datetime.fromisoformat("2026-11-13T12:00:00+00:00").timestamp()},
+        page_size=2,
+    )
+    assert len(first) == 2 and not done
+    second, final_cursor, done = providers.fetch_dns_records_page(integration, cursor, page_size=2)
+    assert "older_than=2026-11-13T12%3A00%3A01Z" in requests[1]
+    assert len(second) == 1 and done
+    assert final_cursor["complete"] is True
+
+
+def test_adguard_expired_pagination_cursor_is_reported_without_advancing(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+    from openshield.privacy.providers import DnsProviderCursorExpired
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return json.dumps({"oldest": "", "data": []}).encode()
+
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse())
+    try:
+        providers.fetch_dns_records_page(
+            integration, {"watermark": 1, "older_than": "2026-11-13T00:00:00Z"},
+        )
+    except DnsProviderCursorExpired as exc:
+        assert "retention expired" in str(exc)
+    else:
+        raise AssertionError("Expired provider cursor must not silently advance")
+
+
+def test_dns_provider_cursor_can_be_reset_and_is_audited() -> None:
+    from openshield.api import main
+
+    register_dns("adguard-home", "adguard")
+    main.store.set_integration_poll_cursor(
+        "adguard-home", "adguard", {"watermark": 1, "complete": True},
+    )
+    response = client.delete("/api/v1/privacy/sources/adguard-home/cursor")
+    assert response.status_code == 200
+    assert response.json()["status"] == "reset"
+    assert main.store.get_integration_poll_cursor("adguard-home") is None
+    assert any(
+        item["action"] == "privacy.provider_poll.cursor_reset"
+        for item in client.get("/api/v1/audit").json()
+    )
+
+
+def test_classification_metadata_uses_pinned_adguard_feed() -> None:
+    from openshield.privacy.dns import CNAME_TRACKER_METADATA, classify_domain_metadata
+
+    direct = classify_domain_metadata("api.clickaine.com")
+    assert direct["category"] == "unclassified"
+    result = classify_domain_metadata("news.example.com", cname_targets=["api.clickaine.com"])
+    assert result["category"] == "tracker"
+    assert result["source"] == "adguard_cname_trackers"
+    assert result["version"] == CNAME_TRACKER_METADATA["source_commit"]
+    assert result["confidence"] == 0.98
+    assert result["matched_cname_target"] == "api.clickaine.com"
+
+
+def test_allow_override_precedes_tracker_classification_without_changing_dns_evidence() -> None:
+    overrides = {
+        "google-analytics.com": {
+            "action": "allow", "reason": "Approved analytics", "updated_at": "2026-11-13T10:00:00+00:00",
+        },
+    }
+    events = normalize_dns_batch("pihole", "pihole-home", [{
+        "domain": "metrics.google-analytics.com", "client": "192.168.1.30",
+        "timestamp": datetime.now(UTC).isoformat(), "status": "blocked",
+    }], classification_overrides=overrides)
+    payload = events[0].payload
+    assert payload["category"] == "allowed_override"
+    assert payload["classification"]["source"] == "user_override"
+    assert payload["classification"]["confidence"] == 1.0
+    assert payload["domain"] == "metrics.google-analytics.com"
+    assert payload["status"] == "blocked"
+
+
+def test_classification_override_api_persists_and_audits() -> None:
+    response = client.put(
+        "/api/v1/privacy/classifications/overrides/example.com",
+        json={"action": "allow", "reason": "Approved by household"},
+    )
+    assert response.status_code == 200
+    assert response.json()["action"] == "allow"
+    listed = client.get("/api/v1/privacy/classifications/overrides").json()
+    assert listed["example.com"]["reason"] == "Approved by household"
+    assert client.delete("/api/v1/privacy/classifications/overrides/example.com").status_code == 204
+    assert any(
+        item["action"] == "privacy.classification_override.updated"
+        for item in client.get("/api/v1/audit").json()
+    )
+
+
+def test_adguard_normalizer_preserves_observed_cname_targets(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    normalized = providers._normalize_adguard_records([{
+        "question": {"host": "news.example.com", "type": "A"},
+        "time": "2026-11-13T10:00:00Z",
+        "answer": [
+            {"type": "CNAME", "value": "api.clickaine.com"},
+            {"type": "A", "value": "192.0.2.10"},
+        ],
+    }])
+    assert normalized[0]["cname_targets"] == ["api.clickaine.com"]
+    events = normalize_dns_batch("adguard", "adguard-home", normalized)
+    assert events[0].payload["classification"]["source"] == "adguard_cname_trackers"
+
+
+def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    responses = [
+        {"oldest": "2026-11-13T11:59:00Z", "data": [
+            {"question": {"host": "recent.example"}, "time": "2026-11-13T12:00:00Z"},
+        ]},
+        {"oldest": "", "data": []},
+    ]
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse(responses.pop(0)))
+    _, cursor, done = providers.fetch_dns_records_page(integration)
+    assert not done
+    _, final_cursor, done = providers.fetch_dns_records_page(integration, cursor)
+    assert done
+    assert final_cursor["complete"] is True
+
+
+def test_dns_polling_lifespan_starts_and_stops_worker(monkeypatch) -> None:
+    import asyncio
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "60")
+    stopped = asyncio.Event()
+
+    async def fake_worker(registry, store, metrics, interval):
+        assert interval == 60
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(main, "run_dns_polling_loop", fake_worker)
+
+    async def exercise_lifespan():
+        async with main._dns_polling_lifespan(main.app):
+            await asyncio.sleep(0)
+
+    asyncio.run(exercise_lifespan())
+    assert stopped.is_set()
+
+
+def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+    from openshield.privacy.providers import DnsProviderError
+
+    register_dns()
+    attempts = []
+
+    def fake_fetch_page(integration, cursor):
+        attempts.append(integration.integration_id)
+        if len(attempts) == 1:
+            raise DnsProviderError("temporary provider outage")
+        return [], {"watermark": 1, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def increment(self, name):
+            raise AssertionError("No records should be ingested")
+
+    first = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    second = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    assert first[0]["status"] == "error"
+    assert second[0]["status"] == "ok"
+    assert attempts == ["pihole-home", "pihole-home"]
+
+
+def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+
+    register_dns()
+    records = [
+        {"domain": f"query-{index}.example.net", "client": "192.168.1.30",
+         "timestamp": f"2026-11-13T12:00:0{index}+00:00", "status": "allowed"}
+        for index in range(3)
+    ]
+
+    def fake_fetch_page(integration, cursor):
+        if not cursor:
+            return records[:2], {"page": 1}, False
+        if cursor.get("page") == 1:
+            return records[2:], {"complete": True}, True
+        return records[2:], {"complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def __init__(self):
+            self.count = 0
+
+        def increment(self, name):
+            self.count += 1
+
+    metrics = Metrics()
+    first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    second = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert first[0]["accepted"] == 3
+    assert first[0]["pages"] == 2 and first[0]["complete"] is True
+    assert second[0]["accepted"] == 0
+    assert second[0]["duplicates"] == 1
+    assert metrics.count == 3
+    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    assert {event["payload"]["domain"] for event in events} == {
+        "query-0.example.net", "query-1.example.net", "query-2.example.net",
+    }
+
+
+def test_pihole_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    requests = []
+
+    def fake_request(base_url, path):
+        requests.append(path)
+        return {"queries": []}
+
+    monkeypatch.setattr(providers.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(providers, "_pihole_request", fake_request)
+    _, cursor, done = providers.fetch_dns_records_page(integration, {"watermark": 5000})
+    assert done
+    assert "from=999" in requests[0]
+    assert "until=1000" in requests[0]
+    assert cursor["watermark"] == 1000.0
+
+
+def test_adguard_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return json.dumps({
+                "oldest": "1970-01-01T00:16:39Z",
+                "data": [{"question": {"host": "recent.example"}, "time": "1970-01-01T00:16:40Z"}],
+            }).encode()
+
+    monkeypatch.setattr(providers.time, "time", lambda: 1000.0)
+    monkeypatch.setattr(providers, "urlopen", lambda request, timeout: FakeResponse())
+    _, cursor, done = providers.fetch_dns_records_page(integration, {"complete": True, "watermark": 5000})
+    assert done
+    assert cursor["watermark"] == 1000.0
+
+
+def test_dns_provider_auth_failures_are_sanitized(monkeypatch) -> None:
+    from urllib.error import HTTPError
+
+    from openshield.privacy import providers
+    from openshield.privacy.providers import DnsProviderError
+
+    integration_pihole = Integration(
+        integration_id="pihole-home", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={"base_url": "http://192.0.2.53"},
+    )
+    integration_adguard = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    monkeypatch.setenv("OPENSHIELD_PIHOLE_PASSWORD", "pihole-private-password")
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_ADGUARD_PASSWORD", "adguard-private-password")
+
+    def unauthorized(request, timeout):
+        raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    monkeypatch.setattr(providers, "urlopen", unauthorized)
+    for integration in (integration_pihole, integration_adguard):
+        try:
+            providers.fetch_dns_records(integration)
+        except DnsProviderError as exc:
+            assert "private-password" not in str(exc)
+            assert "Unauthorized" not in str(exc)
+        else:
+            raise AssertionError("Provider authentication failure must be reported")

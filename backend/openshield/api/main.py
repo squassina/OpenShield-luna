@@ -1,36 +1,176 @@
+import asyncio
 import base64
 import ipaddress
 import os
+import secrets
+import threading
+import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, PlainTextResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field, SecretStr
 
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
+from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
+from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
+from openshield.privacy.polling import (
+    _record_poll_attempt,
+    _record_poll_failure,
+    _record_poll_success,
+    get_poll_status,
+    reset_poll_status,
+    run_dns_polling_loop,
+)
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
 configure_logging()
 
+@asynccontextmanager
+async def _dns_polling_lifespan(app: FastAPI):
+    interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "60")
+    try:
+        interval = int(interval_raw)
+    except ValueError as exc:
+        raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be an integer") from exc
+    if interval < 0 or interval > 86400:
+        raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
+    task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
 app = FastAPI(
     title="OpenShield Node API",
     version="0.1.0",
     description="Gateway-first network security and privacy intelligence node.",
+    lifespan=_dns_polling_lifespan,
 )
+
+
+_AUTH_FAILURES: dict[str, tuple[float, int]] = {}
+_AUTH_FAILURES_LOCK = threading.Lock()
+
+
+def _gateway_token_valid(request: Request) -> bool:
+    expected = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
+    supplied = request.headers.get("authorization", "")
+    return bool(expected and supplied.startswith("Bearer ") and secrets.compare_digest(
+        supplied[7:], expected
+    ))
+
+
+def _api_auth_enabled() -> bool:
+    return os.getenv("OPENSHIELD_API_AUTH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+
+
+def _check_admin_auth(request: Request) -> Response | None:
+    if not _api_auth_enabled():
+        return None
+    username = os.getenv("OPENSHIELD_API_USERNAME", "")
+    password = os.getenv("OPENSHIELD_API_PASSWORD", "")
+    if not username or not password:
+        return JSONResponse(
+            {"detail": "API authentication is enabled but credentials are not configured"},
+            status_code=503,
+        )
+    remote = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with _AUTH_FAILURES_LOCK:
+        window, failures = _AUTH_FAILURES.get(remote, (now, 0))
+        if now - window >= 60:
+            window, failures = now, 0
+        if failures >= 5:
+            return JSONResponse({"detail": "Too many authentication attempts"}, status_code=429)
+    header = request.headers.get("authorization", "")
+    valid = False
+    if header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+            supplied_user, supplied_password = decoded.split(":", 1)
+            valid = secrets.compare_digest(supplied_user, username) and secrets.compare_digest(
+                supplied_password, password
+            )
+        except (ValueError, UnicodeDecodeError):
+            valid = False
+    if not valid:
+        with _AUTH_FAILURES_LOCK:
+            window, failures = _AUTH_FAILURES.get(remote, (now, 0))
+            if now - window >= 60:
+                window, failures = now, 0
+            _AUTH_FAILURES[remote] = (window, failures + 1)
+        return JSONResponse(
+            {"detail": "Authentication required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="OpenShield", charset="UTF-8"'},
+        )
+    with _AUTH_FAILURES_LOCK:
+        _AUTH_FAILURES.pop(remote, None)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+            return JSONResponse({"detail": "Cross-site state change rejected"}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin:
+            try:
+                parsed = urlsplit(origin)
+            except ValueError:
+                parsed = None
+            if (
+                parsed is None or parsed.netloc != request.headers.get("host")
+                or parsed.scheme not in {"http", "https"}
+            ):
+                return JSONResponse({"detail": "Cross-origin state change rejected"}, status_code=403)
+    return None
+
+
+@app.middleware("http")
+async def authenticate_requests(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/health/") or path == "/metrics":
+        return await call_next(request)
+    is_gateway = path.startswith("/api/v1/gateway/") or path == "/api/v1/events"
+    if is_gateway:
+        expected = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
+        if expected and not _gateway_token_valid(request):
+            return JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
+        if _api_auth_enabled() and not expected:
+            return JSONResponse({"detail": "OPENSHIELD_GATEWAY_TOKEN is required when API authentication is enabled"}, status_code=503)
+        response = await call_next(request)
+    else:
+        denied = _check_admin_auth(request)
+        if denied is not None:
+            return denied
+        response = await call_next(request)
+    if (
+        path.startswith("/api/v1/gateway/")
+        or path.endswith("/openwrt-credentials")
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.middleware("http")
@@ -77,6 +217,17 @@ class PrivacyListEntry(BaseModel):
     list_type: str = Field(pattern=r"^(allow|block)$")
     domain: str = Field(min_length=3, max_length=253)
     comment: str = Field(default="", max_length=500)
+
+
+class ClassificationOverrideRequest(BaseModel):
+    action: Literal["allow", "tracker"]
+    reason: str = Field(default="", max_length=500)
+
+
+class OpenWrtCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    username: str = Field(min_length=1, max_length=128)
+    password: SecretStr = Field(min_length=1, max_length=512)
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -179,8 +330,139 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         }
     raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
 
+@app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
+def save_openwrt_credentials(
+    integration_id: str, credentials: OpenWrtCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    if not os.getenv("OPENSHIELD_GATEWAY_TOKEN"):
+        raise HTTPException(
+            status_code=503,
+            detail="Configure OPENSHIELD_GATEWAY_TOKEN on Node and connector before storing router credentials",
+        )
+    try:
+        parsed = urlsplit(credentials.base_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            raise ValueError("OpenWrt URL must be an absolute HTTP(S) URL without credentials")
+        OpenWrtRPCClient(credentials.base_url, credentials.username, credentials.password)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url,
+            "username": credentials.username,
+            "password": credentials.password.get_secret_value(),
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(
+        integration_id,
+        IntegrationUpdate(config={
+            **integration.config,
+            "base_url": credentials.base_url.rstrip("/"),
+            "rpc_configured": True,
+        }),
+    )
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "credentials_configured": True,
+        "secret_storage": "encrypted",
+        "message": "Credentials are encrypted at rest and delivered only to the authenticated gateway connector.",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
+def delete_openwrt_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    store.delete_integration_secret(integration_id)
+    registry.update(
+        integration_id,
+        IntegrationUpdate(config={
+            **integration.config,
+            "rpc_configured": False,
+        }),
+    )
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
+def test_openwrt_connector(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="OpenWrt integration not found")
+    if not integration.config.get("rpc_configured"):
+        raise HTTPException(status_code=409, detail="OpenWrt credentials are not configured")
+    gateway = gateway_connections.get_status(integration_id)
+    if gateway is None or gateway.get("status") != "connected":
+        return {
+            "status": "connector_disconnected",
+            "message": "Gateway Connector is not connected. Check its deployment and OPENSHIELD_GATEWAY_TOKEN.",
+        }
+    health_events = store.list_events(integration_id, "gateway.health", limit=1)
+    discovery_events = store.list_events(integration_id, "gateway.discovery", limit=1)
+    discovery = discovery_events[0] if discovery_events else None
+    router = discovery.payload if discovery else None
+    last_discovery = discovery.observed_at.isoformat() if discovery else None
+    if health_events:
+        health = health_events[0]
+        age_seconds = max(0, int((datetime.now(UTC) - health.observed_at).total_seconds()))
+        diagnostics = {
+            "last_rpc_check": health.observed_at.isoformat(),
+            "last_rpc_check_age_seconds": age_seconds,
+            "last_discovery_at": last_discovery,
+            "router": router,
+            "gateway": gateway,
+        }
+        if health.payload.get("status") == "reachable":
+            if age_seconds > 90:
+                return {
+                    "status": "router_rpc_stale",
+                    "message": "The last successful OpenWrt RPC check is older than 90 seconds. Check connector heartbeat and router reachability.",
+                    **diagnostics,
+                }
+            return {
+                "status": "router_rpc_connected",
+                "message": "Gateway Connector and OpenWrt RPC are responding.",
+                **diagnostics,
+            }
+        if health.payload.get("status") == "unavailable":
+            return {
+                "status": "router_rpc_failed",
+                "message": "Gateway Connector is online but OpenWrt RPC failed. Check router URL, RPC credentials, read-only rpcd ACL permissions and TLS trust.",
+                **diagnostics,
+            }
+    return {
+        "status": "connector_connected",
+        "message": "Gateway Connector is online. Waiting for its first OpenWrt RPC health check.",
+        "last_discovery_at": last_discovery,
+        "router": router,
+        "gateway": gateway,
+    }
+
+
+@app.get("/api/v1/gateway/config/{gateway_id}", tags=["gateway"])
+def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object]:
+    if not _gateway_token_valid(request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
+    integration = registry.get(gateway_id)
+    if integration is None or integration.kind != "openwrt":
+        raise HTTPException(status_code=404, detail="Gateway integration not found")
+    try:
+        credentials = SecretStore(store).get(gateway_id)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"gateway_id": gateway_id, "openwrt_config": credentials}
+
+
 @app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
-def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
+def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> dict[str, object]:
     # Residential mode: first connection provisions the local gateway integration.
     integration = registry.get(request.gateway_id)
     if integration is None:
@@ -197,27 +479,43 @@ def connect_gateway(request: GatewayConnectRequest) -> dict[str, object]:
     elif integration.kind != request.gateway_type:
         raise HTTPException(status_code=409, detail="Gateway integration kind mismatch")
 
+    encrypted_secret = store.get_integration_secret(request.gateway_id)
+    if encrypted_secret and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
+    try:
+        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "connected",
         "gateway_id": connection.gateway_id,
         "protocol_version": connection.protocol_version,
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),
+        "openwrt_config": openwrt_config,
     }
 
 
 @app.post("/api/v1/gateway/heartbeat", tags=["gateway"])
-def gateway_heartbeat(request: GatewayHeartbeatRequest) -> dict[str, object]:
+def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -> dict[str, object]:
     connection = gateway_connections.heartbeat(request.gateway_id)
     if connection is None:
         raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
+    encrypted_secret = store.get_integration_secret(connection.gateway_id)
+    if encrypted_secret and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     metrics.increment("openshield_gateway_heartbeats_total")
+    try:
+        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "acknowledged",
         "gateway_id": connection.gateway_id,
         "last_seen_at": connection.last_seen_at.isoformat(),
+        "openwrt_config": openwrt_config,
     }
 
 
@@ -235,7 +533,13 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
 
 
 @app.post("/api/v1/events", status_code=202, tags=["events"])
-def ingest_event(event: EventEnvelope) -> dict[str, str]:
+def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
+    if (
+        event.source.kind == "openwrt"
+        and store.get_integration_secret(event.source.integration_id)
+        and not _gateway_token_valid(request)
+    ):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
     integration = registry.get(event.source.integration_id)
     if integration is None:
         raise HTTPException(status_code=400, detail="Unknown source integration")
@@ -426,7 +730,10 @@ def ingest_dns_queries(
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
     try:
-        events = normalize_dns_batch(integration.kind, integration_id, records)
+        events = normalize_dns_batch(
+            integration.kind, integration_id, records,
+            store.list_privacy_classification_overrides(),
+        )
     except (ValueError, TypeError, OverflowError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     accepted = duplicates = 0
@@ -444,10 +751,17 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    if not integration.enabled:
+        raise HTTPException(status_code=409, detail="DNS privacy integration is disabled")
+    _record_poll_attempt(integration_id)
     try:
         records = fetch_dns_records(integration)
-        events = normalize_dns_batch(integration.kind, integration_id, records) if records else []
+        events = normalize_dns_batch(
+            integration.kind, integration_id, records,
+            store.list_privacy_classification_overrides(),
+        ) if records else []
     except (DnsProviderError, ValueError, TypeError, OverflowError) as exc:
+        _record_poll_failure(integration_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     accepted = duplicates = 0
     for event in events:
@@ -456,7 +770,27 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
             metrics.increment("openshield_events_ingested_total")
         else:
             duplicates += 1
+    _record_poll_success(integration_id, accepted, duplicates)
+    store.write_audit(
+        "privacy.provider_poll.completed", None, integration_id,
+        {"provider": integration.kind, "received": len(events),
+         "accepted": accepted, "duplicates": duplicates, "trigger": "manual"},
+    )
     return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
+
+
+@app.delete("/api/v1/privacy/sources/{integration_id}/cursor", tags=["privacy"])
+def reset_privacy_source_cursor(integration_id: str) -> dict[str, str]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    store.delete_integration_poll_cursor(integration_id)
+    reset_poll_status(integration_id)
+    store.write_audit(
+        "privacy.provider_poll.cursor_reset", None, integration_id,
+        {"provider": integration.kind, "reason": "administrator_requested"},
+    )
+    return {"status": "reset", "integration_id": integration_id}
 
 
 @app.get("/api/v1/privacy/sources", tags=["privacy"])
@@ -469,14 +803,30 @@ def list_privacy_sources() -> list[dict[str, object]]:
             continue
         source = stats.get(integration.integration_id, {})
         latest = source.get("last_observed_at")
-        age = now - latest if latest else None
+        poll = get_poll_status(integration.integration_id)
+        last_success = poll.get("last_success_at")
+        last_success_at = datetime.fromisoformat(last_success) if isinstance(last_success, str) else None
+        success_age = now - last_success_at if last_success_at else None
+        observed_age = now - latest if latest else None
+        source_status = (
+            "disabled" if not integration.enabled
+            else "failed" if poll.get("status") == "failed"
+            else "healthy" if (success_age is not None and success_age <= timedelta(minutes=5))
+                or (success_age is None and observed_age is not None and observed_age <= timedelta(minutes=5))
+            else "stale" if last_success_at or latest
+            else "no_data"
+        )
         result.append({
             "integration_id": integration.integration_id,
             "kind": integration.kind,
             "display_name": integration.display_name,
-            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
-                else "stale" if age is not None else "no_data",
+            "status": source_status,
             "last_query_at": latest.isoformat() if latest else None,
+            "last_attempt_at": poll.get("last_attempt_at"),
+            "last_success_at": last_success,
+            "last_imported": poll.get("last_imported", 0),
+            "last_duplicates": poll.get("last_duplicates", 0),
+            "last_error": poll.get("last_error"),
             "queries_seen": source.get("queries_seen", 0),
             "freshness_basis": "node_observed_at",
         })
@@ -532,6 +882,34 @@ def privacy_report(
 @app.get("/api/v1/privacy/lists", tags=["privacy"])
 def list_privacy_lists(integration_id: str | None = None) -> list[dict[str, object]]:
     return store.list_privacy_lists(integration_id)
+
+
+@app.get("/api/v1/privacy/classifications/overrides", tags=["privacy"])
+def list_classification_overrides() -> dict[str, dict[str, object]]:
+    return store.list_privacy_classification_overrides()
+
+
+@app.put("/api/v1/privacy/classifications/overrides/{domain}", tags=["privacy"])
+def set_classification_override(
+    domain: str, request: ClassificationOverrideRequest
+) -> dict[str, object]:
+    try:
+        normalized = normalize_domain(domain)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    store.upsert_privacy_classification_override(normalized, request.action, request.reason)
+    return store.list_privacy_classification_overrides()[normalized]
+
+
+@app.delete("/api/v1/privacy/classifications/overrides/{domain}", tags=["privacy"])
+def delete_classification_override(domain: str) -> Response:
+    try:
+        normalized = normalize_domain(domain)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not store.delete_privacy_classification_override(normalized):
+        raise HTTPException(status_code=404, detail="Classification override not found")
+    return Response(status_code=204)
 
 
 @app.post("/api/v1/privacy/lists", status_code=201, tags=["privacy"])

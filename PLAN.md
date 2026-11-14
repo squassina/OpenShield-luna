@@ -204,7 +204,7 @@ Use a queue or broker only when justified by measured reliability, throughput, o
 - Minimal local state and safe behavior when disconnected.
 
 **OpenShield Node**
-- Residential API without user accounts or API credentials; business authentication and authorization are deferred.
+- Residential API without user accounts by default; optional single-admin Basic authentication protects administrative routes. Gateway connector authentication is separately scoped with a bearer token when managed router credentials are used. Business identity, roles, and tenant authorization remain deferred.
 - Integration Registry and Adapter SDK.
 - Discovery and configuration service.
 - Event ingestion and normalization.
@@ -351,7 +351,7 @@ Scope:
 - Privacy reports and daily trends.
 - Provider ingestion freshness/health.
 
-**Implementation status:** dashboard, DNS provider polling/ingestion, analytics, and explicit verified list synchronization are implemented. The service console supports registering, editing, and removing DNS providers and push-based Suricata/Zeek sources; edits preserve integration identity and kind, and removals preserve historical telemetry with audit records. Enable/disable lifecycle, secure UI-managed secret storage, guided gateway configuration, and service health/diagnostics remain in progress. Polling is limited to 500 latest records per invocation; durable cursors/watermarks remain tracked technical debt. Classification is heuristic, not a threat-intelligence verdict. P5 owns policy enforcement.
+**Implementation status:** P2 software scope is implemented and CI-validated. The console supports service registration, editing, enable/disable, removal, guided OpenWrt credential setup, encrypted secret storage/rotation, connection diagnostics, and audited lifecycle operations. Pi-hole v6/AdGuard polling uses durable cursors, bounded pagination, overlap/idempotency, expiry handling and manual reset. The dashboard refreshes automatically without a full page reload. DNS classification includes a pinned, license-noticed AdGuard CNAME tracker feed, provenance/confidence, user overrides, and reviewed weekly feed-update PRs; it remains privacy intelligence, not a threat verdict. Optional admin Basic auth and separate Gateway Connector bearer auth are implemented. Physical OpenWrt/forwarding validation (#17), live Suricata/Zeek deployment validation (#18), and operational load/backup validation (#19) remain separate acceptance work. P5 owns policy enforcement.
 
 ### P3 — Threat Intelligence & Risk Engine
 

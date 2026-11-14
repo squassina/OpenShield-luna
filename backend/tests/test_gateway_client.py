@@ -348,3 +348,21 @@ def test_gateway_outbox_persists_across_connector_recreation(tmp_path: Path) -> 
     GatewayEventSpool(str(path)).enqueue(event)
     restarted = GatewayEventSpool(str(path))
     assert restarted.pending() == [event]
+
+
+def test_connector_client_sends_gateway_bearer_token_and_receives_router_config() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "status": "connected", "gateway_id": "home-gateway",
+        "openwrt_config": {
+            "base_url": "https://192.0.2.1", "username": "rpc", "password": "secret",
+        },
+    }).encode()
+    client = GatewayConnectorClient(
+        "https://openshield.example", "home-gateway", gateway_token="connector-token",
+    )
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        result = client.connect()
+    request = mocked.call_args.args[0]
+    assert request.get_header("Authorization") == "Bearer connector-token"
+    assert result["openwrt_config"]["password"] == "secret"

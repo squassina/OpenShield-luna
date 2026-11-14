@@ -43,10 +43,25 @@ class PostgresStore:
                 )
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS events (
+                CREATE TABLE IF NOT EXISTS integration_secrets (
+                    integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
+                    encrypted_value BYTEA NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
+CREATE TABLE IF NOT EXISTS events (
                     event_id TEXT PRIMARY KEY,
                     payload JSONB NOT NULL,
                     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS integration_poll_cursors (
+                    integration_id TEXT PRIMARY KEY REFERENCES integrations(integration_id) ON DELETE CASCADE,
+                    provider_kind TEXT NOT NULL,
+                    cursor JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """,
                 """
@@ -73,6 +88,14 @@ class PostgresStore:
                     comment TEXT NOT NULL DEFAULT '',
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (integration_id, list_type, domain)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS privacy_classification_overrides (
+                    domain TEXT PRIMARY KEY,
+                    action TEXT NOT NULL CHECK (action IN ('allow', 'tracker')),
+                    reason TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """,
                 """
@@ -121,8 +144,46 @@ class PostgresStore:
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
+
+    def set_integration_secret(self, integration_id: str, encrypted_value: bytes) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO integration_secrets (integration_id, encrypted_value)
+                VALUES (%s, %s)
+                ON CONFLICT (integration_id) DO UPDATE
+                SET encrypted_value = EXCLUDED.encrypted_value, updated_at = NOW()
+                """,
+                (integration_id, encrypted_value),
+            )
+            self._insert_audit(
+                cursor, "integration.secret.updated", None, integration_id,
+                {"encrypted": True},
+            )
+
+    def get_integration_secret(self, integration_id: str) -> bytes | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT encrypted_value FROM integration_secrets WHERE integration_id = %s",
+                (integration_id,),
+            )
+            row = cursor.fetchone()
+        return bytes(row[0]) if row else None
+
+    def delete_integration_secret(self, integration_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM integration_secrets WHERE integration_id = %s RETURNING integration_id",
+                (integration_id,),
+            )
+            deleted = cursor.fetchone() is not None
+            if deleted:
+                self._insert_audit(
+                    cursor, "integration.secret.deleted", None, integration_id, {},
+                )
+            return deleted
 
     def insert_integration(
         self, integration: Integration, actor_id: str | None = None
@@ -206,6 +267,38 @@ class PostgresStore:
                 {"kind": integration.kind, "history_preserved": True},
             )
         return True
+
+    def get_integration_poll_cursor(self, integration_id: str) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT cursor FROM integration_poll_cursors WHERE integration_id = %s",
+                (integration_id,),
+            )
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def delete_integration_poll_cursor(self, integration_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM integration_poll_cursors WHERE integration_id = %s RETURNING integration_id",
+                (integration_id,),
+            )
+            return cursor.fetchone() is not None
+
+    def set_integration_poll_cursor(
+        self, integration_id: str, provider_kind: str, value: dict[str, object]
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO integration_poll_cursors (integration_id, provider_kind, cursor)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (integration_id) DO UPDATE
+                SET provider_kind = EXCLUDED.provider_kind,
+                    cursor = EXCLUDED.cursor, updated_at = NOW()
+                """,
+                (integration_id, provider_kind, Jsonb(value)),
+            )
 
     def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -473,6 +566,48 @@ class PostgresStore:
              "tracker_queries": r[3], "unique_domains": r[4]}
             for r in rows
         ]
+
+    def list_privacy_classification_overrides(self) -> dict[str, dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT domain, action, reason, updated_at FROM privacy_classification_overrides ORDER BY domain"
+            )
+            rows = cursor.fetchall()
+        return {
+            row[0]: {"action": row[1], "reason": row[2], "updated_at": row[3].isoformat()}
+            for row in rows
+        }
+
+    def upsert_privacy_classification_override(
+        self, domain: str, action: str, reason: str = ""
+    ) -> None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO privacy_classification_overrides (domain, action, reason)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (domain) DO UPDATE
+                SET action = EXCLUDED.action, reason = EXCLUDED.reason, updated_at = NOW()
+                RETURNING updated_at
+                """,
+                (domain, action, reason),
+            )
+            updated_at = cursor.fetchone()[0]
+            self._insert_audit(
+                cursor, "privacy.classification_override.updated", None, domain,
+                {"action": action, "reason": reason, "updated_at": updated_at.isoformat()},
+            )
+
+    def delete_privacy_classification_override(self, domain: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM privacy_classification_overrides WHERE domain = %s RETURNING domain",
+                (domain,),
+            )
+            deleted = cursor.fetchone() is not None
+            if deleted:
+                self._insert_audit(cursor, "privacy.classification_override.deleted", None, domain, {})
+            return deleted
 
     def upsert_privacy_list(
         self, integration_id: str, list_type: str, domain: str, comment: str = ""

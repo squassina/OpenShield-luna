@@ -15,13 +15,16 @@ Set these variables in the deployment .env:
 ```dotenv
 OPENSHIELD_NODE_URL=http://openshield-node:8000
 OPENSHIELD_GATEWAY_ID=home-gateway
-OPENSHIELD_OPENWRT_URL=https://<gateway-management-address>
-OPENSHIELD_OPENWRT_USERNAME=<read-only-rpc-user>
-OPENSHIELD_OPENWRT_PASSWORD=<rpc-password>
+OPENSHIELD_SECRET_KEY=<Fernet-key>
+OPENSHIELD_SECRET_KEY_PREVIOUS=<old-key-during-rotation>
+OPENSHIELD_GATEWAY_TOKEN=<random-connector-token>
+OPENSHIELD_API_AUTH_ENABLED=true
+OPENSHIELD_API_USERNAME=<admin-user>
+OPENSHIELD_API_PASSWORD=<strong-admin-password>
 OPENSHIELD_GATEWAY_SPOOL_PATH=/var/lib/openshield/gateway-spool.sqlite3
 ```
 
-OpenWrt URL, username, and password must be configured together. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, and `network.interface.dump`. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network.
+Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. To rotate keys without downtime, set the new key as `OPENSHIELD_SECRET_KEY` and the old key in `OPENSHIELD_SECRET_KEY_PREVIOUS`; secrets are re-encrypted with the new key on read. After all secrets have been read/re-saved, remove the previous key. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, and `network.interface.dump`. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
 
 ## 3. Start and verify
 
@@ -107,6 +110,9 @@ Do not use `docker compose down -v` during validation; it deletes persistent vol
 
 Test one at a time:
 - Wrong OpenWrt password: discovery/health must fail safely; no credential appears in logs or API output.
+- Wrong gateway token: connector handshake and event delivery must be rejected with HTTP 401.
+- Wrong admin password: dashboard/API requests must be rejected; repeated failures are rate limited.
+- Cross-origin state-changing browser request: must be rejected with HTTP 403.
 - Node stopped during event delivery: event remains in the SQLite outbox and is retried.
 - Spool full: new event is rejected and logged; older pending events are not deleted.
 - Unknown event integration ID or mismatched source kind: Node rejects the event.
@@ -129,3 +135,26 @@ Record:
 - Any unexpected firewall/routing changes (expected: none).
 
 P0 hardware acceptance requires these checks on the actual target gateway. CI passing alone is not hardware validation.
+
+
+## 9. Configure OpenWrt from the dashboard
+
+1. Open the **OpenWrt router** section.
+2. Keep gateway ID `home-gateway` unless `OPENSHIELD_GATEWAY_ID` is configured differently on the connector.
+3. Enter the management URL and a dedicated read-only rpcd account, then save.
+4. The password is encrypted using `OPENSHIELD_SECRET_KEY`; it is never included in integration JSON or returned to the browser.
+5. The connector retrieves the configuration using its separate `OPENSHIELD_GATEWAY_TOKEN` and applies it on the next connect/heartbeat.
+6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
+
+Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
+
+
+## 9. Dashboard router setup
+
+Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
+- Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.
+- Save credentials. The Node encrypts them using `OPENSHIELD_SECRET_KEY`; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
+- The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
+- Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
+
+The minimum ACL must permit session login, `system.board`, and `network.interface.dump` only. Confirm the exact rpcd ACL syntax against the installed OpenWrt release; do not copy broad write permissions from a generic example.
