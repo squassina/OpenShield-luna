@@ -7,11 +7,18 @@ from openshield.integrations.misp import MispClient, MispError
 
 
 def response(payload: bytes):
-    item = Mock()
-    item.__enter__ = Mock(return_value=item)
-    item.__exit__ = Mock(return_value=False)
-    item.read.return_value = payload
-    return item
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            assert size == MispClient.MAX_RESPONSE_BYTES + 1
+            return payload
+
+    return FakeResponse()
 
 
 def test_misp_diagnostics_reads_version_with_api_key():
