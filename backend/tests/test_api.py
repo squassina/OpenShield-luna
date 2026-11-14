@@ -355,6 +355,11 @@ def test_api_basic_auth_and_csrf_protection(monkeypatch) -> None:
     ).status_code == 403
     assert client.post(
         "/api/v1/integrations",
+        headers={**headers, "Sec-Fetch-Site":"cross-site"},
+        json={"integration_id":"bad-fetch-site","kind":"openwrt","display_name":"Bad fetch site"},
+    ).status_code == 403
+    assert client.post(
+        "/api/v1/integrations",
         headers=headers,
         json={"integration_id":"good-origin","kind":"openwrt","display_name":"Good"},
     ).status_code == 201
@@ -441,3 +446,62 @@ def test_openwrt_test_endpoint_distinguishes_missing_connector(monkeypatch) -> N
     check = client.get("/api/v1/integrations/home-gateway/test")
     assert check.status_code == 200
     assert check.json()["status"] == "connector_disconnected"
+
+
+def test_openwrt_status_includes_recent_discovery_and_rpc_freshness(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    headers = {"Authorization": "Bearer connector-test-token"}
+    connected = client.post("/api/v1/gateway/connect", json=gateway_payload(), headers=headers)
+    assert connected.status_code == 201
+    now = datetime.now(UTC)
+    health = sample_event("router-health", "home-gateway")
+    health["event_type"] = "gateway.health"
+    health["observed_at"] = now.isoformat()
+    health["occurred_at"] = now.isoformat()
+    health["payload"] = {"status": "reachable"}
+    assert client.post("/api/v1/events", json=health, headers=headers).status_code == 202
+    discovery = sample_event("router-discovery", "home-gateway")
+    discovery["event_type"] = "gateway.discovery"
+    discovery["observed_at"] = now.isoformat()
+    discovery["occurred_at"] = now.isoformat()
+    discovery["payload"] = {
+        "board": {"hostname": "router", "model": "OpenWrt test", "release": {"version": "24.10"}},
+        "interfaces": [{"name": "lan", "up": True, "ipv4_address": ["192.0.2.1"]}],
+    }
+    assert client.post("/api/v1/events", json=discovery, headers=headers).status_code == 202
+    from openshield.api import main
+    main.SecretStore(main.store).set("home-gateway", {"base_url":"https://192.0.2.1","username":"rpc","password":"secret"})
+    from openshield.integrations.models import IntegrationUpdate
+    main.registry.update("home-gateway", IntegrationUpdate(config={"base_url":"https://192.0.2.1","rpc_configured":True}))
+    response = client.get("/api/v1/integrations/home-gateway/test")
+    assert response.status_code == 200
+    assert response.json()["status"] == "router_rpc_connected"
+    assert response.json()["router"]["board"]["model"] == "OpenWrt test"
+    assert response.json()["router"]["interfaces"][0]["name"] == "lan"
+    assert response.json()["last_rpc_check_age_seconds"] <= 90
+
+
+def test_openwrt_status_marks_old_rpc_check_as_stale(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+    from openshield.api import main
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    assert client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={"base_url":"https://192.0.2.1","username":"rpc","password":"secret"},
+    ).status_code == 200
+    headers={"Authorization":"Bearer connector-test-token"}
+    assert client.post("/api/v1/gateway/connect",json=gateway_payload(),headers=headers).status_code==201
+    old=sample_event("old-router-health","home-gateway")
+    old["event_type"]="gateway.health"
+    old["observed_at"]=(datetime.now(UTC)-timedelta(minutes=5)).isoformat()
+    old["occurred_at"]=old["observed_at"]
+    old["payload"]={"status":"reachable"}
+    assert client.post("/api/v1/events",json=old,headers=headers).status_code==202
+    response=client.get("/api/v1/integrations/home-gateway/test")
+    assert response.status_code==200
+    assert response.json()["status"]=="router_rpc_stale"

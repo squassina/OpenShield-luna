@@ -52,7 +52,10 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <input id="openwrt-password" type="password" placeholder="RPC password" required autocomplete="new-password" aria-label="RPC password">
       <button class="primary" type="submit">Save router credentials</button>
     </form>
-    <div id="openwrt-status" class="notice" role="status" aria-live="polite"></div>
+    <div class="notice">Use a dedicated rpcd account with read-only access to <code>session.login</code>, <code>system.board</code> and <code>network.interface.dump</code>. Do not use the router root account. Prefer HTTPS with a trusted certificate. The connector runs near the router and opens an outbound connection to this Node; OpenShield does not change firewall, routing, wireless or DNS settings.</div>
+    <div id="openwrt-status" class="notice" role="status" aria-live="polite">Checking router status…</div>
+    <div id="openwrt-details" class="table-wrap"></div>
+    <div id="openwrt-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -143,6 +146,7 @@ async function load() {
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations);
     renderIntegrations(integrations);
+    await loadOpenWrtStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -196,6 +200,48 @@ function renderIntegrations(items) {
     actions.append(wrap);tr.append(actions);body.append(tr);
   });
   t.append(body);root.append(t);
+}
+async function loadOpenWrtStatus(integrations) {
+  const root=$("openwrt-status"),details=$("openwrt-details"),actions=$("openwrt-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="openwrt"&&value.config?.rpc_configured);
+  if(!item) {
+    root.textContent="No OpenWrt router credentials configured.";
+    return;
+  }
+  $("openwrt-id").value=item.integration_id;
+  $("openwrt-url").value=item.config?.base_url||"";
+  try {
+    const status=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/test");
+    root.textContent=item.display_name+" · "+status.message;
+    if(status.last_rpc_check) root.textContent+=" Last RPC check: "+new Date(status.last_rpc_check).toLocaleString();
+    if(status.router?.board) {
+      const board=status.router.board;
+      const interfaces=Array.isArray(status.router.interfaces)?status.router.interfaces:[];
+      const rows=[
+        ["Hostname",board.hostname],["Model",board.model],["System",board.system],
+        ["Kernel",board.kernel],["Firmware",board.release?.version||board.release?.revision],
+        ["Interfaces",interfaces.map(x=>x.name+" ("+(x.up?"up":"down")+") "+(x.ipv4_address||[]).join(", ")).join("; ")||"No interface details"]
+      ];
+      const table=document.createElement("table"),body=document.createElement("tbody");
+      rows.forEach(([label,value])=>{const tr=document.createElement("tr"),th=document.createElement("th"),td=document.createElement("td");th.textContent=label;td.textContent=String(value||"—");tr.append(th,td);body.append(tr);});
+      table.append(body);details.append(table);
+    }
+    if(status.status==="router_rpc_failed"||status.status==="router_rpc_stale") root.classList.add("error");
+    else root.classList.remove("error");
+  } catch(error) {
+    root.textContent="Router status unavailable: "+error.message;
+    root.classList.add("error");
+  }
+  actions.append(actionButton("Check status","",async()=>{try{await loadOpenWrtStatus(await api("/api/v1/integrations"));}catch(error){showNotice("Router status check failed: "+error.message,true);}}));
+  actions.append(actionButton("Remove saved credentials","danger",async()=>{
+    if(!confirm("Remove encrypted OpenWrt credentials for "+item.integration_id+"? The connector will stop polling the router."))return;
+    try {
+      await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/openwrt-credentials",{method:"DELETE"});
+      $("openwrt-password").value="";
+      showNotice("OpenWrt credentials removed.");await load();
+    } catch(error) { showNotice("Could not remove credentials: "+error.message,true); }
+  }));
 }
 function renderSources(sources, integrations) {
   const root=$("sources"); root.replaceChildren();

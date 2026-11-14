@@ -147,3 +147,14 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
 
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
+
+
+## 9. Dashboard router setup
+
+Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
+- Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.
+- Save credentials. The Node encrypts them using `OPENSHIELD_SECRET_KEY`; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
+- The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
+- Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
+
+The minimum ACL must permit session login, `system.board`, and `network.interface.dump` only. Confirm the exact rpcd ACL syntax against the installed OpenWrt release; do not copy broad write permissions from a generic example.

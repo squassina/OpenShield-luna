@@ -130,10 +130,18 @@ def _check_admin_auth(request: Request) -> Response | None:
     with _AUTH_FAILURES_LOCK:
         _AUTH_FAILURES.pop(remote, None)
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+            return JSONResponse({"detail": "Cross-site state change rejected"}, status_code=403)
         origin = request.headers.get("origin")
         if origin:
-            parsed = urlsplit(origin)
-            if parsed.netloc != request.headers.get("host") or parsed.scheme not in {"http", "https"}:
+            try:
+                parsed = urlsplit(origin)
+            except ValueError:
+                parsed = None
+            if (
+                parsed is None or parsed.netloc != request.headers.get("host")
+                or parsed.scheme not in {"http", "https"}
+            ):
                 return JSONResponse({"detail": "Cross-origin state change rejected"}, status_code=403)
     return None
 
@@ -150,11 +158,19 @@ async def authenticate_requests(request: Request, call_next):
             return JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
         if _api_auth_enabled() and not expected:
             return JSONResponse({"detail": "OPENSHIELD_GATEWAY_TOKEN is required when API authentication is enabled"}, status_code=503)
-        return await call_next(request)
-    denied = _check_admin_auth(request)
-    if denied is not None:
-        return denied
-    return await call_next(request)
+        response = await call_next(request)
+    else:
+        denied = _check_admin_auth(request)
+        if denied is not None:
+            return denied
+        response = await call_next(request)
+    if (
+        path.startswith("/api/v1/gateway/")
+        or path.endswith("/openwrt-credentials")
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.middleware("http")
@@ -390,25 +406,43 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
             "message": "Gateway Connector is not connected. Check its deployment and OPENSHIELD_GATEWAY_TOKEN.",
         }
     health_events = store.list_events(integration_id, "gateway.health", limit=1)
+    discovery_events = store.list_events(integration_id, "gateway.discovery", limit=1)
+    discovery = discovery_events[0] if discovery_events else None
+    router = discovery.payload if discovery else None
+    last_discovery = discovery.observed_at.isoformat() if discovery else None
     if health_events:
         health = health_events[0]
+        age_seconds = max(0, int((datetime.now(UTC) - health.observed_at).total_seconds()))
+        diagnostics = {
+            "last_rpc_check": health.observed_at.isoformat(),
+            "last_rpc_check_age_seconds": age_seconds,
+            "last_discovery_at": last_discovery,
+            "router": router,
+            "gateway": gateway,
+        }
         if health.payload.get("status") == "reachable":
+            if age_seconds > 90:
+                return {
+                    "status": "router_rpc_stale",
+                    "message": "The last successful OpenWrt RPC check is older than 90 seconds. Check connector heartbeat and router reachability.",
+                    **diagnostics,
+                }
             return {
                 "status": "router_rpc_connected",
                 "message": "Gateway Connector and OpenWrt RPC are responding.",
-                "last_rpc_check": health.observed_at.isoformat(),
-                "gateway": gateway,
+                **diagnostics,
             }
         if health.payload.get("status") == "unavailable":
             return {
                 "status": "router_rpc_failed",
-                "message": "Gateway Connector is online but OpenWrt RPC failed. Check router URL, RPC credentials, ACL permissions and TLS trust.",
-                "last_rpc_check": health.observed_at.isoformat(),
-                "gateway": gateway,
+                "message": "Gateway Connector is online but OpenWrt RPC failed. Check router URL, RPC credentials, read-only rpcd ACL permissions and TLS trust.",
+                **diagnostics,
             }
     return {
         "status": "connector_connected",
-        "message": "Gateway Connector is online. Waiting for its next OpenWrt RPC health check.",
+        "message": "Gateway Connector is online. Waiting for its first OpenWrt RPC health check.",
+        "last_discovery_at": last_discovery,
+        "router": router,
         "gateway": gateway,
     }
 
