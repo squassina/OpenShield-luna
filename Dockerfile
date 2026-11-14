@@ -14,3 +14,4 @@ FROM base AS dev
 
 RUN pip install --no-cache-dir --root-user-action=ignore ".[dev]"
 COPY backend/tests ./tests
+COPY scripts/ops ./scripts/ops
