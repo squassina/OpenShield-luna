@@ -2,6 +2,11 @@ from openshield.core.storage import PostgresStore
 from openshield.integrations import models
 
 CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
+    "prometheus": [
+        models.Capability.HEALTH_CHECK,
+        models.Capability.READ_CONFIGURATION,
+        models.Capability.READ_EVENTS,
+    ],
     "opnsense": [
         models.Capability.HEALTH_CHECK,
         models.Capability.READ_CONFIGURATION,
