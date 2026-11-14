@@ -7,6 +7,7 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
         models.Capability.READ_CONFIGURATION,
         models.Capability.READ_EVENTS,
     ],
+    "grafana": [models.Capability.HEALTH_CHECK, models.Capability.READ_CONFIGURATION],
     "opnsense": [
         models.Capability.HEALTH_CHECK,
         models.Capability.READ_CONFIGURATION,
