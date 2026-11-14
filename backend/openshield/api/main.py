@@ -28,8 +28,8 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
 from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
-from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.polling import (
