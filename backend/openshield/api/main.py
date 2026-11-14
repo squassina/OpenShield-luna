@@ -791,14 +791,19 @@ def sync_misp_indicators(
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
         client = MispClient(str(credentials["base_url"]), str(credentials["api_key"]))
         indicators = client.search_indicators(limit)
-        stored = store.upsert_threat_indicators(integration_id, indicators)
+        complete_snapshot = len(indicators) < limit
+        sync_result = store.sync_threat_indicators(
+            integration_id, indicators, complete_snapshot=complete_snapshot
+        )
         return {
             "status": "synced",
             "integration_id": integration_id,
             "received": len(indicators),
-            "stored": stored,
+            "stored": sync_result["stored"],
+            "removed": sync_result["removed"],
             "limit": limit,
-            "truncated_possible": len(indicators) == limit,
+            "truncated_possible": not complete_snapshot,
+            "reconciled": complete_snapshot,
         }
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
