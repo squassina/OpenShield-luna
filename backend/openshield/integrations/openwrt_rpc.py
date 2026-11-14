@@ -184,7 +184,6 @@ class OpenWrtRPCClient:
                 interface = lease.get("interface")
                 if isinstance(interface, str) and interface:
                     item["interface"] = interface
-                    item["device"] = interface
 
         return sorted(
             devices.values(),
