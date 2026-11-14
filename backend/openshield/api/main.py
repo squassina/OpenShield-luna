@@ -548,10 +548,10 @@ def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
     inserted = store.insert_event(event)
     if inserted:
         metrics.increment("openshield_events_ingested_total")
-        if event.source.kind == "openwrt" and event.event_type == "gateway.discovery":
-            store.record_gateway_discovery(
-                event.source.integration_id, event.payload, event.observed_at
-            )
+    if event.source.kind == "openwrt" and event.event_type == "gateway.discovery":
+        store.record_gateway_discovery(
+            event.source.integration_id, event.payload, event.observed_at
+        )
     return {"status": "accepted" if inserted else "duplicate", "event_id": event.event_id}
 
 
