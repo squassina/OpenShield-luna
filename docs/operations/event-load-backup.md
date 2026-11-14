@@ -63,10 +63,12 @@ Never overwrite the live database during acceptance. Create an isolated restore 
 docker compose exec -T openshield-db createdb -U openshield openshield_restore_test
 ~~~
 
-Run pg_restore from a host with PostgreSQL client tools and network access to the database, or from a suitable client container on the Compose network:
+Restore from the host by streaming the custom-format archive into the existing database container. Replace the archive filename:
 
 ~~~bash
-pg_restore --exit-on-error --no-owner --dbname='<restore-test-dsn>' backups/openshield-<timestamp>.dump
+docker compose exec -T openshield-db pg_restore \
+  --exit-on-error --no-owner -U openshield -d openshield_restore_test \
+  < backups/openshield-<timestamp>.dump
 ~~~
 
 Do not put the real password in shell history; use a protected .pgpass or equivalent secret mechanism.
