@@ -20,6 +20,7 @@ class MispClient:
 
     MAX_RESPONSE_BYTES = 5 * 1024 * 1024
     MAX_INDICATORS = 1000
+    PAGE_SIZE = 250
     INDICATOR_TYPES = ("ip-src", "ip-dst", "domain", "hostname", "url")
 
     def __init__(self, base_url: str, api_key: str, timeout: float = 10.0) -> None:
@@ -86,46 +87,55 @@ class MispClient:
     def search_indicators(self, limit: int = 1000) -> list[dict[str, object]]:
         if not 1 <= limit <= self.MAX_INDICATORS:
             raise ValueError("MISP indicator limit must be between 1 and 1000")
-        body = json.dumps({
-            "returnFormat": "json",
-            "type": list(self.INDICATOR_TYPES),
-            "to_ids": True,
-            "limit": limit,
-            "page": 1,
-        }).encode("utf-8")
-        payload = self._request("/attributes/restSearch", "POST", body)
-        response = payload.get("response") if isinstance(payload, dict) else None
-        attributes = response.get("Attribute") if isinstance(response, dict) else None
-        if not isinstance(attributes, list):
-            raise MispError("MISP attribute search returned an unexpected response")
 
-        result = []
-        for item in attributes:
-            if not isinstance(item, dict):
-                continue
-            to_ids = item.get("to_ids")
-            if not (to_ids is True or to_ids == 1 or to_ids == "1" or to_ids == "true"):
-                continue
-            indicator_type = item.get("type")
-            value = item.get("value")
-            identifier = item.get("uuid") or item.get("id")
-            if (
-                indicator_type not in self.INDICATOR_TYPES
-                or not isinstance(value, str) or not value.strip() or len(value) > 2048
-                or not isinstance(identifier, (str, int))
-            ):
-                continue
-            result.append({
-                "indicator_id": str(identifier),
-                "indicator_type": indicator_type,
-                "value": value.strip(),
-                "category": str(item.get("category") or "")[:120],
-                "event_id": str(item.get("event_id") or "")[:128],
-                "comment": str(item.get("comment") or "")[:500],
+        result: dict[str, dict[str, object]] = {}
+        page = 1
+        while len(result) < limit:
+            page_limit = min(self.PAGE_SIZE, limit - len(result))
+            body = json.dumps({
+                "returnFormat": "json",
+                "type": list(self.INDICATOR_TYPES),
                 "to_ids": True,
-                "source_timestamp": str(item.get("timestamp") or "")[:40],
-            })
-        return result
+                "limit": page_limit,
+                "page": page,
+            }).encode("utf-8")
+            payload = self._request("/attributes/restSearch", "POST", body)
+            response = payload.get("response") if isinstance(payload, dict) else None
+            attributes = response.get("Attribute") if isinstance(response, dict) else None
+            if not isinstance(attributes, list):
+                raise MispError("MISP attribute search returned an unexpected response")
+
+            for item in attributes:
+                if not isinstance(item, dict):
+                    continue
+                to_ids = item.get("to_ids")
+                if not (to_ids is True or to_ids == 1 or to_ids == "1" or to_ids == "true"):
+                    continue
+                indicator_type = item.get("type")
+                value = item.get("value")
+                identifier = item.get("uuid") or item.get("id")
+                if (
+                    indicator_type not in self.INDICATOR_TYPES
+                    or not isinstance(value, str) or not value.strip() or len(value) > 2048
+                    or not isinstance(identifier, (str, int))
+                ):
+                    continue
+                result[str(identifier)] = {
+                    "indicator_id": str(identifier),
+                    "indicator_type": indicator_type,
+                    "value": value.strip(),
+                    "category": str(item.get("category") or "")[:120],
+                    "event_id": str(item.get("event_id") or "")[:128],
+                    "comment": str(item.get("comment") or "")[:500],
+                    "to_ids": True,
+                    "source_timestamp": str(item.get("timestamp") or "")[:40],
+                }
+
+            if len(attributes) < page_limit or not attributes:
+                break
+            page += 1
+
+        return list(result.values())[:limit]
 
 
 class MispAdapter:
