@@ -101,7 +101,10 @@ class MispClient:
 
         result = []
         for item in attributes:
-            if not isinstance(item, dict) or item.get("to_ids") not in {True, 1, "1", "true"}:
+            if not isinstance(item, dict):
+                continue
+            to_ids = item.get("to_ids")
+            if not (to_ids is True or to_ids == 1 or to_ids == "1" or to_ids == "true"):
                 continue
             indicator_type = item.get("type")
             value = item.get("value")
