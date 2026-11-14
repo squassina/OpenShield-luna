@@ -181,13 +181,19 @@ def test_router_device_inventory_uses_mac_identity_and_tracks_presence() -> None
         "devices": [{
             "mac_address": "aa:bb:cc:dd:ee:ff", "name": "desktop",
             "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
-            "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
+            "ipv6_addresses": [], "device": "br-lan", "interface": "lan", "source": "luci-rpc",
+        }, {
+            "mac_address": "11:22:33:44:55:66", "name": "ipv6-only",
+            "ip_address": "", "ipv4_addresses": [], "ipv6_addresses": ["2001:db8::20"],
+            "device": "", "interface": "Unmapped", "source": "luci-rpc",
         }],
     }
     assert client.post("/api/v1/events", json=event).status_code == 202
     first = client.get("/api/v1/inventory/router-devices").json()
     assert first["gateways"][0]["board"]["hostname"] == "router"
-    assert first["devices"][0]["status"] == "offline"
+    assert {item["mac_address"] for item in first["devices"]} == {"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}
+    assert next(item for item in first["devices"] if item["mac_address"] == "aa:bb:cc:dd:ee:ff")["status"] == "offline"
+    assert next(item for item in first["devices"] if item["mac_address"] == "11:22:33:44:55:66")["ipv6_addresses"] == ["2001:db8::20"]
 
     event["event_id"] = "discovery-new"
     event["observed_at"] = datetime.now(UTC).isoformat()
@@ -195,11 +201,11 @@ def test_router_device_inventory_uses_mac_identity_and_tracks_presence() -> None
     event["payload"]["devices"][0]["ipv4_addresses"] = ["192.0.2.20"]
     assert client.post("/api/v1/events", json=event).status_code == 202
     current = client.get("/api/v1/inventory/router-devices").json()["devices"]
-    assert len(current) == 1
-    assert current[0]["mac_address"] == "aa:bb:cc:dd:ee:ff"
-    assert current[0]["ip_address"] == "192.0.2.20"
-    assert current[0]["status"] == "online"
-    assert current[0]["first_seen"] == old_seen.isoformat()
+    desktop = next(item for item in current if item["mac_address"] == "aa:bb:cc:dd:ee:ff")
+    assert len(current) == 2
+    assert desktop["ip_address"] == "192.0.2.20"
+    assert desktop["status"] == "online"
+    assert desktop["first_seen"] == old_seen.isoformat()
 
 def test_event_from_unknown_source_is_rejected() -> None:
     assert client.post("/api/v1/events", json=sample_event()).status_code == 400
