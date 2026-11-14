@@ -906,3 +906,85 @@ def test_dns_provider_auth_failures_are_sanitized(monkeypatch) -> None:
             assert "Unauthorized" not in str(exc)
         else:
             raise AssertionError("Provider authentication failure must be reported")
+
+
+def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    class FakeSSLContext:
+        def __init__(self):
+            self.loaded_ca = None
+
+        def load_verify_locations(self, *, cafile):
+            self.loaded_ca = cafile
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    for kind, base_url, payload in (
+        ("pihole", "https://pihole.example", b'{"queries":[]}'),
+        ("adguard", "https://adguard.example", b'{"data":[]}'),
+    ):
+        context = FakeSSLContext()
+        seen = {}
+
+        monkeypatch.setattr(providers.ssl, "create_default_context", lambda: context)
+
+        def fake_urlopen(request, timeout, context=None):
+            seen["request"] = request
+            seen["context"] = context
+            return FakeResponse(payload)
+
+        monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+        integration = Integration(
+            integration_id=f"{kind}-tls", kind=kind, display_name=kind.title(),
+            capabilities=[], config={
+                "base_url": base_url,
+                "ca_bundle_path": f"/run/openshield/ca/{kind}.pem",
+            },
+        )
+
+        assert fetch_dns_records(integration) == []
+        assert seen["context"] is context
+        assert context.loaded_ca == f"/run/openshield/ca/{kind}.pem"
+        assert seen["request"].full_url.startswith("https://")
+
+
+def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
+    from openshield.privacy.providers import DnsProviderError, _ssl_context
+
+    http_integration = Integration(
+        integration_id="pihole-http", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={
+            "base_url": "http://192.0.2.53",
+            "ca_bundle_path": "/run/openshield/ca/root.pem",
+        },
+    )
+    relative_integration = Integration(
+        integration_id="pihole-relative", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "certs/root.pem",
+        },
+    )
+
+    for integration, url in (
+        (http_integration, "http://192.0.2.53/api/queries"),
+        (relative_integration, "https://pihole.example/api/queries"),
+    ):
+        try:
+            _ssl_context(integration, url)
+        except DnsProviderError:
+            pass
+        else:
+            raise AssertionError("Invalid custom CA configuration must be rejected")
