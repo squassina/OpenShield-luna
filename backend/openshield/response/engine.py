@@ -7,7 +7,6 @@ from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.dns import normalize_domain
 from openshield.privacy.providers import DnsProviderError, sync_provider_lists
 
-
 RESPONSE_LIST_ID = "openshield-local"
 RESPONSE_COMMENT_PREFIX = "OpenShield response:"
 
