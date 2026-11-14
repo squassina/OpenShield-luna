@@ -109,7 +109,7 @@ class GrafanaClient:
                 "commit": health.get("commit"),
             },
             "dashboards": safe_dashboards,
-            "summary": {"dashboards_available": len(dashboards), "dashboards_limit": 100},
+            "summary": {"dashboards_returned": len(dashboards), "dashboards_limit": 100},
         }
 
 
