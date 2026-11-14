@@ -151,36 +151,37 @@ Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username
 
 ## 10. Device topology discovery helper
 
-The connector uses the same three data sources as the router-side inventory command:
-- `network.interface dump` maps kernel devices (including `l3_device`) to logical interfaces.
-- `luci-rpc getHostHints` resolves MAC addresses to friendly names.
-- `openshield get_ipv4_neighbors` returns the output of the fixed `ip -4 neigh show` command.
+The connector refreshes device discovery on every heartbeat (default 30 seconds) using:
+- `network.interface dump`: maps kernel devices, prioritizing `l3_device`, to logical OpenWrt interfaces.
+- `luci-rpc getHostHints`: resolves MAC addresses to friendly names where a DHCP/static host hint exists.
+- `openshield get_ipv4_neighbors`: returns the output of the fixed, read-only `ip -4 neigh show` command.
 
-Install the restricted rpcd helper on the router during setup (requires shell access):
+Install the restricted rpcd helper and its ACL file from the repository root:
 
 ```sh
+scp scripts/openwrt/openshield-rpcd root@ROUTER:/tmp/openshield-rpcd
+scp scripts/openwrt/openshield-rpcd-acl.json root@ROUTER:/tmp/openshield-rpcd-acl.json
+ssh root@ROUTER
 install -d -m 0755 /usr/libexec/rpcd /usr/share/rpcd/acl.d
-# Copy scripts/openwrt/openshield-rpcd to /usr/libexec/rpcd/openshield
-chmod 0755 /usr/libexec/rpcd/openshield
-# Copy scripts/openwrt/openshield-rpcd-acl.json to /usr/share/rpcd/acl.d/openshield.json
-chmod 0644 /usr/share/rpcd/acl.d/openshield.json
+install -m 0755 /tmp/openshield-rpcd /usr/libexec/rpcd/openshield
+install -m 0644 /tmp/openshield-rpcd-acl.json /usr/share/rpcd/acl.d/openshield.json
 /etc/init.d/rpcd restart
-ubus list | grep '^openshield
-
-Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
-- Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.
-- Save credentials. The Node encrypts them using `OPENSHIELD_SECRET_KEY`; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
-- The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
-- Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
-
-The minimum ACL must permit session login, `system.board`, and `network.interface.dump` only. Confirm the exact rpcd ACL syntax against the installed OpenWrt release; do not copy broad write permissions from a generic example.
-
+ubus list | grep '^openshield$'
 ubus call openshield get_ipv4_neighbors
+ubus call network.interface dump
+ubus call luci-rpc getHostHints
 ```
 
-Assign the `openshield-readonly` ACL to the dedicated RPC user/group using the installed release's rpcd ACL configuration, alongside the listed read-only methods. The helper accepts no command or argument input and always runs exactly `ip -4 neigh show`; never substitute `file.exec`.
+Assign the `openshield-readonly` ACL to the dedicated RPC user/group using the ACL mechanism supported by the installed OpenWrt release. The ACL must allow only `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors` (plus the required session login). Verify the actual authenticated RPC calls with the dedicated account; a successful root-level `ubus call` alone does not prove the account ACL is correct. Do not grant `file.exec`, generic shell execution, or write permissions. The helper accepts no command or arguments and always runs exactly `ip -4 neigh show`.
 
-The connector refreshes discovery on every heartbeat (default 30 seconds). Devices are keyed by normalized MAC, keep first/last-seen timestamps, and remain in inventory after disappearing from the neighbor table. The API reports `online` while last seen within 90 seconds and `offline` afterward. The dashboard groups devices by logical interface; IPv4 addresses and kernel devices are mutable attributes.
+After configuring the router in the dashboard, verify:
+1. The next connector heartbeat succeeds and a new `gateway.discovery` event is ingested.
+2. `GET /api/v1/inventory/router-devices?limit=500` returns the gateway snapshot and MAC-keyed devices.
+3. Devices are grouped under their logical interface in the dashboard; entries without an interface mapping appear under **Unmapped**.
+4. A device's MAC remains the identity when its IPv4 address changes.
+5. A device remains in inventory after it disappears from the neighbor table. Its state changes to `offline` when it has not been seen for more than 90 seconds.
+
+**Discovery limitations:** the current implementation reads the IPv4 neighbor table only. It does not yet discover IPv6 neighbors/NDP, Wi-Fi association tables, all DHCP leases, or devices that have never produced a neighbor entry. Friendly names depend on host hints. Offline means “not observed recently”, not proof that the device is powered off. Interface grouping is a logical router-interface view, not a physical Layer-2 topology or a complete VLAN/switch-port map.
 
 ## 11. Dashboard router setup
 
@@ -190,4 +191,4 @@ Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
 - The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
 - Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
 
-The minimum ACL must permit session login, `system.board`, and `network.interface.dump` only. Confirm the exact rpcd ACL syntax against the installed OpenWrt release; do not copy broad write permissions from a generic example.
+The dedicated RPC account must have only the read permissions listed in section 10: session login, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors`. Confirm ACL assignment and authenticated calls against the installed OpenWrt release; do not grant generic command execution or broad write permissions.
