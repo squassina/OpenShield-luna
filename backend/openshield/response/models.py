@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class ResponsePolicyRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     provider_integration_id: str = Field(min_length=2, max_length=64)
-    action_type: Literal["dns_block_domain"] = "dns_block_domain"
+    action_type: Literal["dns_block_domain", "firewall_block_ip"] = "dns_block_domain"
     min_risk_score: int = Field(default=60, ge=0, le=100)
     ttl_seconds: int = Field(default=3600, ge=60, le=604800)
     approval_required: bool = True

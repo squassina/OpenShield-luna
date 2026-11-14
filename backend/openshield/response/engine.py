@@ -1,3 +1,5 @@
+import ipaddress
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -40,6 +42,56 @@ def _provider(
     if not integration.enabled:
         raise ValueError("Response policy DNS provider is disabled")
     return integration
+
+
+def execute_firewall_block(
+    store: PostgresStore, registry: IntegrationRegistry, action: dict[str, object]
+) -> dict[str, object]:
+    if action.get("status") != "approved":
+        raise ValueError("Response action must be approved before execution")
+    if store.get_response_control()["kill_switch_enabled"]:
+        return _update(store, action, "blocked_by_kill_switch", error="Global response kill switch is enabled")
+    try:
+        address = ipaddress.ip_address(str(action.get("indicator_value", "")))
+    except ValueError:
+        return _update(store, action, "failed", error="invalid_ip_indicator")
+    if address.version != 4 or not address.is_global:
+        return _update(store, action, "failed", error="firewall_action_requires_public_ipv4")
+
+    provider = registry.get(str(action.get("provider_integration_id", "")))
+    if (
+        provider is None or provider.kind != "openwrt" or not provider.enabled
+        or not provider.config.get("rpc_configured")
+    ):
+        return _update(store, action, "failed", error="openwrt_gateway_not_configured")
+    if not os.getenv("OPENSHIELD_GATEWAY_TOKEN") or not store.get_integration_secret(provider.integration_id):
+        return _update(store, action, "failed", error="gateway_authentication_or_credentials_missing")
+
+    for existing in store.list_response_actions(limit=500):
+        if (
+            existing.get("action_id") != action.get("action_id")
+            and existing.get("action_type") == "firewall_block_ip"
+            and existing.get("indicator_value") == str(address)
+            and existing.get("status") in {"queued", "active"}
+        ):
+            return _update(
+                store, action, "already_enforced", expires_at=None,
+                verification={"provider": "openwrt", "managed_by_action": existing.get("action_id")},
+            )
+    return _update(
+        store, action, "queued", expires_at=None, next_attempt_at=None,
+        queued_at=datetime.now(UTC).isoformat(), error=None,
+    )
+
+
+def execute_action(
+    store: PostgresStore, registry: IntegrationRegistry, action: dict[str, object]
+) -> dict[str, object]:
+    if action.get("action_type") == "dns_block_domain":
+        return execute_dns_block(store, registry, action)
+    if action.get("action_type") == "firewall_block_ip":
+        return execute_firewall_block(store, registry, action)
+    return _update(store, action, "failed", error="unsupported_action_type")
 
 
 def execute_dns_block(
@@ -122,6 +174,15 @@ def rollback_action(
         raise ValueError("Response action not found")
     if action.get("status") in {"rolled_back", "already_enforced", "rejected", "cancelled_by_kill_switch"}:
         return action
+    if action.get("status") == "rollback_queued":
+        return action
+    if action.get("action_type") == "firewall_block_ip":
+        if action.get("status") not in {"active", "rollback_pending"}:
+            raise ValueError("Only active response actions can be rolled back")
+        return _update(
+            store, action, "rollback_queued", expires_at=None, next_attempt_at=None,
+            rollback_reason=reason, rollback_requested_at=datetime.now(UTC).isoformat(),
+        )
     if action.get("status") not in {"active", "rollback_pending"}:
         raise ValueError("Only active response actions can be rolled back")
 
@@ -186,16 +247,36 @@ def evaluate_incident(
     for policy in store.list_response_policies():
         if not policy.get("enabled"):
             continue
-        if incident.get("indicator_type") != "domain":
+        action_type = str(policy.get("action_type", "dns_block_domain"))
+        indicator_type = str(incident.get("indicator_type", ""))
+        if action_type == "dns_block_domain" and indicator_type != "domain":
+            continue
+        if action_type == "firewall_block_ip" and indicator_type != "ip":
+            continue
+        if action_type not in {"dns_block_domain", "firewall_block_ip"}:
             continue
         if int(incident.get("risk_score", 0)) < int(policy.get("min_risk_score", 100)):
             continue
         try:
-            provider = _provider(registry, str(policy.get("provider_integration_id", "")))
-        except ValueError:
+            if action_type == "dns_block_domain":
+                provider = _provider(registry, str(policy.get("provider_integration_id", "")))
+            else:
+                provider = registry.get(str(policy.get("provider_integration_id", "")))
+                address = ipaddress.ip_address(str(incident.get("indicator_value", "")))
+                if (
+                    provider is None or provider.kind != "openwrt" or not provider.enabled
+                    or address.version != 4 or not address.is_global
+                    or not provider.config.get("rpc_configured")
+                ):
+                    continue
+        except (ValueError, TypeError):
             continue
 
-        requires_approval = bool(policy.get("approval_required")) or int(incident.get("risk_score", 0)) >= 80
+        requires_approval = (
+            bool(policy.get("approval_required"))
+            or int(incident.get("risk_score", 0)) >= 80
+            or action_type == "firewall_block_ip"
+        )
         status = (
             "blocked_by_kill_switch" if control["kill_switch_enabled"]
             else "pending_approval" if requires_approval
@@ -206,9 +287,9 @@ def evaluate_incident(
             "policy_id": policy["policy_id"],
             "policy_name": policy["name"],
             "incident_id": incident_id,
-            "indicator_type": "domain",
+            "indicator_type": indicator_type,
             "indicator_value": incident["indicator_value"],
-            "action_type": "dns_block_domain",
+            "action_type": action_type,
             "provider_integration_id": provider.integration_id,
             "ttl_seconds": int(policy["ttl_seconds"]),
             "approval_required": requires_approval,
@@ -233,7 +314,7 @@ def evaluate_incident(
                 requested_at=datetime.now(UTC).isoformat(),
             )
         if (inserted or created.get("status") == "approved") and created.get("status") == "approved":
-            created = execute_dns_block(store, registry, created)
+            created = execute_action(store, registry, created)
         actions.append(created)
     return {"incident_id": incident_id, "actions": actions}
 
@@ -253,7 +334,7 @@ def approve_action(
         store, action, "approved", approved_at=datetime.now(UTC).isoformat(),
         approved_by=actor_id or "local-admin",
     )
-    return execute_dns_block(store, registry, approved)
+    return execute_action(store, registry, approved)
 
 
 def reject_action(store: PostgresStore, action_id: str, actor_id: str | None = None) -> dict[str, object]:
@@ -291,7 +372,7 @@ def set_kill_switch(
         except (DnsProviderError, ValueError, TypeError):
             pending += 1
             continue
-        if result.get("status") == "rollback_pending":
+        if result.get("status") in {"rollback_pending", "rollback_queued"}:
             pending += 1
         elif result.get("status") == "rolled_back":
             rolled_back += 1
@@ -306,6 +387,6 @@ def expire_due_actions(store: PostgresStore, registry: IntegrationRegistry) -> d
         )
         if result.get("status") == "rolled_back":
             expired += 1
-        elif result.get("status") == "rollback_pending":
+        elif result.get("status") in {"rollback_pending", "rollback_queued"}:
             pending += 1
     return {"expired": expired, "rollback_pending": pending}
