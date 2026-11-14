@@ -25,8 +25,8 @@ def test_runtime_secrets_are_generated_once_and_reused(
     monkeypatch.delenv("OPENSHIELD_SECRET_KEY")
     monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN")
     load_runtime_secrets(create=False)
-    assert __import__("os").environ["OPENSHIELD_SECRET_KEY"] == encryption_key
-    assert __import__("os").environ["OPENSHIELD_GATEWAY_TOKEN"] == gateway_token
+    assert os.environ["OPENSHIELD_SECRET_KEY"] == encryption_key
+    assert os.environ["OPENSHIELD_GATEWAY_TOKEN"] == gateway_token
 
 
 def test_connector_does_not_generate_missing_runtime_secrets(
