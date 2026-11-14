@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS events (
                 CREATE INDEX IF NOT EXISTS network_devices_last_seen_idx
                 ON network_devices (last_seen_at DESC)
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS audit_records (
                     audit_id BIGSERIAL PRIMARY KEY,
                     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
