@@ -31,7 +31,7 @@ curl 'http://localhost:8000/api/v1/threat-intel/indicators?limit=200'
 curl 'http://localhost:8000/api/v1/threat-intel/matches?event_limit=500&indicator_limit=1000'
 ~~~
 
-The sync fetches page 1 only, with a maximum of 1,000 attributes per run. Supported MISP types are `ip-src`, `ip-dst`, `domain`, `hostname`, and `url`; only attributes with `to_ids=true` are retained. The response flags when the configured limit is reached, because more results may exist. Re-run with a MISP-side filtered dataset or a later pagination enhancement if the feed exceeds this bound.
+The sync follows MISP pagination using bounded pages of at most 250 attributes and a total cap of 1,000 indicators per run. Only `to_ids=true` attributes of supported types (`ip-src`, `ip-dst`, `domain`, `hostname`, and `url`) are retained. Duplicate attribute IDs across pages are collapsed. The API response flags when the total cap is reached because more results may exist; increase the cap only through a reviewed configuration change.
 
 Indicator upserts are idempotent by MISP source integration and attribute ID. Existing records not returned by a later sync are not automatically deleted or deactivated; review MISP deletion/expiration policy before relying on the local set as a complete mirror.
 
@@ -52,7 +52,7 @@ Each result carries the MISP attribute and event provenance. A match is a lead f
 
 ## Follow-up P3 work
 
-- Complete pagination and expiry/deletion reconciliation for large MISP feeds.
+- Reconcile MISP deletion/expiration state after complete, successful pagination.
 - Normalize CrowdSec decisions and MISP indicators into a common IOC model.
 - Add explainable risk scoring and incident lifecycle/timelines with evidence provenance and false-positive handling.
 - Evaluate source confidence, age, TLP/PAP markings and local overrides before risk aggregation.
