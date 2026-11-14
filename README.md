@@ -292,3 +292,8 @@ P3 adds optional CrowdSec CTI and MISP integrations, encrypted provider API keys
 ## P4 — Hybrid AI investigations
 
 P4 adds a local Ollama runtime and an optional OpenAI Responses API adapter. Local inference is the default privacy posture. Cloud use requires both the global `OPENSHIELD_CLOUD_AI_ENABLED=true` switch and an explicit per-integration consent checkbox. Cloud requests contain only aggregate risk factors, event-type/severity counts, and normalized provider reputation categories; they omit indicator values, hostnames, MACs, event IDs, integration IDs, and raw event payloads. AI output is schema-validated, versioned, stored, and audited. Models cannot call tools or execute policy/response actions. See [the AI investigation runbook](docs/operations/ai-investigation.md).
+
+
+## P5 response engine
+
+OpenShield supports explicit deterministic DNS response policies, human approval for critical incidents, provider read-back verification, TTL-based rollback and a global emergency stop. See [the response engine runbook](docs/operations/response-engine.md). Current enforcement is DNS-domain-only; no firewall/IP action is enabled.

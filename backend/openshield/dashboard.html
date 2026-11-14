@@ -90,6 +90,26 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <article class="panel"><h2>Top clients / devices</h2><div id="devices" class="table-wrap"></div></article>
   </section>
   <section class="panel">
+    <h2>Autonomous response</h2>
+    <p>Deterministic policies can block matched domains through a selected Pi-hole or AdGuard source. TTL triggers automatic rollback. Critical incidents always require human approval. Firewall/IP enforcement is not enabled in this phase.</p>
+    <form id="response-policy-form" class="inline">
+      <input id="response-policy-name" placeholder="Policy name" required maxlength="120">
+      <select id="response-policy-provider" required aria-label="DNS enforcement provider"></select>
+      <input id="response-policy-score" type="number" min="0" max="100" value="60" required aria-label="Minimum risk score">
+      <input id="response-policy-ttl" type="number" min="60" max="604800" value="3600" required aria-label="TTL seconds">
+      <label><input id="response-policy-approval" type="checkbox" checked> Require approval</label>
+      <button class="primary" type="submit">Create policy</button>
+    </form>
+    <div id="response-policies" class="table-wrap"></div>
+    <div class="toolbar">
+      <span id="response-control-state" class="notice">Kill switch status unknown</span>
+      <button id="response-kill-switch" type="button" class="danger">Enable kill switch</button>
+    </div>
+    <h3>Response actions</h3>
+    <div id="response-actions" class="table-wrap"></div>
+  </section>
+
+  <section class="panel">
     <h2>Threat intelligence incidents</h2>
     <p>Enrich recent network and DNS observations against configured CrowdSec and MISP sources. Matches retain source evidence and can be acknowledged or marked false positive.</p>
     <div class="toolbar"><button id="enrich-events" class="primary" type="button">Enrich recent events</button></div>
@@ -145,11 +165,12 @@ async function load() {
   $("refresh").disabled=true; showNotice("Refreshing dashboard…");
   try {
     const days=$("period").value;
-    const [report,sources,sensors,devices,integrations,lists,inventory,incidents]=await Promise.all([
+    const [report,sources,sensors,devices,integrations,lists,inventory,incidents,responsePolicies,responseActions,responseControl]=await Promise.all([
       api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
       api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
       api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/incidents?limit=50")
+      api("/api/v1/incidents?limit=50"),api("/api/v1/response/policies"),
+      api("/api/v1/response/actions?limit=100"),api("/api/v1/response/control")
     ]);
     $("queries").textContent=fmt(report.totals.queries);
     $("blocked").textContent=fmt(report.totals.blocked);
@@ -159,6 +180,9 @@ async function load() {
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations)
     renderIncidents(incidents)
+    renderResponsePolicies(responsePolicies,integrations);
+    renderResponseActions(responseActions);
+    renderResponseControl(responseControl);
     renderAIProviders(integrations);
     renderIntegrations(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
@@ -353,6 +377,65 @@ $("service-form").addEventListener("submit",async event=>{
   finally { button.disabled=false; }
 });
 
+function renderResponsePolicies(policies,integrations) {
+  const select=$("response-policy-provider"),current=select.value;
+  select.replaceChildren();
+  const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select DNS provider";select.append(placeholder);
+  integrations.filter(item=>["pihole","adguard"].includes(item.kind)&&item.enabled!==false).forEach(item=>{
+    const option=document.createElement("option");option.value=item.integration_id;
+    option.textContent=item.display_name+" ("+item.kind+")";select.append(option);
+  });
+  if([...select.options].some(option=>option.value===current))select.value=current;
+  const root=$("response-policies");root.replaceChildren();
+  if(!policies.length){const p=document.createElement("p");p.className="empty";p.textContent="No response policies configured. Policies are disabled until created here.";root.append(p);return;}
+  const table=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
+  ["Policy","Provider","Min risk","TTL","Approval","State","Actions"].forEach(value=>{const th=document.createElement("th");th.textContent=value;head.append(th);});
+  const thead=document.createElement("thead");thead.append(head);table.append(thead);
+  policies.forEach(policy=>{
+    const row=document.createElement("tr");
+    [policy.name,policy.provider_integration_id,policy.min_risk_score,policy.ttl_seconds+"s",policy.approval_required?"Required":"Automatic",policy.enabled?"Enabled":"Disabled"].forEach(value=>{const td=document.createElement("td");td.textContent=String(value);row.append(td);});
+    const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    wrap.append(actionButton(policy.enabled?"Disable":"Enable","",async()=>{
+      try{await api("/api/v1/response/policies/"+encodeURIComponent(policy.policy_id),{method:"PATCH",body:JSON.stringify({enabled:!policy.enabled})});await load();}
+      catch(error){showNotice("Policy update failed: "+error.message,true);}
+    }));
+    wrap.append(actionButton("Delete","danger",async()=>{
+      if(!confirm("Delete response policy "+policy.name+"? Existing action history is preserved."))return;
+      try{await api("/api/v1/response/policies/"+encodeURIComponent(policy.policy_id),{method:"DELETE"});await load();}
+      catch(error){showNotice("Policy deletion failed: "+error.message,true);}
+    }));
+    td.append(wrap);row.append(td);body.append(row);
+  });
+  table.append(body);root.append(table);
+}
+function renderResponseActions(actions) {
+  const root=$("response-actions");root.replaceChildren();
+  if(!actions.length){const p=document.createElement("p");p.className="empty";p.textContent="No response actions yet.";root.append(p);return;}
+  const table=document.createElement("table"),head=document.createElement("tr"),body=document.createElement("tbody");
+  ["Target","Action","Provider","Status","Expires","Verification / error","Controls"].forEach(value=>{const th=document.createElement("th");th.textContent=value;head.append(th);});
+  const thead=document.createElement("thead");thead.append(head);table.append(thead);
+  actions.forEach(action=>{
+    const row=document.createElement("tr");
+    [action.indicator_value,action.action_type,action.provider_integration_id,action.status,action.expires_at_display||"—",action.error||((action.verification||{}).readback_verified?"Verified":"—")].forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");row.append(td);});
+    const td=document.createElement("td"),wrap=document.createElement("div");wrap.className="actions";
+    if(action.status==="pending_approval"){
+      wrap.append(actionButton("Approve","primary",async()=>{try{await api("/api/v1/response/actions/"+encodeURIComponent(action.action_id)+"/approve",{method:"POST"});await load();}catch(error){showNotice("Approval failed: "+error.message,true);}}));
+      wrap.append(actionButton("Reject","danger",async()=>{try{await api("/api/v1/response/actions/"+encodeURIComponent(action.action_id)+"/reject",{method:"POST"});await load();}catch(error){showNotice("Rejection failed: "+error.message,true);}}));
+    } else if(action.status==="active"||action.status==="rollback_pending"){
+      wrap.append(actionButton("Rollback","danger",async()=>{try{await api("/api/v1/response/actions/"+encodeURIComponent(action.action_id)+"/rollback",{method:"POST"});await load();}catch(error){showNotice("Rollback failed: "+error.message,true);}}));
+    }
+    td.append(wrap);row.append(td);body.append(row);
+  });
+  table.append(body);root.append(table);
+}
+function renderResponseControl(control) {
+  const enabled=Boolean(control.kill_switch_enabled);
+  $("response-control-state").textContent=enabled
+    ?"Emergency stop ENABLED · new execution blocked; active actions are being rolled back."
+    :"Emergency stop disabled · configured policies may execute.";
+  $("response-kill-switch").textContent=enabled?"Disable kill switch":"Enable kill switch";
+  $("response-kill-switch").classList.toggle("primary",enabled);
+}
 function renderAIProviders(integrations) {
   const select=$("ai-provider"),current=select.value;select.replaceChildren();
   const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select AI provider";select.append(placeholder);
@@ -389,6 +472,13 @@ function renderIncidents(items) {
       const button=actionButton(label,"",async()=>{try{await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id),{method:"PATCH",body:JSON.stringify({status,reason:"Updated from dashboard"})});await load();}catch(error){showNotice("Incident update failed: "+error.message,true);}});
       wrap.append(button);
     }
+    const evaluate=actionButton("Evaluate response","",async()=>{
+      try {
+        const result=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id)+"/response/evaluate",{method:"POST"});
+        showNotice("Response evaluation created "+result.actions.length+" action(s). Review approval state and TTL below.");await load();
+      } catch(error) { showNotice("Response evaluation failed: "+error.message,true); }
+    });
+    wrap.append(evaluate);
     const evidence=actionButton("Evidence","",async()=>{try{const detail=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id));showNotice(detail.summary+" Evidence events: "+detail.timeline.length+". Factors: "+(detail.risk_factors||[]).map(x=>x.factor+" +"+x.points).join(", "));}catch(error){showNotice("Could not load incident evidence: "+error.message,true);}});
     const investigate=actionButton("AI investigate","",async()=>{const provider_id=$("ai-provider").value;if(!provider_id){showNotice("Select an AI provider first.",true);return;}try{const result=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id)+"/investigate",{method:"POST",body:JSON.stringify({provider_id})});renderAIResult(result);}catch(error){showNotice("AI investigation failed: "+error.message,true);}});
     wrap.append(evidence,investigate);actions.append(wrap);row.append(actions);body.append(row);
@@ -414,6 +504,37 @@ function renderSyncButtons() {
   providerIds.forEach(item=>{const button=document.createElement("button");button.textContent="Sync lists → "+item.display_name;button.addEventListener("click",async()=>{if(!confirm("Apply the current OpenShield allow/block lists to "+item.display_name+"? This changes DNS filtering."))return;button.disabled=true;try{const result=await api("/api/v1/privacy/lists/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Provider sync verified: "+fmt(result.added)+" added, "+fmt(result.removed)+" removed.");}catch(e){showNotice("Provider sync failed: "+e.message,true);}finally{button.disabled=false;}});root.append(button);});
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
+$("response-policy-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const button=event.submitter;button.disabled=true;
+  try {
+    const policy=await api("/api/v1/response/policies",{method:"POST",body:JSON.stringify({
+      name:$("response-policy-name").value.trim(),
+      provider_integration_id:$("response-policy-provider").value,
+      action_type:"dns_block_domain",
+      min_risk_score:Number($("response-policy-score").value),
+      ttl_seconds:Number($("response-policy-ttl").value),
+      approval_required:$("response-policy-approval").checked,
+      enabled:true
+    })});
+    $("response-policy-name").value="";
+    showNotice("Response policy "+policy.name+" created.");await load();
+  } catch(error) { showNotice("Could not create response policy: "+error.message,true); }
+  finally { button.disabled=false; }
+});
+$("response-kill-switch").addEventListener("click",async()=>{
+  const enabled=$("response-kill-switch").textContent==="Enable kill switch";
+  if(enabled&&!confirm("Emergency stop: block new response execution and roll back all active OpenShield DNS actions?"))return;
+  try {
+    const result=await api("/api/v1/response/control",{method:"PUT",body:JSON.stringify({
+      enabled,reason:enabled?"Emergency stop activated from dashboard":"Emergency stop cleared from dashboard"
+    })});
+    showNotice(enabled
+      ?"Emergency stop enabled. "+(result.rolled_back||0)+" active action(s) rolled back."
+      :"Emergency stop disabled. Policies may execute when evaluated.");
+    await load();
+  } catch(error) { showNotice("Could not change emergency stop: "+error.message,true); }
+});
 $("enrich-events").addEventListener("click",async event=>{
   const button=event.currentTarget;button.disabled=true;
   try {
