@@ -1,0 +1,23 @@
+{
+  "openshield": {
+    "description": "Least-privilege OpenShield router firewall actions",
+    "read": {
+      "ubus": {
+        "system": [
+          "board"
+        ],
+        "network.interface": [
+          "dump"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "openshield-firewall": [
+          "block_ip",
+          "unblock_ip"
+        ]
+      }
+    }
+  }
+}

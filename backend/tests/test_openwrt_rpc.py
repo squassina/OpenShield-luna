@@ -60,3 +60,32 @@ def test_openwrt_rpc_rejects_invalid_payload() -> None:
         pytest.raises(OpenWrtRPCError, match="invalid payload"),
     ):
         OpenWrtRPCClient("http://router", "user", "password").login()
+
+
+def test_openwrt_firewall_block_and_unblock_use_narrow_rpc_methods() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "session-id"}]),
+        response([0, {"status": "blocked", "ip": "8.8.8.8", "ttl_seconds": 300}]),
+        response([0, {"status": "unblocked", "ip": "8.8.8.8"}]),
+    ]
+    with patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies) as mocked:
+        client = OpenWrtRPCClient("https://192.0.2.1", "openshield", "secret")
+        blocked = client.block_ip("8.8.8.8", 300)
+        unblocked = client.unblock_ip("8.8.8.8")
+    assert blocked["status"] == "blocked"
+    assert unblocked["status"] == "unblocked"
+    block_call = json.loads(mocked.call_args_list[1].args[0].data)
+    unblock_call = json.loads(mocked.call_args_list[2].args[0].data)
+    assert block_call[1:3] == ["openshield-firewall", "block_ip"]
+    assert block_call[3] == {"ip": "8.8.8.8", "ttl_seconds": 300}
+    assert unblock_call[1:3] == ["openshield-firewall", "unblock_ip"]
+
+
+def test_openwrt_firewall_rejects_private_ipv4_and_invalid_ttl() -> None:
+    client = OpenWrtRPCClient("https://192.0.2.1", "openshield", "secret")
+    with pytest.raises(ValueError, match="public IPv4"):
+        client.block_ip("192.168.1.10", 300)
+    with pytest.raises(ValueError, match="TTL"):
+        client.block_ip("8.8.8.8", 30)
+    with pytest.raises(ValueError, match="public IPv4"):
+        client.unblock_ip("10.0.0.1")

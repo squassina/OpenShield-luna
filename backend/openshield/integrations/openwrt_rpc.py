@@ -1,3 +1,4 @@
+import ipaddress
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -123,6 +124,37 @@ class OpenWrtRPCClient:
             },
             "interfaces": normalized_interfaces,
         }
+
+    def block_ip(self, ip_value: str, ttl_seconds: int) -> dict[str, object]:
+        try:
+            address = ipaddress.ip_address(ip_value)
+        except ValueError as exc:
+            raise ValueError("Firewall action requires a valid public IPv4 address") from exc
+        if address.version != 4 or not address.is_global:
+            raise ValueError("Firewall action accepts public IPv4 addresses only")
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or not 60 <= ttl_seconds <= 604800:
+            raise ValueError("Firewall block TTL must be between 60 and 604800 seconds")
+        result = self.call(
+            "openshield-firewall", "block_ip",
+            {"ip": str(address), "ttl_seconds": ttl_seconds},
+        )
+        if result.get("status") not in {"blocked", "already_blocked"} or result.get("ip") != str(address):
+            raise OpenWrtRPCError("OpenWrt firewall plugin returned an invalid block result")
+        return result
+
+    def unblock_ip(self, ip_value: str) -> dict[str, object]:
+        try:
+            address = ipaddress.ip_address(ip_value)
+        except ValueError as exc:
+            raise ValueError("Firewall action requires a valid public IPv4 address") from exc
+        if address.version != 4 or not address.is_global:
+            raise ValueError("Firewall action accepts public IPv4 addresses only")
+        result = self.call(
+            "openshield-firewall", "unblock_ip", {"ip": str(address)},
+        )
+        if result.get("status") != "unblocked" or result.get("ip") != str(address):
+            raise OpenWrtRPCError("OpenWrt firewall plugin returned an invalid unblock result")
+        return result
 
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")

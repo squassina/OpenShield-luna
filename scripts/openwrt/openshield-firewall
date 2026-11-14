@@ -1,0 +1,71 @@
+#!/bin/sh
+# rpcd executable plugin. Only manages the OpenShield IPv4 nftables set.
+set -eu
+
+fail() {
+    printf '{"error":"%s"}\n' "$1"
+    exit 1
+}
+
+valid_public_ipv4() {
+    ip="$1"
+    printf '%s\n' "$ip" | awk -F. '
+        NF != 4 { exit 1 }
+        {
+            for (i = 1; i <= 4; i++) {
+                if ($i !~ /^[0-9][0-9]?[0-9]?$/ || $i + 0 > 255) exit 1
+            }
+        }
+    ' || return 1
+    old_ifs="$IFS"
+    IFS=.
+    set -- $ip
+    IFS="$old_ifs"
+    a="$1"; b="$2"; c="$3"
+    [ "$a" -ne 0 ] && [ "$a" -ne 10 ] && [ "$a" -ne 127 ] &&
+    [ "$a" -lt 224 ] &&
+    ! { [ "$a" -eq 169 ] && [ "$b" -eq 254 ]; } &&
+    ! { [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; } &&
+    ! { [ "$a" -eq 192 ] && { [ "$b" -eq 0 ] || [ "$b" -eq 2 ] || [ "$b" -eq 168 ]; } } &&
+    ! { [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ]; } &&
+    ! { [ "$a" -eq 198 ] && { [ "$b" -eq 18 ] || [ "$b" -eq 19 ] || [ "$b" -eq 51 ]; } } &&
+    ! { [ "$a" -eq 203 ] && [ "$b" -eq 0 ] && [ "$c" -eq 113 ]; }
+}
+
+case "${1:-}" in
+    list)
+        printf '{"block_ip":{"ip":"string","ttl_seconds":1},"unblock_ip":{"ip":"string"}}\n'
+        exit 0
+        ;;
+    call)
+        method="${2:-}"
+        . /usr/share/libubox/jshn.sh
+        IFS= read -r input || fail "missing request"
+        json_load "$input" || fail "invalid request"
+        json_get_var ip ip
+        valid_public_ipv4 "$ip" || fail "public IPv4 address required"
+        case "$method" in
+            block_ip)
+                json_get_var ttl_seconds ttl_seconds
+                case "$ttl_seconds" in ''|*[!0-9]*) fail "invalid TTL";; esac
+                [ "$ttl_seconds" -ge 60 ] && [ "$ttl_seconds" -le 604800 ] || fail "TTL out of range"
+                if nft get element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1; then
+                    printf '{"status":"already_blocked","ip":"%s","ttl_seconds":%s}\n' "$ip" "$ttl_seconds"
+                    exit 0
+                fi
+                nft add element inet fw4 openshield_blocked_v4 "{ $ip timeout ${ttl_seconds}s }" >/dev/null 2>&1 || fail "nftables block failed"
+                printf '{"status":"blocked","ip":"%s","ttl_seconds":%s}\n' "$ip" "$ttl_seconds"
+                ;;
+            unblock_ip)
+                nft delete element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1 || true
+                printf '{"status":"unblocked","ip":"%s"}\n' "$ip"
+                ;;
+            *)
+                fail "unsupported method"
+                ;;
+        esac
+        ;;
+    *)
+        fail "unsupported operation"
+        ;;
+esac
