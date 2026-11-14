@@ -6,6 +6,7 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from openshield.core.bootstrap import load_runtime_secrets
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
 from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
@@ -243,6 +244,7 @@ def run_agent(
 
 
 def main() -> None:
+    load_runtime_secrets(create=False, include_encryption=False)
     logging.basicConfig(
         level=os.getenv("OPENSHIELD_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
