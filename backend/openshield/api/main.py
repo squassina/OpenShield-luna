@@ -22,8 +22,8 @@ from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
-from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
+from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
