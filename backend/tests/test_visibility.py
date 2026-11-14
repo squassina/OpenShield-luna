@@ -1,6 +1,10 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
+from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.visibility.normalizers import (
     normalize_sensor_batch,
     normalize_suricata,
@@ -150,7 +154,11 @@ def test_inventory_ignores_invalid_unspecified_and_multicast_addresses() -> None
     assert response.status_code == 202
     assert client.get("/api/v1/inventory/devices").json() == []
     assert client.get("/api/v1/inventory/topology").json() == {
-        "nodes": [], "node_details": [], "edges": []
+        "nodes": [],
+        "node_details": [],
+        "edges": [],
+        "segments": [],
+        "relationships": [],
     }
 
 
@@ -183,3 +191,142 @@ def test_sensor_batch_rejects_non_object_record() -> None:
     import pytest
     with pytest.raises(TypeError, match="JSON object"):
         normalize_sensor_batch("zeek", [None], "sensor")
+
+
+def _ingest_discovery(
+    devices: list[dict[str, object]], observed_at: datetime | None = None
+) -> None:
+    client.post("/api/v1/gateway/connect", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "gateway_type": "openwrt",
+        "connector_version": "0.1.0",
+        "capabilities": ["discover", "health_check"],
+    })
+    timestamp = observed_at or datetime.now(UTC)
+    event = EventEnvelope(
+        schema_version="openshield.event.v1",
+        event_id=str(uuid4()),
+        source=EventSource(integration_id="home-gateway", kind="openwrt"),
+        event_type="gateway.discovery",
+        occurred_at=timestamp,
+        observed_at=timestamp,
+        severity=Severity.INFO,
+        payload={
+            "board": {"model": "OpenWrt test"},
+            "interfaces": [{
+                "name": "lan",
+                "device": "br-lan",
+                "vlan_id": 10,
+                "subnets": [{
+                    "address": "192.0.2.1",
+                    "subnet": "192.0.2.0/24",
+                    "prefix_length": 24,
+                    "ip_version": 4,
+                }],
+                "gateway_addresses": ["192.0.2.1"],
+                "metadata_source": "network.interface.dump",
+            }],
+            "devices": devices,
+            "device_discovery": {"source": "luci-rpc"},
+        },
+    )
+    response = client.post("/api/v1/events", json=event.model_dump(mode="json"))
+    assert response.status_code == 202
+
+
+def _ingest_identity_sensor_event() -> None:
+    register_sensor("sensor-zeek", "zeek")
+    response = client.post("/api/v1/sensors/sensor-zeek/events", json=[{
+        "ts": datetime.now(UTC).timestamp(),
+        "_path": "conn",
+        "uid": str(uuid4()),
+        "id.orig_h": "192.0.2.10",
+        "id.orig_p": 53000,
+        "id.resp_h": "8.8.8.8",
+        "id.resp_p": 443,
+        "proto": "tcp",
+        "translated_src_ip": "203.0.113.10",
+    }])
+    assert response.status_code == 202
+
+
+def _identity_device(mac: str, name: str) -> dict[str, object]:
+    return {
+        "mac_address": mac,
+        "name": name,
+        "ip_address": "192.0.2.10",
+        "ipv4_addresses": ["192.0.2.10"],
+        "ipv6_addresses": [],
+        "address_evidence": {
+            "192.0.2.10": [{"source": "dhcp_lease", "confidence": "high"}],
+        },
+        "interface": "lan",
+    }
+
+
+def test_inventory_enriches_sensor_ip_with_identity_and_subnet_provenance() -> None:
+    _ingest_identity_sensor_event()
+    _ingest_discovery([_identity_device("aa:bb:cc:dd:ee:ff", "workstation")])
+
+    devices = client.get("/api/v1/inventory/devices").json()
+    device = next(item for item in devices if item["ip_address"] == "192.0.2.10")
+    assert device["identity_status"] == "identified"
+    assert device["mac_address"] == "aa:bb:cc:dd:ee:ff"
+    assert device["hostname"] == "workstation"
+    assert device["identity_sources"] == ["dhcp_lease"]
+    assert device["identity_confidence"] == "high"
+    assert device["network_segments"][0]["subnet"] == "192.0.2.0/24"
+    assert device["network_segments"][0]["vlan_id"] == 10
+
+    topology = client.get("/api/v1/inventory/topology").json()
+    connection = next(
+        edge for edge in topology["edges"]
+        if edge["relationship"] == "connection"
+    )
+    assert connection["evidence_type"] == "observed"
+    assert connection["source_integration_ids"] == ["sensor-zeek"]
+    nat = next(
+        edge for edge in topology["edges"]
+        if edge["relationship"] == "nat_translation"
+    )
+    assert nat["source"] == "192.0.2.10"
+    assert nat["target"] == "203.0.113.10"
+    membership = next(
+        relation for relation in topology["relationships"]
+        if relation["relationship"] == "network_segment_membership"
+    )
+    assert membership["evidence_type"] == "inferred"
+    assert membership["target"] == "192.0.2.0/24"
+
+
+def test_inventory_reports_conflicting_current_mac_mappings() -> None:
+    _ingest_identity_sensor_event()
+    _ingest_discovery([
+        _identity_device("aa:bb:cc:dd:ee:ff", "device-a"),
+        _identity_device("11:22:33:44:55:66", "device-b"),
+    ])
+
+    device = next(
+        item for item in client.get("/api/v1/inventory/devices").json()
+        if item["ip_address"] == "192.0.2.10"
+    )
+    assert device["identity_status"] == "conflict"
+    assert "mac_address" not in device
+    assert len(device["identity_candidates"]) == 2
+
+
+def test_inventory_keeps_stale_identity_without_merging_it() -> None:
+    _ingest_identity_sensor_event()
+    _ingest_discovery(
+        [_identity_device("aa:bb:cc:dd:ee:ff", "workstation")],
+        datetime.now(UTC) - timedelta(minutes=2),
+    )
+
+    device = next(
+        item for item in client.get("/api/v1/inventory/devices").json()
+        if item["ip_address"] == "192.0.2.10"
+    )
+    assert device["identity_status"] == "stale"
+    assert "mac_address" not in device
+    assert device["identity_candidates"][0]["status"] == "stale"

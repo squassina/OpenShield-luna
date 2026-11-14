@@ -118,7 +118,6 @@ class OpenWrtRPCClient:
     ) -> list[dict[str, object]]:
         if not isinstance(hints, dict):
             raise OpenWrtRPCError("OpenWrt host hints response was invalid")
-
         devices: dict[str, dict[str, object]] = {}
 
         def get_device(mac_value: object) -> dict[str, object] | None:
@@ -126,15 +125,33 @@ class OpenWrtRPCClient:
                 return None
             mac = mac_value.lower()
             return devices.setdefault(mac, {
-                "mac_address": mac,
-                "name": "(sem-nome)",
-                "ip_address": "",
-                "ipv4_addresses": [],
-                "ipv6_addresses": [],
-                "device": "",
-                "interface": "Unmapped",
-                "source": "luci-rpc",
+                "mac_address": mac, "name": "(sem-nome)", "ip_address": "",
+                "ipv4_addresses": [], "ipv6_addresses": [], "address_evidence": {},
+                "vendor": None, "device": "", "interface": "Unmapped", "source": "luci-rpc",
             })
+
+        def add_address(
+            item: dict[str, object], address: object, version: int,
+            source: str, confidence: str,
+        ) -> None:
+            if not isinstance(address, str):
+                return
+            normalized = address.split("/", 1)[0]
+            if not _valid_ip(normalized, version):
+                return
+            field = "ipv4_addresses" if version == 4 else "ipv6_addresses"
+            addresses = item[field]
+            if isinstance(addresses, list) and normalized not in addresses:
+                addresses.append(normalized)
+            if version == 4 and not item["ip_address"]:
+                item["ip_address"] = normalized
+            evidence = item["address_evidence"]
+            if isinstance(evidence, dict):
+                entries = evidence.setdefault(normalized, [])
+                if isinstance(entries, list):
+                    record = {"source": source, "confidence": confidence}
+                    if record not in entries:
+                        entries.append(record)
 
         for mac, hint in hints.items():
             item = get_device(mac)
@@ -143,24 +160,19 @@ class OpenWrtRPCClient:
             name = hint.get("name")
             if isinstance(name, str) and name.strip():
                 item["name"] = name.strip()[:128]
+            vendor = hint.get("vendor")
+            if isinstance(vendor, str) and vendor.strip():
+                item["vendor"] = vendor.strip()[:128]
             for field, version in (("ipaddrs", 4), ("ip6addrs", 6)):
                 addresses = hint.get(field, [])
-                if not isinstance(addresses, list):
-                    continue
-                target = item["ipv4_addresses"] if version == 4 else item["ipv6_addresses"]
-                for address in addresses:
-                    if isinstance(address, str):
-                        address = address.split("/", 1)[0]
-                    if _valid_ip(address, version) and address not in target:
-                        target.append(address)
-            if item["ipv4_addresses"]:
-                item["ip_address"] = item["ipv4_addresses"][0]
+                if isinstance(addresses, list):
+                    for address in addresses:
+                        add_address(item, address, version, "luci_host_hints", "medium")
 
         if not isinstance(leases, dict):
             raise OpenWrtRPCError("OpenWrt DHCP leases response was invalid")
         for field, address_field, version in (
-            ("dhcp_leases", "ipaddr", 4),
-            ("dhcp6_leases", "ip6addr", 6),
+            ("dhcp_leases", "ipaddr", 4), ("dhcp6_leases", "ip6addr", 6),
         ):
             rows = leases.get(field, [])
             if not isinstance(rows, list):
@@ -174,16 +186,10 @@ class OpenWrtRPCClient:
                 hostname = lease.get("hostname")
                 if item["name"] == "(sem-nome)" and isinstance(hostname, str) and hostname.strip():
                     item["name"] = hostname.strip()[:128]
-                address = lease.get(address_field)
-                if isinstance(address, str) and _valid_ip(address, version):
-                    target = item["ipv4_addresses"] if version == 4 else item["ipv6_addresses"]
-                    if address not in target:
-                        target.append(address)
-                    if version == 4 and not item["ip_address"]:
-                        item["ip_address"] = address
+                add_address(item, lease.get(address_field), version, "dhcp_lease", "high")
                 interface = lease.get("interface")
                 if isinstance(interface, str) and interface:
-                    item["interface"] = interface
+                    item["interface"] = interface[:128]
 
         return sorted(
             devices.values(),
@@ -202,19 +208,65 @@ class OpenWrtRPCClient:
         for item in raw_interfaces:
             if not isinstance(item, dict):
                 continue
-            addresses = item.get("ipv4-address", [])
-            if not isinstance(addresses, list):
-                addresses = []
+            subnets = []
+            for field, version in (("ipv4-address", 4), ("ipv6-address", 6)):
+                addresses = item.get(field, [])
+                if not isinstance(addresses, list):
+                    continue
+                for address in addresses:
+                    if not isinstance(address, dict):
+                        continue
+                    value = address.get("address")
+                    mask = address.get("mask")
+                    if not isinstance(value, str) or mask is None:
+                        continue
+                    try:
+                        interface = ipaddress.ip_interface(f"{value}/{mask}")
+                    except ValueError:
+                        continue
+                    if interface.version != version:
+                        continue
+                    subnets.append({
+                        "address": str(interface.ip), "subnet": str(interface.network),
+                        "prefix_length": interface.network.prefixlen, "ip_version": version,
+                    })
+            gateway_addresses = []
+            routes = item.get("route", [])
+            if isinstance(routes, list):
+                for route in routes:
+                    if not isinstance(route, dict):
+                        continue
+                    target = route.get("target")
+                    mask = route.get("mask")
+                    next_hop = route.get("nexthop")
+                    default_masks = {0, "0", "0.0.0.0", "0:0:0:0:0:0:0:0"}
+                    if target not in {"0.0.0.0", "::"} or mask not in default_masks:
+                        continue
+                    if not isinstance(next_hop, str):
+                        continue
+                    try:
+                        gateway_addresses.append(str(ipaddress.ip_address(next_hop)))
+                    except ValueError:
+                        continue
+            vlan_id = item.get("vid", item.get("vlan_id"))
+            if (
+                not isinstance(vlan_id, int)
+                or isinstance(vlan_id, bool)
+                or not 1 <= vlan_id <= 4094
+            ):
+                vlan_id = None
             normalized_interfaces.append({
-                "name": item.get("interface"),
-                "up": item.get("up"),
-                "device": item.get("device"),
-                "l3_device": item.get("l3_device"),
+                "name": item.get("interface"), "up": item.get("up"),
+                "device": item.get("device"), "l3_device": item.get("l3_device"),
                 "proto": item.get("proto"),
                 "ipv4_address": [
-                    address.get("address") for address in addresses
-                    if isinstance(address, dict) and isinstance(address.get("address"), str)
+                    subnet["address"] for subnet in subnets
+                    if subnet["ip_version"] == 4
                 ],
+                "subnets": subnets,
+                "gateway_addresses": sorted(set(gateway_addresses)),
+                "vlan_id": vlan_id,
+                "metadata_source": "network.interface.dump",
             })
         normalized_board = {
             key: board.get(key)

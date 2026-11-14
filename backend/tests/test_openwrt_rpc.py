@@ -17,8 +17,12 @@ def test_openwrt_rpc_discovers_devices_from_standard_luci_methods() -> None:
         response([0, {"ubus_rpc_session": "session-id"}]),
         response([0, {"hostname": "router", "model": "OpenWrt test", "release": {"version": "24.10"}}]),
         response([0, {"interface": [
-            {"interface": "lan", "up": True, "device": "br-lan", "l3_device": "br-lan",
-             "proto": "static", "ipv4-address": [{"address": "192.0.2.1"}]}
+            {
+                "interface": "lan", "up": True, "device": "br-lan", "l3_device": "br-lan",
+                "proto": "static", "vid": 10,
+                "ipv4-address": [{"address": "192.0.2.1", "mask": 24}],
+                "route": [{"target": "0.0.0.0", "mask": 0, "nexthop": "192.0.2.254"}],
+            }
         ]}]),
         response([0, {
             "AA:BB:CC:DD:EE:FF": {
@@ -39,17 +43,31 @@ def test_openwrt_rpc_discovers_devices_from_standard_luci_methods() -> None:
 
     assert result["board"]["hostname"] == "router"
     assert result["interfaces"][0]["name"] == "lan"
+    assert result["interfaces"][0]["subnets"][0]["subnet"] == "192.0.2.0/24"
+    assert result["interfaces"][0]["gateway_addresses"] == ["192.0.2.254"]
+    assert result["interfaces"][0]["vlan_id"] == 10
     assert result["devices"] == [
         {
             "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
             "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
-            "ipv6_addresses": ["2001:db8::10"], "device": "", "interface": "Unmapped",
-            "source": "luci-rpc",
+            "ipv6_addresses": ["2001:db8::10"],
+            "address_evidence": {
+                "192.0.2.10": [{"source": "luci_host_hints", "confidence": "medium"}],
+                "2001:db8::10": [{"source": "luci_host_hints", "confidence": "medium"}],
+            },
+            "vendor": None, "device": "", "interface": "Unmapped", "source": "luci-rpc",
         },
         {
             "mac_address": "11:22:33:44:55:66", "name": "phone",
             "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
-            "ipv6_addresses": [], "device": "", "interface": "lan", "source": "luci-rpc",
+            "ipv6_addresses": [],
+            "address_evidence": {
+                "192.0.2.11": [
+                    {"source": "luci_host_hints", "confidence": "medium"},
+                    {"source": "dhcp_lease", "confidence": "high"},
+                ]
+            },
+            "vendor": None, "device": "", "interface": "lan", "source": "luci-rpc",
         },
     ]
     assert mocked.call_count == 5

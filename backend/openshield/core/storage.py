@@ -146,6 +146,22 @@ CREATE TABLE IF NOT EXISTS events (
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS network_device_address_observations (
+                    gateway_id TEXT NOT NULL,
+                    mac_address TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    first_seen_at TIMESTAMPTZ NOT NULL,
+                    last_seen_at TIMESTAMPTZ NOT NULL,
+                    PRIMARY KEY (gateway_id, mac_address, ip_address, source)
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS network_device_address_ip_idx
+                ON network_device_address_observations (ip_address, last_seen_at DESC)
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS network_devices_last_seen_idx
                 ON network_devices (last_seen_at DESC)
                 """,
@@ -183,7 +199,10 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, network_devices, gateway_discovery_snapshots, integration_poll_cursors, privacy_classification_overrides, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, network_device_address_observations, "
+                "network_devices, gateway_discovery_snapshots, integration_poll_cursors, "
+                "privacy_classification_overrides, integration_secrets, events, privacy_lists, "
+                "gateway_connections, integrations RESTART IDENTITY"
             )
 
     def set_integration_secret(self, integration_id: str, encrypted_value: bytes) -> None:
@@ -385,7 +404,9 @@ CREATE TABLE IF NOT EXISTS events (
                 SET payload = CASE
                         WHEN EXCLUDED.observed_at >= gateway_discovery_snapshots.observed_at
                         THEN EXCLUDED.payload ELSE gateway_discovery_snapshots.payload END,
-                    observed_at = GREATEST(gateway_discovery_snapshots.observed_at, EXCLUDED.observed_at)
+                    observed_at = GREATEST(
+                        gateway_discovery_snapshots.observed_at, EXCLUDED.observed_at
+                    )
                 """,
                 (gateway_id, Jsonb(snapshot), observed_at),
             )
@@ -393,7 +414,9 @@ CREATE TABLE IF NOT EXISTS events (
                 if not isinstance(device, dict):
                     continue
                 mac = device.get("mac_address")
-                if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
+                if not isinstance(mac, str) or not re.fullmatch(
+                    r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac
+                ):
                     continue
                 if not _has_valid_device_address(device):
                     continue
@@ -407,10 +430,68 @@ CREATE TABLE IF NOT EXISTS events (
                     SET payload = CASE
                             WHEN EXCLUDED.last_seen_at >= network_devices.last_seen_at
                             THEN EXCLUDED.payload ELSE network_devices.payload END,
-                        last_seen_at = GREATEST(network_devices.last_seen_at, EXCLUDED.last_seen_at)
+                        last_seen_at = GREATEST(
+                            network_devices.last_seen_at, EXCLUDED.last_seen_at
+                        )
                     """,
                     (gateway_id, normalized_mac, Jsonb(device), observed_at, observed_at),
                 )
+                address_evidence = device.get("address_evidence")
+                if not isinstance(address_evidence, dict):
+                    address_evidence = {}
+                    for field in ("ipv4_addresses", "ipv6_addresses"):
+                        addresses = device.get(field, [])
+                        if isinstance(addresses, list):
+                            for address in addresses:
+                                if isinstance(address, str):
+                                    address_evidence.setdefault(address, []).append({
+                                        "source": "luci_host_hints",
+                                        "confidence": "medium",
+                                    })
+                for address, evidence_items in address_evidence.items():
+                    if not isinstance(address, str) or not isinstance(evidence_items, list):
+                        continue
+                    try:
+                        parsed_address = ipaddress.ip_address(address)
+                    except ValueError:
+                        continue
+                    if (
+                        parsed_address.is_unspecified
+                        or parsed_address.is_multicast
+                        or parsed_address.is_loopback
+                    ):
+                        continue
+                    for evidence in evidence_items:
+                        if not isinstance(evidence, dict):
+                            continue
+                        source = evidence.get("source")
+                        confidence = evidence.get("confidence")
+                        if source not in {"luci_host_hints", "dhcp_lease"}:
+                            continue
+                        expected_confidence = (
+                            "high" if source == "dhcp_lease" else "medium"
+                        )
+                        if confidence != expected_confidence:
+                            confidence = expected_confidence
+                        cursor.execute(
+                            """
+                            INSERT INTO network_device_address_observations (
+                                gateway_id, mac_address, ip_address, source, confidence,
+                                first_seen_at, last_seen_at
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (gateway_id, mac_address, ip_address, source)
+                            DO UPDATE SET
+                                confidence = EXCLUDED.confidence,
+                                last_seen_at = GREATEST(
+                                    network_device_address_observations.last_seen_at,
+                                    EXCLUDED.last_seen_at
+                                )
+                            """,
+                            (
+                                gateway_id, normalized_mac, str(parsed_address), source,
+                                confidence, observed_at, observed_at,
+                            ),
+                        )
 
     def list_gateway_discovery_snapshots(self) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
@@ -443,6 +524,35 @@ CREATE TABLE IF NOT EXISTS events (
             }
             for row in rows
         ]
+    def list_device_identity_observations(
+        self, limit: int = 10000
+    ) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT gateway_id, mac_address, ip_address, source, confidence,
+                       first_seen_at, last_seen_at
+                FROM network_device_address_observations
+                WHERE last_seen_at >= NOW() - INTERVAL '30 days'
+                ORDER BY ip_address, last_seen_at DESC, gateway_id, mac_address, source
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "gateway_id": row[0],
+                "mac_address": row[1],
+                "ip_address": row[2],
+                "source": row[3],
+                "confidence": row[4],
+                "first_seen_at": row[5],
+                "last_seen_at": row[6],
+            }
+            for row in rows
+        ]
+
     def list_events_page(self, integration_id=None, event_type=None, severity=None, limit=200, cursor=None):
         filters = []
         params = []
@@ -556,12 +666,28 @@ CREATE TABLE IF NOT EXISTS events (
                 """
                 WITH connections AS (
                     SELECT
-                        COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS source,
-                        COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS target,
-                        COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
+                        COALESCE(
+                            payload #>> '{payload,src_ip}',
+                            payload #>> '{payload,id.orig_h}'
+                        ) AS source,
+                        COALESCE(
+                            payload #>> '{payload,dest_ip}',
+                            payload #>> '{payload,id.resp_h}'
+                        ) AS target,
+                        COALESCE(
+                            payload #>> '{payload,proto}',
+                            payload #>> '{payload,app_proto}',
+                            'unknown'
+                        ) AS protocol,
+                        payload #>> '{source,integration_id}' AS integration_id,
+                        payload->>'event_type' AS event_type,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at
                     FROM events
                 )
-                SELECT source, target, protocol, COUNT(*)
+                SELECT source, target, protocol, COUNT(*),
+                       ARRAY_AGG(DISTINCT integration_id),
+                       ARRAY_AGG(DISTINCT event_type),
+                       MIN(occurred_at), MAX(occurred_at)
                 FROM connections
                 WHERE source IS NOT NULL AND target IS NOT NULL
                 GROUP BY source, target, protocol
@@ -572,7 +698,79 @@ CREATE TABLE IF NOT EXISTS events (
             )
             rows = cursor.fetchall()
         return [
-            {"source": row[0], "target": row[1], "protocol": row[2], "observations": row[3]}
+            {
+                "source": row[0],
+                "target": row[1],
+                "protocol": row[2],
+                "observations": row[3],
+                "source_integration_ids": row[4],
+                "source_event_types": row[5],
+                "first_seen": row[6],
+                "last_seen": row[7],
+            }
+            for row in rows
+        ]
+
+    def list_nat_observations(self, limit: int = 1000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH translations AS (
+                    SELECT
+                        COALESCE(
+                            payload #>> '{payload,src_ip}',
+                            payload #>> '{payload,id.orig_h}'
+                        ) AS original,
+                        COALESCE(
+                            payload #>> '{payload,translated_src_ip}',
+                            payload #>> '{payload,nat_src_ip}'
+                        ) AS translated,
+                        COALESCE(payload #>> '{payload,proto}', 'unknown') AS protocol,
+                        payload #>> '{source,integration_id}' AS integration_id,
+                        payload->>'event_type' AS event_type,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at
+                    FROM events
+                    UNION ALL
+                    SELECT
+                        COALESCE(
+                            payload #>> '{payload,dest_ip}',
+                            payload #>> '{payload,id.resp_h}'
+                        ) AS original,
+                        COALESCE(
+                            payload #>> '{payload,translated_dest_ip}',
+                            payload #>> '{payload,nat_dest_ip}'
+                        ) AS translated,
+                        COALESCE(payload #>> '{payload,proto}', 'unknown') AS protocol,
+                        payload #>> '{source,integration_id}' AS integration_id,
+                        payload->>'event_type' AS event_type,
+                        (payload->>'occurred_at')::timestamptz AS occurred_at
+                    FROM events
+                )
+                SELECT original, translated, protocol, COUNT(*),
+                       ARRAY_AGG(DISTINCT integration_id),
+                       ARRAY_AGG(DISTINCT event_type),
+                       MIN(occurred_at), MAX(occurred_at)
+                FROM translations
+                WHERE original IS NOT NULL AND translated IS NOT NULL
+                  AND original <> translated
+                GROUP BY original, translated, protocol
+                ORDER BY COUNT(*) DESC, original, translated
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "source": row[0],
+                "target": row[1],
+                "protocol": row[2],
+                "observations": row[3],
+                "source_integration_ids": row[4],
+                "source_event_types": row[5],
+                "first_seen": row[6],
+                "last_seen": row[7],
+            }
             for row in rows
         ]
 

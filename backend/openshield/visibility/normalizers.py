@@ -1,4 +1,5 @@
 import hashlib
+import ipaddress
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -7,7 +8,8 @@ from openshield.events.models import EventEnvelope, EventSource, Severity
 
 SURICATA_FIELDS = (
     "src_ip", "src_port", "dest_ip", "dest_port", "proto", "app_proto",
-    "community_id", "flow_id",
+    "community_id", "flow_id", "translated_src_ip", "translated_dest_ip",
+    "nat_src_ip", "nat_dest_ip",
 )
 SURICATA_NESTED_FIELDS = {
     "alert": {"signature", "category", "severity", "action", "signature_id"},
@@ -20,7 +22,8 @@ ZEEK_FIELDS = (
     "uid", "id.orig_h", "id.orig_p", "id.resp_h", "id.resp_p", "proto",
     "service", "duration", "orig_bytes", "resp_bytes", "conn_state",
     "query", "qtype_name", "answers", "rcode_name", "method", "host",
-    "uri", "status_code", "server_name", "version",
+    "uri", "status_code", "server_name", "version", "translated_src_ip",
+    "translated_dest_ip", "nat_src_ip", "nat_dest_ip",
 )
 
 
@@ -44,6 +47,20 @@ def _event_id(source: str, integration_id: str, raw: dict[str, Any]) -> str:
     return f"{source}:{integration_id}:{hashlib.sha256(encoded).hexdigest()}"
 
 
+
+def _remove_invalid_translation_addresses(payload: dict[str, Any]) -> None:
+    for field in (
+        "translated_src_ip", "translated_dest_ip", "nat_src_ip", "nat_dest_ip"
+    ):
+        value = payload.get(field)
+        if value is None:
+            continue
+        try:
+            ipaddress.ip_address(value)
+        except (TypeError, ValueError):
+            payload.pop(field, None)
+
+
 def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
     """Normalize one Suricata EVE JSON record without retaining arbitrary fields."""
     if not isinstance(raw, dict):
@@ -60,6 +77,7 @@ def normalize_suricata(raw: dict[str, Any], integration_id: str) -> EventEnvelop
         Severity.LOW if severity_value == 3 else Severity.INFO
     )
     payload = {key: raw[key] for key in SURICATA_FIELDS if key in raw}
+    _remove_invalid_translation_addresses(payload)
     for key, allowed in SURICATA_NESTED_FIELDS.items():
         value = raw.get(key)
         if isinstance(value, dict):
@@ -87,6 +105,7 @@ def normalize_zeek(raw: dict[str, Any], integration_id: str) -> EventEnvelope:
         raise ValueError("Unsupported Zeek log type")
     timestamp = _timestamp(raw.get("ts"))
     payload = {key: raw[key] for key in ZEEK_FIELDS if key in raw}
+    _remove_invalid_translation_addresses(payload)
     return EventEnvelope(
         schema_version="openshield.event.v1",
         event_id=_event_id(f"zeek-{log_type}", integration_id, raw),
