@@ -100,6 +100,30 @@ def _fake_sync(provider, entries):
     }
 
 
+
+
+
+def _report_firewall_ready(gateway_headers: dict[str, str], event_id: str) -> None:
+    from openshield.events.models import EventEnvelope, EventSource, Severity
+
+    now = datetime.now(UTC)
+    event = EventEnvelope(
+        schema_version="openshield.event.v1",
+        event_id=event_id,
+        source=EventSource(integration_id="home-gateway", kind="openwrt"),
+        event_type="gateway.health",
+        occurred_at=now,
+        observed_at=now,
+        severity=Severity.INFO,
+        payload={
+            "status": "reachable",
+            "firewall_enforcement": {"status": "ready", "set": "oshield_v4"},
+        },
+    )
+    result = client.post("/api/v1/events",headers=gateway_headers,json=event.model_dump(mode="json"))
+    assert result.status_code == 202
+
+
 def test_response_policy_auto_executes_dns_block_and_supports_rollback(monkeypatch) -> None:
     from openshield.api import main
 
@@ -247,6 +271,7 @@ def test_firewall_policy_requires_approval_and_executes_through_gateway(monkeypa
         json={"base_url":"https://192.0.2.1","username":"rpc","password":"router-secret"},
     )
     assert credentials.status_code == 200
+    _report_firewall_ready(gateway_headers, "gateway-health-firewall-1")
 
     policy = client.post("/api/v1/response/policies", json={
         "name":"Block malicious public IP",
@@ -324,6 +349,7 @@ def test_kill_switch_reconciles_gateway_action_already_in_flight(monkeypatch) ->
         "/api/v1/integrations/home-gateway/openwrt-credentials",headers=headers,
         json={"base_url":"https://192.0.2.1","username":"rpc","password":"secret"},
     ).status_code == 200
+    _report_firewall_ready(headers, "gateway-health-firewall-race")
     assert client.post("/api/v1/response/policies",json={
         "name":"Manual firewall approval","provider_integration_id":"home-gateway",
         "action_type":"firewall_block_ip","min_risk_score":60,"ttl_seconds":300,

@@ -97,3 +97,29 @@ def test_openwrt_rpc_plugin_script_has_valid_shell_syntax() -> None:
 
     plugin = Path(__file__).resolve().parents[1] / "openshield/integrations/openwrt_rpcd/openshield-firewall"
     subprocess.run(["sh", "-n", str(plugin)], check=True)
+
+
+def test_openwrt_health_check_reports_firewall_plugin_readiness() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "session-id"}]),
+        response([0, {"hostname":"router","model":"OpenWrt test"}]),
+        response([0, {"status":"ready","set":"oshield_v4"}]),
+    ]
+    with patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies):
+        client = OpenWrtRPCClient("https://192.0.2.1", "openshield", "secret")
+        health = client.health_check()
+    assert health["status"] == "reachable"
+    assert health["firewall_enforcement"] == {"status":"ready","set":"oshield_v4"}
+
+
+def test_openwrt_health_check_keeps_rpc_reachable_when_firewall_plugin_is_missing() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "session-id"}]),
+        response([0, {"hostname":"router","model":"OpenWrt test"}]),
+        response([6, {}]),
+    ]
+    with patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies):
+        client = OpenWrtRPCClient("https://192.0.2.1", "openshield", "secret")
+        health = client.health_check()
+    assert health["status"] == "reachable"
+    assert health["firewall_enforcement"]["status"] == "unavailable"
