@@ -1119,8 +1119,15 @@ CREATE TABLE IF NOT EXISTS events (
     def upsert_threat_indicators(
         self, integration_id: str, indicators: list[dict[str, object]]
     ) -> int:
-        if not indicators:
-            return 0
+        return self.sync_threat_indicators(integration_id, indicators)["stored"]
+
+    def sync_threat_indicators(
+        self,
+        integration_id: str,
+        indicators: list[dict[str, object]],
+        *,
+        complete_snapshot: bool = False,
+    ) -> dict[str, int]:
         rows = [
             (
                 integration_id,
@@ -1135,30 +1142,48 @@ CREATE TABLE IF NOT EXISTS events (
             )
             for item in indicators
         ]
+        indicator_ids = [row[1] for row in rows]
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.executemany(
-                """
-                INSERT INTO threat_indicators (
-                    source_integration_id, indicator_id, indicator_type, value,
-                    category, event_id, comment, to_ids, source_timestamp
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (source_integration_id, indicator_id) DO UPDATE SET
-                    indicator_type = EXCLUDED.indicator_type,
-                    value = EXCLUDED.value,
-                    category = EXCLUDED.category,
-                    event_id = EXCLUDED.event_id,
-                    comment = EXCLUDED.comment,
-                    to_ids = EXCLUDED.to_ids,
-                    source_timestamp = EXCLUDED.source_timestamp,
-                    synced_at = NOW()
-                """,
-                rows,
-            )
+            if rows:
+                cursor.executemany(
+                    """
+                    INSERT INTO threat_indicators (
+                        source_integration_id, indicator_id, indicator_type, value,
+                        category, event_id, comment, to_ids, source_timestamp
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (source_integration_id, indicator_id) DO UPDATE SET
+                        indicator_type = EXCLUDED.indicator_type,
+                        value = EXCLUDED.value,
+                        category = EXCLUDED.category,
+                        event_id = EXCLUDED.event_id,
+                        comment = EXCLUDED.comment,
+                        to_ids = EXCLUDED.to_ids,
+                        source_timestamp = EXCLUDED.source_timestamp,
+                        synced_at = NOW()
+                    """,
+                    rows,
+                )
+            removed = 0
+            if complete_snapshot:
+                cursor.execute(
+                    """
+                    DELETE FROM threat_indicators
+                    WHERE source_integration_id = %s
+                      AND NOT (indicator_id = ANY(%s))
+                    """,
+                    (integration_id, indicator_ids),
+                )
+                removed = cursor.rowcount
             self._insert_audit(
                 cursor, "threat.indicators.synced", None, integration_id,
-                {"received": len(rows), "provider": "misp"},
+                {
+                    "received": len(rows),
+                    "removed": removed,
+                    "provider": "misp",
+                    "reconciled": complete_snapshot,
+                },
             )
-        return len(rows)
+        return {"stored": len(rows), "removed": removed}
 
     def list_threat_indicators(
         self, integration_id: str | None = None, limit: int = 200

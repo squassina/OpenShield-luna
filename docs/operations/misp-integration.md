@@ -33,7 +33,7 @@ curl 'http://localhost:8000/api/v1/threat-intel/matches?event_limit=500&indicato
 
 The sync follows MISP pagination using bounded pages of at most 250 attributes and a total cap of 1,000 indicators per run. Only `to_ids=true` attributes of supported types (`ip-src`, `ip-dst`, `domain`, `hostname`, and `url`) are retained. Duplicate attribute IDs across pages are collapsed. The API response flags when the total cap is reached because more results may exist; increase the cap only through a reviewed configuration change.
 
-Indicator upserts are idempotent by MISP source integration and attribute ID. Existing records not returned by a later sync are not automatically deleted or deactivated; review MISP deletion/expiration policy before relying on the local set as a complete mirror.
+Indicator upserts are idempotent by MISP source integration and attribute ID. Reconciliation removes stored indicators absent from a successfully fetched snapshot only when the result count is below the requested limit, which proves pagination ended before reaching the cap. A result at the cap is treated as potentially truncated: it is upserted, but no existing indicators are removed. Failed requests also leave the previous inventory untouched. This reconciles the supported, currently returned IDS-enabled attributes; MISP-side deletion and expiration semantics remain dependent on what the configured MISP search endpoint returns.
 
 ## Matching semantics
 
