@@ -26,7 +26,7 @@ from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
-from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
+from openshield.integrations.models import Capability, IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
@@ -557,10 +557,24 @@ def list_response_policies() -> list[dict[str, object]]:
 @app.post("/api/v1/response/policies", status_code=201, tags=["response"])
 def create_response_policy(request: ResponsePolicyRequest) -> dict[str, object]:
     provider = registry.get(request.provider_integration_id)
-    if provider is None or provider.kind not in {"pihole", "adguard"}:
-        raise HTTPException(status_code=422, detail="Response policy requires a Pi-hole or AdGuard integration")
-    if not provider.enabled:
-        raise HTTPException(status_code=409, detail="Response policy DNS provider is disabled")
+    if provider is None or not provider.enabled:
+        raise HTTPException(status_code=422, detail="Response policy provider is unavailable")
+    if request.action_type == "dns_block_domain" and provider.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=422, detail="DNS block policies require a Pi-hole or AdGuard integration")
+    if request.action_type == "firewall_block_ip":
+        gateway = gateway_connections.get_status(request.provider_integration_id)
+        capabilities = set(gateway.get("capabilities", [])) if gateway else set()
+        if (
+            provider.kind != "openwrt"
+            or not provider.config.get("rpc_configured")
+            or not store.get_integration_secret(request.provider_integration_id)
+            or not os.getenv("OPENSHIELD_GATEWAY_TOKEN")
+            or not {"execute_action", "verify_action"}.issubset(capabilities)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Firewall policy requires encrypted OpenWrt credentials, gateway token and execute/verify connector capabilities",
+            )
     policy = {
         "policy_id": "policy-" + uuid4().hex,
         **request.model_dump(),
@@ -818,9 +832,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
 
     encrypted_secret = store.get_integration_secret(request.gateway_id)
     action_capabilities = {Capability.EXECUTE_ACTION, Capability.VERIFY_ACTION}
-    if action_capabilities.intersection(request.capabilities) and (
-        not encrypted_secret or not _gateway_token_valid(http_request)
-    ):
+    if action_capabilities.intersection(request.capabilities) and not _gateway_token_valid(http_request):
         raise HTTPException(status_code=403, detail="Authenticated router credentials are required for enforcement capabilities")
     if encrypted_secret and not _gateway_token_valid(http_request):
         raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
