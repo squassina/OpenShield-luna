@@ -599,3 +599,74 @@ def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
     assert client.delete("/api/v1/integrations/opnsense-home/opnsense-credentials").status_code == 204
     assert client.get("/api/v1/integrations/opnsense-home/opnsense-diagnostics").status_code == 409
     assert client.get("/api/v1/integrations").json()[0]["config"]["auth_configured"] is False
+
+
+def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    registered = client.post("/api/v1/integrations", json={
+        "integration_id": "pfsense-home",
+        "kind": "pfsense",
+        "display_name": "Home pfSense CE",
+        "config": {"base_url": "https://192.0.2.2"},
+    })
+    assert registered.status_code == 201
+
+    saved = client.put("/api/v1/integrations/pfsense-home/pfsense-credentials", json={
+        "base_url": "https://192.0.2.2",
+        "api_key": "sensitive-pfsense-api-key",
+    })
+    assert saved.status_code == 200
+    assert "sensitive-pfsense-api-key" not in saved.text
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "pfsense-home"
+    )
+    assert integration["config"]["auth_configured"] is True
+    assert "api_key" not in str(integration)
+    encrypted = main.store.get_integration_secret("pfsense-home")
+    assert encrypted and b"sensitive-pfsense-api-key" not in encrypted
+    assert SecretStore(main.store).get("pfsense-home") == {
+        "base_url": "https://192.0.2.2",
+        "api_key": "sensitive-pfsense-api-key",
+    }
+
+    class FakePfSenseClient:
+        def __init__(self, base_url, api_key):
+            assert base_url == "https://192.0.2.2"
+            assert api_key == "sensitive-pfsense-api-key"
+
+        def diagnostics(self):
+            return {
+                "system": {"hostname": "pfsense"},
+                "interfaces": [{"name": "wan", "status": "up"}],
+                "arp": {"data": []},
+                "dhcp_leases": {"data": []},
+                "gateways": {"data": []},
+            }
+
+        def get(self, path):
+            assert path == "/api/v2/status/system"
+            return {"hostname": "pfsense"}
+
+    monkeypatch.setattr(main, "PfSenseClient", FakePfSenseClient)
+    diagnostics = client.get("/api/v1/integrations/pfsense-home/pfsense-diagnostics")
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["status"] == "connected"
+    assert diagnostics.json()["system"]["hostname"] == "pfsense"
+    connection = client.post("/api/v1/integrations/pfsense-home/test")
+    assert connection.status_code == 200
+    assert connection.json()["provider"] == "pfsense"
+    assert connection.json()["imported"] == 0
+
+    assert client.delete("/api/v1/integrations/pfsense-home/pfsense-credentials").status_code == 204
+    assert client.get("/api/v1/integrations/pfsense-home/pfsense-diagnostics").status_code == 409
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "pfsense-home"
+    )
+    assert integration["config"]["auth_configured"] is False
