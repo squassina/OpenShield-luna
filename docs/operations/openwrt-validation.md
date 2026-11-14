@@ -24,7 +24,7 @@ OPENSHIELD_API_PASSWORD=<strong-admin-password>
 OPENSHIELD_GATEWAY_SPOOL_PATH=/var/lib/openshield/gateway-spool.sqlite3
 ```
 
-Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. To rotate keys without downtime, set the new key as `OPENSHIELD_SECRET_KEY` and the old key in `OPENSHIELD_SECRET_KEY_PREVIOUS`; secrets are re-encrypted with the new key on read. After all secrets have been read/re-saved, remove the previous key. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, and `network.interface.dump`. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
+Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. To rotate keys without downtime, set the new key as `OPENSHIELD_SECRET_KEY` and the old key in `OPENSHIELD_SECRET_KEY_PREVIOUS`; secrets are re-encrypted with the new key on read. After all secrets have been read/re-saved, remove the previous key. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors`. Do not grant `file.exec` or generic shell execution. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
 
 ## 3. Start and verify
 
@@ -149,7 +149,40 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
 
 
-## 9. Dashboard router setup
+## 10. Device topology discovery helper
+
+The connector uses the same three data sources as the router-side inventory command:
+- `network.interface dump` maps kernel devices (including `l3_device`) to logical interfaces.
+- `luci-rpc getHostHints` resolves MAC addresses to friendly names.
+- `openshield get_ipv4_neighbors` returns the output of the fixed `ip -4 neigh show` command.
+
+Install the restricted rpcd helper on the router during setup (requires shell access):
+
+```sh
+install -d -m 0755 /usr/libexec/rpcd /usr/share/rpcd/acl.d
+# Copy scripts/openwrt/openshield-rpcd to /usr/libexec/rpcd/openshield
+chmod 0755 /usr/libexec/rpcd/openshield
+# Copy scripts/openwrt/openshield-rpcd-acl.json to /usr/share/rpcd/acl.d/openshield.json
+chmod 0644 /usr/share/rpcd/acl.d/openshield.json
+/etc/init.d/rpcd restart
+ubus list | grep '^openshield
+
+Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
+- Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.
+- Save credentials. The Node encrypts them using `OPENSHIELD_SECRET_KEY`; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
+- The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
+- Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
+
+The minimum ACL must permit session login, `system.board`, and `network.interface.dump` only. Confirm the exact rpcd ACL syntax against the installed OpenWrt release; do not copy broad write permissions from a generic example.
+
+ubus call openshield get_ipv4_neighbors
+```
+
+Assign the `openshield-readonly` ACL to the dedicated RPC user/group using the installed release's rpcd ACL configuration, alongside the listed read-only methods. The helper accepts no command or argument input and always runs exactly `ip -4 neigh show`; never substitute `file.exec`.
+
+The connector refreshes discovery on every heartbeat (default 30 seconds). Devices are keyed by normalized MAC, keep first/last-seen timestamps, and remain in inventory after disappearing from the neighbor table. The API reports `online` while last seen within 90 seconds and `offline` afterward. The dashboard groups devices by logical interface; IPv4 addresses and kernel devices are mutable attributes.
+
+## 11. Dashboard router setup
 
 Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
 - Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.

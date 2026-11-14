@@ -16,6 +16,13 @@ h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 14px}p{margin:4px 0;colo
 form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline input{flex:1;min-width:150px}.actions{display:flex;gap:6px}.danger{border-color:#784848;color:var(--bad)}dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:min(460px,calc(100% - 32px));padding:20px}dialog::backdrop{background:#0009}dialog form{display:grid;gap:12px}dialog label{display:grid;gap:5px;color:var(--muted)}dialog input{width:100%}.notice{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.notice.error{border-color:#784848;color:var(--bad)}.notice[hidden]{display:none}
 footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.columns{grid-template-columns:1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr 1fr}.metric{font-size:23px}header{align-items:flex-start}}
+.topology-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.topology-gateway,.topology-interface{border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.topology-interface{margin-top:10px;background:var(--panel2)}
+.topology-device{display:grid;grid-template-columns:1fr auto;gap:5px 10px;padding:9px 0;border-top:1px solid var(--line)}
+.topology-device small{grid-column:1/-1;color:var(--muted);overflow-wrap:anywhere}
+.device-state{font-size:.78rem;font-weight:700}
+.device-state.online{color:#16834a}.device-state.offline{color:#b66b16}
 </style>
 </head>
 <body>
@@ -85,6 +92,11 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <article class="panel"><h2>Top queried domains</h2><div id="domains" class="table-wrap"></div></article>
     <article class="panel"><h2>Top clients / devices</h2><div id="devices" class="table-wrap"></div></article>
   </section>
+  <section class="panel">
+    <h2>OpenWrt device topology</h2>
+    <p class="muted">Devices are identified by MAC and grouped by logical router interface. Offline devices remain in inventory.</p>
+    <div id="router-topology" class="topology-grid" aria-live="polite"></div>
+  </section>
   <section class="columns">
     <article class="panel"><h2>Network sensors</h2><div id="sensors" class="table-wrap"></div></article>
     <article class="panel"><h2>Observed IP inventory</h2><div id="inventory" class="table-wrap"></div></article>
@@ -133,10 +145,11 @@ async function load() {
   $("refresh").disabled=true; showNotice("Refreshing dashboard…");
   try {
     const days=$("period").value;
-    const [report,sources,sensors,devices,integrations,lists,inventory]=await Promise.all([
+    const [report,sources,sensors,devices,integrations,lists,inventory,inventoryTopology]=await Promise.all([
       api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
       api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
-      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20")
+      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
+      api("/api/v1/inventory/router-devices?limit=500")
     ]);
     $("queries").textContent=fmt(report.totals.queries);
     $("blocked").textContent=fmt(report.totals.blocked);
@@ -146,6 +159,7 @@ async function load() {
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations);
     renderIntegrations(integrations);
+    renderRouterTopology(inventoryTopology);
     await loadOpenWrtStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
@@ -340,6 +354,50 @@ $("service-form").addEventListener("submit",async event=>{
   finally { button.disabled=false; }
 });
 
+function renderRouterTopology(data) {
+  const root=$("router-topology");root.replaceChildren();
+  const gateways=Array.isArray(data.gateways)?data.gateways:[];
+  const devices=Array.isArray(data.devices)?data.devices:[];
+  if(!gateways.length) {
+    const p=document.createElement("p");p.className="empty";
+    p.textContent="No OpenWrt discovery snapshot received yet.";root.append(p);return;
+  }
+  gateways.forEach(gateway=>{
+    const board=gateway.board||{};
+    const panel=document.createElement("article");panel.className="topology-gateway";
+    const heading=document.createElement("h3");
+    heading.textContent=(board.hostname||gateway.gateway_id)+" · "+gateway.gateway_id;
+    panel.append(heading);
+    const interfaces=Array.isArray(gateway.interfaces)?gateway.interfaces:[];
+    const renderInterface=(iface,members)=>{
+      const group=document.createElement("section");group.className="topology-interface";
+      const title=document.createElement("h4");
+      title.textContent=(iface.name||"Unmapped")+" · "+(iface.device||iface.l3_device||"device unknown")+
+        (iface.up===true?" · up":iface.up===false?" · down":"");
+      group.append(title);
+      if(!members.length){const empty=document.createElement("p");empty.className="empty";empty.textContent="No neighbor entries";group.append(empty);}
+      members.forEach(item=>{
+        const card=document.createElement("div");card.className="topology-device";
+        const name=document.createElement("strong");name.textContent=item.name||"(sem-nome)";
+        const state=document.createElement("span");state.className="device-state "+(item.status==="online"?"online":"offline");
+        state.textContent=item.status==="online"?"Online":"Offline";
+        const meta=document.createElement("small");
+        meta.textContent=[item.ip_address,(item.ipv4_addresses||[]).join(", "),item.mac_address].filter(Boolean).join(" · ");
+        const detail=document.createElement("small");
+        detail.textContent="L2: "+(item.device||"—")+" · Visto: "+new Date(item.last_seen).toLocaleString();
+        card.append(name,state,meta,detail);group.append(card);
+      });
+      panel.append(group);
+    };
+    const mapped=new Set(interfaces.map(item=>item.name));
+    interfaces.forEach(iface=>renderInterface(
+      iface,devices.filter(item=>item.gateway_id===gateway.gateway_id&&item.interface===(iface.name||""))
+    ));
+    const unmapped=devices.filter(item=>item.gateway_id===gateway.gateway_id&&!mapped.has(item.interface));
+    if(unmapped.length)renderInterface({name:"Unmapped"},unmapped);
+    root.append(panel);
+  });
+}
 function renderTrend(rows) {
   const root=$("trend");root.replaceChildren();
   if(!rows.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS trend data yet";root.append(p);return;}

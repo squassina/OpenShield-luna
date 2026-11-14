@@ -209,6 +209,15 @@ def run_agent(
                 if spool is not None:
                     _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:
+                    try:
+                        discovery = openwrt_client.discover()
+                        _deliver_event(
+                            client,
+                            _event(integration_id, "gateway.discovery", discovery),
+                            spool,
+                        )
+                    except OpenWrtRPCError as exc:
+                        logger.warning("OpenWrt device discovery failed: %s", exc)
                     health = openwrt_client.health_check()
                     _deliver_event(
                         client,

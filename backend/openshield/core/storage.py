@@ -1,3 +1,5 @@
+import ipaddress
+import re
 import threading
 from datetime import UTC, datetime
 
@@ -111,6 +113,27 @@ CREATE TABLE IF NOT EXISTS events (
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS gateway_discovery_snapshots (
+                    gateway_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    observed_at TIMESTAMPTZ NOT NULL
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS network_devices (
+                    gateway_id TEXT NOT NULL,
+                    mac_address TEXT NOT NULL,
+                    payload JSONB NOT NULL,
+                    first_seen_at TIMESTAMPTZ NOT NULL,
+                    last_seen_at TIMESTAMPTZ NOT NULL,
+                    PRIMARY KEY (gateway_id, mac_address)
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS network_devices_last_seen_idx
+                ON network_devices (last_seen_at DESC)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS audit_records (
                     audit_id BIGSERIAL PRIMARY KEY,
                     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -144,7 +167,7 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, network_devices, gateway_discovery_snapshots, integration_poll_cursors, privacy_classification_overrides, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
 
     def set_integration_secret(self, integration_id: str, encrypted_value: bytes) -> None:
@@ -326,6 +349,86 @@ CREATE TABLE IF NOT EXISTS events (
             )
         return True
 
+    def record_gateway_discovery(
+        self, gateway_id: str, payload: dict[str, object], observed_at: datetime
+    ) -> None:
+        snapshot = {
+            "board": payload.get("board", {}),
+            "interfaces": payload.get("interfaces", []),
+            "device_discovery": payload.get("device_discovery", {}),
+        }
+        devices = payload.get("devices", [])
+        if not isinstance(devices, list):
+            devices = []
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO gateway_discovery_snapshots (gateway_id, payload, observed_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (gateway_id) DO UPDATE
+                SET payload = CASE
+                        WHEN EXCLUDED.observed_at >= gateway_discovery_snapshots.observed_at
+                        THEN EXCLUDED.payload ELSE gateway_discovery_snapshots.payload END,
+                    observed_at = GREATEST(gateway_discovery_snapshots.observed_at, EXCLUDED.observed_at)
+                """,
+                (gateway_id, Jsonb(snapshot), observed_at),
+            )
+            for device in devices:
+                if not isinstance(device, dict):
+                    continue
+                mac = device.get("mac_address")
+                if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
+                    continue
+                try:
+                    ipaddress.IPv4Address(device.get("ip_address", ""))
+                except ipaddress.AddressValueError:
+                    continue
+                normalized_mac = mac.lower()
+                cursor.execute(
+                    """
+                    INSERT INTO network_devices (
+                        gateway_id, mac_address, payload, first_seen_at, last_seen_at
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (gateway_id, mac_address) DO UPDATE
+                    SET payload = CASE
+                            WHEN EXCLUDED.last_seen_at >= network_devices.last_seen_at
+                            THEN EXCLUDED.payload ELSE network_devices.payload END,
+                        last_seen_at = GREATEST(network_devices.last_seen_at, EXCLUDED.last_seen_at)
+                    """,
+                    (gateway_id, normalized_mac, Jsonb(device), observed_at, observed_at),
+                )
+
+    def list_gateway_discovery_snapshots(self) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT gateway_id, payload, observed_at FROM gateway_discovery_snapshots "
+                "ORDER BY observed_at DESC, gateway_id"
+            )
+            rows = cursor.fetchall()
+        return [
+            {"gateway_id": row[0], "payload": row[1], "observed_at": row[2]}
+            for row in rows
+        ]
+
+    def list_gateway_devices(self, limit: int = 2000) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT gateway_id, mac_address, payload, first_seen_at, last_seen_at
+                FROM network_devices
+                ORDER BY last_seen_at DESC, gateway_id, mac_address
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "gateway_id": row[0], "mac_address": row[1], "payload": row[2],
+                "first_seen_at": row[3], "last_seen_at": row[4],
+            }
+            for row in rows
+        ]
     def list_events_page(self, integration_id=None, event_type=None, severity=None, limit=200, cursor=None):
         filters = []
         params = []
