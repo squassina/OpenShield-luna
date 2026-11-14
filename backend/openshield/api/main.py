@@ -362,7 +362,7 @@ def save_opnsense_credentials(
     if integration is None or integration.kind != "opnsense":
         raise HTTPException(status_code=404, detail="OPNsense integration not found")
     try:
-        client = OPNsenseClient(
+        OPNsenseClient(
             credentials.base_url, credentials.api_key, credentials.api_secret.get_secret_value()
         )
         SecretStore(store).set(integration_id, {
