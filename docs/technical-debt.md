@@ -36,7 +36,7 @@ The detailed installation and acceptance procedure is in [the OpenWrt validation
 - [Issue #4 — Validate Suricata and Zeek with live sensor deployments](https://github.com/squassina/OpenShield/issues/4)
   - P1 tests validate representative JSON records and the ingestion API. They do not prove live packet capture or end-to-end sensor deployment.
 - [Issue #5 — Complete device identity enrichment across sources](https://github.com/squassina/OpenShield/issues/5)
-  - OpenWrt IPv4 neighbor discovery now adds MAC identity, host-hint names, logical-interface mapping, and first/last-seen history to the router inventory. Remaining: IPv6 NDP, complete DHCP lease and Wi-Fi association ingestion, identity reconciliation across OpenWrt/Suricata/Zeek, conflict handling, and identity confidence.
+  - Native LuCI host hints now provide MAC identity and IPv4/IPv6 address hints; DHCP leases enrich hostname and logical-interface data where available. Remaining: richer Wi-Fi association and topology data, identity reconciliation across OpenWrt/Suricata/Zeek, conflict handling, and identity confidence.
 - [Issue #6 — Event retention, pagination, and sustained-load validation](https://github.com/squassina/OpenShield/issues/6)
   - Event filters/limits and inventory/topology aggregation now execute in PostgreSQL. Retention, cursor pagination, load benchmarks, and long-term storage strategy remain open.
 - [Issue #7 — Authenticate sensor ingestion before Business deployment](https://github.com/squassina/OpenShield/issues/7)
