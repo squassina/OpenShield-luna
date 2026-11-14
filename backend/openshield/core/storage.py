@@ -89,6 +89,49 @@ CREATE TABLE IF NOT EXISTS events (
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS response_policies (
+                    policy_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS response_actions (
+                    action_id TEXT PRIMARY KEY,
+                    policy_id TEXT NOT NULL,
+                    incident_id TEXT NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL CHECK (status IN (
+                        'pending_approval', 'approved', 'active', 'already_enforced',
+                        'failed', 'rollback_pending', 'rolled_back', 'rejected',
+                        'cancelled_by_kill_switch', 'blocked_by_kill_switch'
+                    )),
+                    payload JSONB NOT NULL,
+                    expires_at TIMESTAMPTZ,
+                    next_attempt_at TIMESTAMPTZ,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (policy_id, incident_id)
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS response_actions_expiry_idx
+                ON response_actions (status, expires_at, next_attempt_at)
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS response_control (
+                    control_id SMALLINT PRIMARY KEY CHECK (control_id = 1),
+                    kill_switch_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                    reason TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """,
+                """
+                INSERT INTO response_control (control_id, kill_switch_enabled)
+                VALUES (1, FALSE) ON CONFLICT (control_id) DO NOTHING
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS incident_investigations (
                     investigation_id TEXT PRIMARY KEY,
                     incident_id TEXT NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
@@ -189,7 +232,7 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, incident_investigations, incident_events, incidents, threat_intel_cache, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
+                "TRUNCATE TABLE audit_records, response_actions, response_policies, response_control, integration_poll_cursors, privacy_classification_overrides, incident_investigations, incident_events, incidents, threat_intel_cache, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
             )
 
     def create_incident_investigation(
@@ -452,6 +495,203 @@ CREATE TABLE IF NOT EXISTS events (
                 {"status": status, "reason": reason[:200]},
             )
         return payload
+
+    def create_response_policy(self, policy: dict[str, object]) -> None:
+        policy_id = str(policy["policy_id"])
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO response_policies (policy_id, payload)
+                VALUES (%s, %s) ON CONFLICT (policy_id) DO NOTHING
+                RETURNING policy_id
+                """,
+                (policy_id, Jsonb(policy)),
+            )
+            if cursor.fetchone() is None:
+                raise ValueError("Response policy already exists")
+            self._insert_audit(
+                cursor, "response.policy.created", None, policy_id,
+                {"action_type": policy.get("action_type"), "provider_integration_id": policy.get("provider_integration_id")},
+            )
+
+    def get_response_policy(self, policy_id: str) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT payload FROM response_policies WHERE policy_id = %s", (policy_id,))
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def list_response_policies(self) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT payload FROM response_policies ORDER BY created_at, policy_id")
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    def update_response_policy(self, policy: dict[str, object]) -> dict[str, object] | None:
+        policy_id = str(policy["policy_id"])
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE response_policies SET payload = %s, updated_at = NOW()
+                WHERE policy_id = %s RETURNING policy_id
+                """,
+                (Jsonb(policy), policy_id),
+            )
+            if cursor.fetchone() is None:
+                return None
+            self._insert_audit(
+                cursor, "response.policy.updated", None, policy_id,
+                {"enabled": policy.get("enabled"), "action_type": policy.get("action_type")},
+            )
+        return policy
+
+    def delete_response_policy(self, policy_id: str) -> bool:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM response_policies WHERE policy_id = %s RETURNING policy_id",
+                (policy_id,),
+            )
+            deleted = cursor.fetchone() is not None
+            if deleted:
+                self._insert_audit(cursor, "response.policy.deleted", None, policy_id, {})
+            return deleted
+
+    def create_response_action(self, action: dict[str, object]) -> tuple[dict[str, object], bool]:
+        action_id = str(action["action_id"])
+        policy_id = str(action["policy_id"])
+        incident_id = str(action["incident_id"])
+        status = str(action["status"])
+        expires_at = action.get("expires_at")
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO response_actions (action_id, policy_id, incident_id, status, payload, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (policy_id, incident_id) DO NOTHING
+                RETURNING payload
+                """,
+                (action_id, policy_id, incident_id, status, Jsonb(action), expires_at),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                cursor.execute(
+                    "SELECT payload FROM response_actions WHERE policy_id = %s AND incident_id = %s",
+                    (policy_id, incident_id),
+                )
+                existing = cursor.fetchone()
+                return existing[0], False
+            self._insert_audit(
+                cursor, "response.action.created", None, action_id,
+                {"policy_id": policy_id, "incident_id": incident_id, "status": status, "action_type": action.get("action_type")},
+            )
+        return row[0], True
+
+    def get_response_action(self, action_id: str) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT payload FROM response_actions WHERE action_id = %s", (action_id,))
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    def list_response_actions(self, limit: int = 100, status: str | None = None) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            if status:
+                cursor.execute(
+                    "SELECT payload FROM response_actions WHERE status = %s ORDER BY created_at DESC LIMIT %s",
+                    (status, limit),
+                )
+            else:
+                cursor.execute(
+                    "SELECT payload FROM response_actions ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    def list_active_response_actions(self) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT payload FROM response_actions WHERE status IN ('active', 'rollback_pending') ORDER BY created_at"
+            )
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    def list_due_response_actions(self) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT payload FROM response_actions
+                WHERE status IN ('active', 'rollback_pending')
+                  AND expires_at <= NOW()
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+                ORDER BY expires_at LIMIT 100
+                """
+            )
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    def update_response_action(
+        self, action_id: str, payload: dict[str, object], *,
+        expires_at=None, next_attempt_at=None, attempts: int | None = None,
+    ) -> dict[str, object] | None:
+        status = str(payload["status"])
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT payload FROM response_actions WHERE action_id = %s FOR UPDATE",
+                (action_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            merged = {**row[0], **payload}
+            cursor.execute(
+                """
+                UPDATE response_actions
+                SET status = %s, payload = %s, expires_at = %s,
+                    next_attempt_at = %s,
+                    attempts = COALESCE(%s, attempts),
+                    updated_at = NOW()
+                WHERE action_id = %s
+                """,
+                (status, Jsonb(merged), expires_at, next_attempt_at, attempts, action_id),
+            )
+            self._insert_audit(
+                cursor, f"response.action.{status}", None, action_id,
+                {"policy_id": merged.get("policy_id"), "action_type": merged.get("action_type"),
+                 "attempts": attempts if attempts is not None else 0},
+            )
+        return merged
+
+    def get_response_control(self) -> dict[str, object]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT kill_switch_enabled, reason, updated_at FROM response_control WHERE control_id = 1"
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return {"kill_switch_enabled": False, "reason": "", "updated_at": None}
+        return {
+            "kill_switch_enabled": row[0], "reason": row[1],
+            "updated_at": row[2].isoformat(),
+        }
+
+    def set_response_control(self, enabled: bool, reason: str = "") -> dict[str, object]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO response_control (control_id, kill_switch_enabled, reason)
+                VALUES (1, %s, %s)
+                ON CONFLICT (control_id) DO UPDATE
+                SET kill_switch_enabled = EXCLUDED.kill_switch_enabled,
+                    reason = EXCLUDED.reason, updated_at = NOW()
+                RETURNING updated_at
+                """,
+                (enabled, reason[:500]),
+            )
+            updated_at = cursor.fetchone()[0]
+            self._insert_audit(
+                cursor, "response.kill_switch.updated", None, "global",
+                {"enabled": enabled, "reason": reason[:200]},
+            )
+        return {"kill_switch_enabled": enabled, "reason": reason[:500], "updated_at": updated_at.isoformat()}
 
     def set_integration_secret(self, integration_id: str, encrypted_value: bytes) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
