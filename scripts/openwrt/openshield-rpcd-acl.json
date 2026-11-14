@@ -1,0 +1,21 @@
+{
+  "openshield-readonly": {
+    "description": "Read-only OpenShield device discovery",
+    "read": {
+      "ubus": {
+        "system": [
+          "board"
+        ],
+        "network.interface": [
+          "dump"
+        ],
+        "luci-rpc": [
+          "getHostHints"
+        ],
+        "openshield": [
+          "get_ipv4_neighbors"
+        ]
+      }
+    }
+  }
+}
