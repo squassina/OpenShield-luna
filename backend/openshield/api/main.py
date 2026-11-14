@@ -22,10 +22,16 @@ from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
+from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
+from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
+from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
+from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
+from openshield.integrations.prometheus import PrometheusAdapter, PrometheusClient, PrometheusError
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.polling import (
@@ -164,10 +170,14 @@ async def authenticate_requests(request: Request, call_next):
         if denied is not None:
             return denied
         response = await call_next(request)
-    if (
-        path.startswith("/api/v1/gateway/")
-        or path.endswith("/openwrt-credentials")
-    ):
+    if path.startswith("/api/v1/gateway/") or path.endswith((
+        "/openwrt-credentials", "/opnsense-credentials", "/pfsense-credentials",
+        "/opnsense-diagnostics", "/pfsense-diagnostics",
+        "/crowdsec-credentials", "/crowdsec-diagnostics",
+        "/wazuh-credentials", "/wazuh-diagnostics",
+        "/prometheus-credentials", "/prometheus-diagnostics",
+        "/grafana-credentials", "/grafana-diagnostics",
+    )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -206,6 +216,12 @@ gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
 adapters = {
     "openwrt": OpenWrtAdapter(),
+    "opnsense": OPNsenseAdapter(),
+    "pfsense": PfSenseAdapter(),
+    "crowdsec": CrowdSecAdapter(),
+    "wazuh": WazuhAdapter(),
+    "prometheus": PrometheusAdapter(),
+    "grafana": GrafanaAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -222,6 +238,40 @@ class PrivacyListEntry(BaseModel):
 class ClassificationOverrideRequest(BaseModel):
     action: Literal["allow", "tracker"]
     reason: str = Field(default="", max_length=500)
+
+
+class OPNsenseCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    api_key: str = Field(min_length=1, max_length=512)
+    api_secret: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class PfSenseCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    api_key: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class CrowdSecCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    bouncer_api_key: SecretStr = Field(min_length=1, max_length=1024)
+    machine_id: str | None = Field(default=None, max_length=128)
+    machine_password: SecretStr | None = Field(default=None, max_length=1024)
+
+
+class WazuhCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    username: SecretStr = Field(min_length=1, max_length=256)
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class PrometheusCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    bearer_token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class GrafanaCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    bearer_token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
 
 
 class OpenWrtCredentials(BaseModel):
@@ -309,6 +359,128 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     if not item.enabled:
         raise HTTPException(status_code=409, detail="Integration is disabled")
+    if item.kind == "opnsense":
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="OPNsense credentials are not configured")
+        try:
+            client = OPNsenseClient(
+                str(credentials["base_url"]), str(credentials["api_key"]),
+                str(credentials["api_secret"]),
+            )
+            system = client.get("/api/diagnostics/system/system_information")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
+        except OPNsenseError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "connected", "integration_id": integration_id, "provider": "opnsense",
+                "system_information_available": bool(system), "imported": 0}
+    if item.kind == "pfsense":
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="pfSense API key is not configured")
+        try:
+            client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+            system = client.get("/api/v2/status/system")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
+        except PfSenseError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id, "provider": "pfsense",
+            "system_information_available": bool(system), "imported": 0,
+        }
+    if item.kind == "crowdsec":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+            diagnostics = CrowdSecClient(
+                str(credentials["base_url"]),
+                str(credentials["bouncer_api_key"]),
+                str(credentials.get("machine_id") or "") or None,
+                str(credentials.get("machine_password") or "") or None,
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+        except CrowdSecError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        summary = diagnostics["summary"]
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "crowdsec",
+            "alerts_available": summary["alerts_available"],
+            "decisions_available": summary["decisions_available"],
+            "imported": 0,
+        }
+    if item.kind == "wazuh":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="Wazuh credentials are not configured")
+            diagnostics = WazuhClient(
+                str(credentials["base_url"]),
+                str(credentials["username"]),
+                str(credentials["password"]),
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Stored Wazuh credentials are invalid"
+            ) from exc
+        except WazuhError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "wazuh",
+            "agents_available": diagnostics["summary"]["agents_available"],
+            "imported": 0,
+        }
+    if item.kind == "prometheus":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
+            diagnostics = PrometheusClient(
+                str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored Prometheus configuration is invalid") from exc
+        except PrometheusError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "connected", "integration_id": integration_id, "provider": "prometheus",
+                "targets_available": diagnostics["summary"]["targets_available"], "imported": 0}
+    if item.kind == "grafana":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="Grafana configuration is not saved")
+            diagnostics = GrafanaClient(
+                str(credentials["base_url"]),
+                str(credentials.get("bearer_token") or "") or None,
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Stored Grafana configuration is invalid"
+            ) from exc
+        except GrafanaError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "grafana",
+            "dashboards_returned": diagnostics["summary"]["dashboards_returned"],
+            "imported": 0,
+        }
     if item.kind in {"pihole", "adguard"}:
         try:
             records = fetch_dns_records(item)
@@ -329,6 +501,407 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "ingestion_endpoint": f"/api/v1/sensors/{integration_id}/events",
         }
     raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
+
+@app.put("/api/v1/integrations/{integration_id}/opnsense-credentials", tags=["integrations"])
+def save_opnsense_credentials(
+    integration_id: str, credentials: OPNsenseCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    try:
+        OPNsenseClient(
+            credentials.base_url, credentials.api_key, credentials.api_secret.get_secret_value()
+        )
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "api_key": credentials.api_key,
+            "api_secret": credentials.api_secret.get_secret_value(),
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/opnsense-credentials", tags=["integrations"])
+def delete_opnsense_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/opnsense-diagnostics", tags=["integrations"])
+def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="OPNsense credentials are not configured")
+        client = OPNsenseClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            str(credentials["api_secret"]),
+        )
+        return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
+    except OPNsenseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
+def save_pfsense_credentials(
+    integration_id: str, credentials: PfSenseCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    try:
+        PfSenseClient(credentials.base_url, credentials.api_key.get_secret_value())
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "api_key": credentials.api_key.get_secret_value(),
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
+def delete_pfsense_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/pfsense-diagnostics", tags=["integrations"])
+def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="pfSense API key is not configured")
+        client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
+    except PfSenseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
+def save_crowdsec_credentials(
+    integration_id: str, credentials: CrowdSecCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    machine_id = credentials.machine_id.strip() if credentials.machine_id else ""
+    machine_password = (
+        credentials.machine_password.get_secret_value()
+        if credentials.machine_password is not None else ""
+    )
+    if bool(machine_id) != bool(machine_password):
+        raise HTTPException(
+            status_code=422,
+            detail="CrowdSec machine ID and password must be supplied together",
+        )
+    try:
+        CrowdSecClient(
+            credentials.base_url,
+            credentials.bouncer_api_key.get_secret_value(),
+            machine_id or None,
+            machine_password or None,
+        )
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "bouncer_api_key": credentials.bouncer_api_key.get_secret_value(),
+            "machine_id": machine_id or None,
+            "machine_password": machine_password or None,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+        "alerts_auth_configured": bool(machine_id),
+    }))
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "secret_storage": "encrypted",
+        "alerts_auth_configured": bool(machine_id),
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
+def delete_crowdsec_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+        "alerts_auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/crowdsec-diagnostics", tags=["integrations"])
+def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+        client = CrowdSecClient(
+            str(credentials["base_url"]),
+            str(credentials["bouncer_api_key"]),
+            str(credentials.get("machine_id") or "") or None,
+            str(credentials.get("machine_password") or "") or None,
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+    except CrowdSecError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
+def save_wazuh_credentials(
+    integration_id: str, credentials: WazuhCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    username = credentials.username.get_secret_value()
+    password = credentials.password.get_secret_value()
+    try:
+        WazuhClient(credentials.base_url, username, password)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "username": username,
+            "password": password,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
+def delete_wazuh_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/wazuh-diagnostics", tags=["integrations"])
+def wazuh_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="Wazuh credentials are not configured")
+        client = WazuhClient(
+            str(credentials["base_url"]),
+            str(credentials["username"]),
+            str(credentials["password"]),
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored Wazuh credentials are invalid") from exc
+    except WazuhError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/prometheus-credentials", tags=["integrations"])
+def save_prometheus_credentials(
+    integration_id: str, credentials: PrometheusCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "prometheus":
+        raise HTTPException(status_code=404, detail="Prometheus integration not found")
+    token = credentials.bearer_token.get_secret_value() if credentials.bearer_token else None
+    try:
+        PrometheusClient(credentials.base_url, token)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"), "bearer_token": token,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "base_url": credentials.base_url.rstrip("/"), "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted",
+            "authentication": "bearer" if token else "none"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/prometheus-credentials", tags=["integrations"])
+def delete_prometheus_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "prometheus":
+        raise HTTPException(status_code=404, detail="Prometheus integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/prometheus-diagnostics", tags=["integrations"])
+def prometheus_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "prometheus":
+        raise HTTPException(status_code=404, detail="Prometheus integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
+        client = PrometheusClient(
+            str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None
+        )
+        return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored Prometheus configuration is invalid") from exc
+    except PrometheusError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
+def save_grafana_credentials(
+    integration_id: str, credentials: GrafanaCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    token = credentials.bearer_token.get_secret_value() if credentials.bearer_token else None
+    try:
+        GrafanaClient(credentials.base_url, token)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "bearer_token": token,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "secret_storage": "encrypted",
+        "authentication": "bearer" if token else "none",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
+def delete_grafana_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/grafana-diagnostics", tags=["integrations"])
+def grafana_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="Grafana configuration is not saved")
+        client = GrafanaClient(
+            str(credentials["base_url"]),
+            str(credentials.get("bearer_token") or "") or None,
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
+    except GrafanaError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
 
 @app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
 def save_openwrt_credentials(

@@ -63,6 +63,82 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="openwrt-status" class="notice" role="status" aria-live="polite">Checking router status…</div>
     <div id="openwrt-details" class="table-wrap"></div>
     <div id="openwrt-actions" class="toolbar"></div>
+    <h3>OPNsense firewall</h3>
+    <p>Configure a read-only OPNsense API key. The API secret is encrypted by OpenShield and never returned to the browser.</p>
+    <form id="opnsense-form" class="inline">
+      <input id="opnsense-id" placeholder="Integration ID (e.g. opnsense-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="OPNsense integration ID">
+      <input id="opnsense-name" placeholder="Display name" value="OPNsense firewall" required maxlength="120" aria-label="OPNsense display name">
+      <input id="opnsense-url" type="url" placeholder="https://192.168.1.1" required aria-label="OPNsense URL">
+      <input id="opnsense-key" placeholder="API key" required autocomplete="off" aria-label="OPNsense API key">
+      <input id="opnsense-secret" type="password" placeholder="API secret" required autocomplete="new-password" aria-label="OPNsense API secret">
+      <button class="primary" type="submit">Save OPNsense credentials</button>
+    </form>
+    <div id="opnsense-status" class="notice" role="status" aria-live="polite">No OPNsense firewall configured.</div>
+    <div id="opnsense-details" class="table-wrap"></div>
+    <div id="opnsense-actions" class="toolbar"></div>
+    <h3>pfSense CE firewall</h3>
+    <p>Requires the community pfSense REST API v2 package to be installed and configured manually. OpenShield uses its read-only endpoints; it never installs the package or changes firewall settings. The API key is encrypted at rest.</p>
+    <form id="pfsense-form" class="inline">
+      <input id="pfsense-id" placeholder="Integration ID (e.g. pfsense-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="pfSense integration ID">
+      <input id="pfsense-name" placeholder="Display name" value="pfSense CE firewall" required maxlength="120" aria-label="pfSense display name">
+      <input id="pfsense-url" type="url" placeholder="https://192.168.1.1" required aria-label="pfSense URL">
+      <input id="pfsense-key" type="password" placeholder="REST API key" required autocomplete="new-password" aria-label="pfSense REST API key">
+      <button class="primary" type="submit">Save pfSense API key</button>
+    </form>
+    <div id="pfsense-status" class="notice" role="status" aria-live="polite">No pfSense CE firewall configured.</div>
+    <div id="pfsense-details" class="table-wrap"></div>
+    <div id="pfsense-actions" class="toolbar"></div>
+    <h3>CrowdSec threat intelligence</h3>
+    <p>Connect to the CrowdSec Local API. A bouncer API key reads decisions. Optional machine credentials enable alert history; OpenShield uses them only to log in and issue read-only GET requests.</p>
+    <form id="crowdsec-form" class="inline">
+      <input id="crowdsec-id" placeholder="Integration ID (e.g. crowdsec-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="CrowdSec integration ID">
+      <input id="crowdsec-name" placeholder="Display name" value="CrowdSec Local API" required maxlength="120" aria-label="CrowdSec display name">
+      <input id="crowdsec-url" type="url" placeholder="http://192.168.1.10:8080" required aria-label="CrowdSec Local API URL">
+      <input id="crowdsec-machine-id" placeholder="Machine ID (optional for alerts)" autocomplete="username" aria-label="CrowdSec machine ID">
+      <input id="crowdsec-machine-password" type="password" placeholder="Machine password (optional)" autocomplete="new-password" aria-label="CrowdSec machine password">
+      <input id="crowdsec-bouncer-key" type="password" placeholder="Bouncer API key (required)" required autocomplete="new-password" aria-label="CrowdSec bouncer API key">
+      <button class="primary" type="submit">Save CrowdSec credentials</button>
+    </form>
+    <div id="crowdsec-status" class="notice" role="status" aria-live="polite">No CrowdSec Local API configured.</div>
+    <div id="crowdsec-details" class="table-wrap"></div>
+    <div id="crowdsec-actions" class="toolbar"></div>
+    <h3>Wazuh security monitoring</h3>
+    <p>Connect to the Wazuh Server API. OpenShield authenticates with a dedicated API user, then reads manager status, version, and up to 500 agent records. Credentials are encrypted at rest; no agent or manager changes are performed.</p>
+    <form id="wazuh-form" class="inline">
+      <input id="wazuh-id" placeholder="Integration ID (e.g. wazuh-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Wazuh integration ID">
+      <input id="wazuh-name" placeholder="Display name" value="Wazuh Server API" required maxlength="120" aria-label="Wazuh display name">
+      <input id="wazuh-url" type="url" placeholder="https://192.168.1.20:55000" required aria-label="Wazuh Server API URL">
+      <input id="wazuh-username" placeholder="Read-only API username" required maxlength="256" autocomplete="username" aria-label="Wazuh API username">
+      <input id="wazuh-password" type="password" placeholder="API password" required maxlength="1024" autocomplete="new-password" aria-label="Wazuh API password">
+      <button class="primary" type="submit">Save Wazuh credentials</button>
+    </form>
+    <div id="wazuh-status" class="notice" role="status" aria-live="polite">No Wazuh Server API configured.</div>
+    <div id="wazuh-details" class="table-wrap"></div>
+    <div id="wazuh-actions" class="toolbar"></div>
+    <h3>Prometheus metrics server</h3>
+    <p>Read-only Prometheus HTTP API diagnostics. OpenShield checks runtime information and scrape target health; it does not import, store, or re-export metrics. Bearer token is optional and encrypted at rest.</p>
+    <form id="prometheus-form" class="inline">
+      <input id="prometheus-id" placeholder="Integration ID (e.g. prometheus-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Prometheus integration ID">
+      <input id="prometheus-name" placeholder="Display name" value="Prometheus" required maxlength="120" aria-label="Prometheus display name">
+      <input id="prometheus-url" type="url" placeholder="http://prometheus:9090" required aria-label="Prometheus URL">
+      <input id="prometheus-token" type="password" placeholder="Bearer token (optional)" autocomplete="new-password" aria-label="Prometheus bearer token">
+      <button class="primary" type="submit">Save Prometheus connection</button>
+    </form>
+    <div id="prometheus-status" class="notice" role="status" aria-live="polite">No Prometheus server configured.</div>
+    <div id="prometheus-details" class="table-wrap"></div>
+    <div id="prometheus-actions" class="toolbar"></div>
+    <h3>Grafana dashboards</h3>
+    <p>Read-only Grafana HTTP API diagnostics. OpenShield checks instance health and lists up to 100 dashboards. It does not change dashboards, data sources, alerts, or metrics. A service-account bearer token is optional and encrypted at rest.</p>
+    <form id="grafana-form" class="inline">
+      <input id="grafana-id" placeholder="Integration ID (e.g. grafana-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Grafana integration ID">
+      <input id="grafana-name" placeholder="Display name" value="Grafana" required maxlength="120" aria-label="Grafana display name">
+      <input id="grafana-url" type="url" placeholder="http://grafana:3000" required aria-label="Grafana URL">
+      <input id="grafana-token" type="password" placeholder="Service account token (optional)" autocomplete="new-password" aria-label="Grafana service account token">
+      <button class="primary" type="submit">Save Grafana connection</button>
+    </form>
+    <div id="grafana-status" class="notice" role="status" aria-live="polite">No Grafana server configured.</div>
+    <div id="grafana-details" class="table-wrap"></div>
+    <div id="grafana-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -161,6 +237,12 @@ async function load() {
     renderIntegrations(integrations);
     renderRouterTopology(inventoryTopology);
     await loadOpenWrtStatus(integrations);
+    await loadOpnsenseStatus(integrations);
+    await loadPfsenseStatus(integrations);
+    await loadCrowdSecStatus(integrations);
+    await loadWazuhStatus(integrations);
+    await loadPrometheusStatus(integrations);
+      await loadGrafanaStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -257,6 +339,359 @@ async function loadOpenWrtStatus(integrations) {
     } catch(error) { showNotice("Could not remove credentials: "+error.message,true); }
   }));
 }
+async function loadOpnsenseStatus(integrations) {
+  const root=$("opnsense-status"),details=$("opnsense-details"),actions=$("opnsense-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="opnsense");
+  if(!item) { root.textContent="No OPNsense firewall configured.";root.classList.remove("error");return; }
+  $("opnsense-id").value=item.integration_id;
+  $("opnsense-name").value=item.display_name;
+  $("opnsense-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Credentials configured":"Credentials required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/opnsense-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({system:data.system,firewall:data.firewall,arp:data.arp},null,2);
+        details.replaceChildren(pre);root.textContent=item.display_name+" · Connected · Read-only diagnostics loaded";
+      } catch(error) { root.textContent="OPNsense diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted OPNsense credentials for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/opnsense-credentials",{method:"DELETE"});details.replaceChildren();showNotice("OPNsense credentials removed.");await load(); }
+      catch(error) { showNotice("Could not remove OPNsense credentials: "+error.message,true); }
+    }));
+  }
+}
+$("opnsense-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("opnsense-id").value.trim(),base_url=$("opnsense-url").value.trim();
+  const api_key=$("opnsense-key").value.trim(),api_secret=$("opnsense-secret").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"opnsense",display_name:$("opnsense-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="opnsense") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("opnsense-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/opnsense-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,api_key,api_secret})
+    });
+    $("opnsense-key").value="";$("opnsense-secret").value="";
+    showNotice("OPNsense credentials saved encrypted. Run diagnostics to verify access.");await load();
+  } catch(error) {
+    $("opnsense-key").value="";$("opnsense-secret").value="";
+    $("opnsense-status").textContent="OPNsense setup failed: "+error.message;
+    $("opnsense-status").classList.add("error");showNotice("OPNsense setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadPfsenseStatus(integrations) {
+  const root=$("pfsense-status"),details=$("pfsense-details"),actions=$("pfsense-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="pfsense");
+  if(!item) { root.textContent="No pfSense CE firewall configured.";root.classList.remove("error");return; }
+  $("pfsense-id").value=item.integration_id;
+  $("pfsense-name").value=item.display_name;
+  $("pfsense-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"API key configured":"API key required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/pfsense-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({
+          system:data.system,interfaces:data.interfaces,arp:data.arp,
+          dhcp_leases:data.dhcp_leases,gateways:data.gateways
+        },null,2);
+        details.replaceChildren(pre);root.textContent=item.display_name+" · Connected · Read-only diagnostics loaded";
+      } catch(error) { root.textContent="pfSense diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove API key","danger",async()=>{
+      if(!confirm("Remove encrypted pfSense API key for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/pfsense-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("pfSense API key removed.");await load();
+      } catch(error) { showNotice("Could not remove pfSense API key: "+error.message,true); }
+    }));
+  }
+}
+$("pfsense-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("pfsense-id").value.trim(),base_url=$("pfsense-url").value.trim();
+  const api_key=$("pfsense-key").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"pfsense",display_name:$("pfsense-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="pfsense") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("pfsense-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/pfsense-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,api_key})
+    });
+    $("pfsense-key").value="";
+    showNotice("pfSense API key saved encrypted. Run diagnostics to verify access.");await load();
+  } catch(error) {
+    $("pfsense-key").value="";
+    $("pfsense-status").textContent="pfSense setup failed: "+error.message;
+    $("pfsense-status").classList.add("error");showNotice("pfSense setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadCrowdSecStatus(integrations) {
+  const root=$("crowdsec-status"),details=$("crowdsec-details"),actions=$("crowdsec-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="crowdsec");
+  if(!item) { root.textContent="No CrowdSec Local API configured.";root.classList.remove("error");return; }
+  $("crowdsec-id").value=item.integration_id;
+  $("crowdsec-name").value=item.display_name;
+  $("crowdsec-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  const alertsConfigured=item.config?.alerts_auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured
+    ? "Bouncer key configured · "+(alertsConfigured?"alert access configured":"decisions only")
+    : "Bouncer API key required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load alerts and decisions","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/crowdsec-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify(data,null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+
+          fmt(data.summary.decisions_available)+" decisions · "+
+          (data.summary.alerts_available===null?"alerts not configured":fmt(data.summary.alerts_available)+" alerts");
+      } catch(error) { root.textContent="CrowdSec diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted CrowdSec credentials for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/crowdsec-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("CrowdSec credentials removed.");await load();
+      } catch(error) { showNotice("Could not remove CrowdSec credentials: "+error.message,true); }
+    }));
+  }
+}
+$("crowdsec-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("crowdsec-id").value.trim(),base_url=$("crowdsec-url").value.trim();
+  const machine_id=$("crowdsec-machine-id").value.trim();
+  const machine_password=$("crowdsec-machine-password").value;
+  const bouncer_api_key=$("crowdsec-bouncer-key").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    if(Boolean(machine_id)!==Boolean(machine_password)) {
+      throw new Error("Enter both the CrowdSec machine ID and password, or leave both blank.");
+    }
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"crowdsec",display_name:$("crowdsec-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="crowdsec") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("crowdsec-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/crowdsec-credentials",{
+      method:"PUT",body:JSON.stringify({
+        base_url,bouncer_api_key,machine_id:machine_id||null,machine_password:machine_password||null
+      })
+    });
+    $("crowdsec-machine-password").value="";$("crowdsec-bouncer-key").value="";
+    showNotice("CrowdSec credentials saved encrypted. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("crowdsec-machine-password").value="";$("crowdsec-bouncer-key").value="";
+    $("crowdsec-status").textContent="CrowdSec setup failed: "+error.message;
+    $("crowdsec-status").classList.add("error");showNotice("CrowdSec setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadWazuhStatus(integrations) {
+  const root=$("wazuh-status"),details=$("wazuh-details"),actions=$("wazuh-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="wazuh");
+  if(!item) { root.textContent="No Wazuh Server API configured.";root.classList.remove("error");return; }
+  $("wazuh-id").value=item.integration_id;
+  $("wazuh-name").value=item.display_name;
+  $("wazuh-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"API credentials configured":"API username and password required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load manager and agent diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/wazuh-diagnostics");
+        const agentItems=data.agents?.data?.affected_items;
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({
+          api:data.api?.data,
+          manager_info:data.manager_info?.data,
+          manager_status:data.manager_status?.data,
+          summary:data.summary,
+          agents:Array.isArray(agentItems)?agentItems.slice(0,25):[]
+        },null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(data.summary.agents_available)+
+          " agents · showing "+fmt(data.summary.agents_returned);
+      } catch(error) { root.textContent="Wazuh diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted Wazuh API credentials for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/wazuh-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("Wazuh credentials removed.");await load();
+      } catch(error) { showNotice("Could not remove Wazuh credentials: "+error.message,true); }
+    }));
+  }
+}
+$("wazuh-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("wazuh-id").value.trim(),base_url=$("wazuh-url").value.trim();
+  const username=$("wazuh-username").value.trim(),password=$("wazuh-password").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"wazuh",display_name:$("wazuh-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="wazuh") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("wazuh-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/wazuh-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,username,password})
+    });
+    $("wazuh-username").value="";$("wazuh-password").value="";
+    showNotice("Wazuh credentials saved encrypted. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("wazuh-username").value="";$("wazuh-password").value="";
+    $("wazuh-status").textContent="Wazuh setup failed: "+error.message;
+    $("wazuh-status").classList.add("error");showNotice("Wazuh setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadPrometheusStatus(integrations) {
+  const root=$("prometheus-status"),details=$("prometheus-details"),actions=$("prometheus-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="prometheus");
+  if(!item) { root.textContent="No Prometheus server configured.";root.classList.remove("error");return; }
+  $("prometheus-id").value=item.integration_id;$("prometheus-name").value=item.display_name;
+  $("prometheus-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Connection configured":"Configuration required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load target diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/prometheus-diagnostics");
+        const summary=data.summary||{},pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({runtime:data.runtime,summary,targets:(data.targets||[]).slice(0,25)},null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(summary.targets_up)+" up / "+fmt(summary.targets_available)+" targets";
+      } catch(error) { root.textContent="Prometheus diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove saved connection","danger",async()=>{
+      if(!confirm("Remove saved Prometheus connection for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/prometheus-credentials",{method:"DELETE"});details.replaceChildren();showNotice("Prometheus connection removed.");await load(); }
+      catch(error) { showNotice("Could not remove Prometheus connection: "+error.message,true); }
+    }));
+  }
+}
+$("prometheus-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("prometheus-id").value.trim(),base_url=$("prometheus-url").value.trim();
+  const bearer_token=$("prometheus-token").value,button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations"),existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"prometheus",display_name:$("prometheus-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="prometheus") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("prometheus-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/prometheus-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,bearer_token:bearer_token||null})
+    });
+    $("prometheus-token").value="";showNotice("Prometheus connection saved. Load diagnostics to verify targets.");await load();
+  } catch(error) {
+    $("prometheus-token").value="";$("prometheus-status").textContent="Prometheus setup failed: "+error.message;
+    $("prometheus-status").classList.add("error");showNotice("Prometheus setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadGrafanaStatus(integrations) {
+  const root=$("grafana-status"),details=$("grafana-details"),actions=$("grafana-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="grafana");
+  if(!item) { root.textContent="No Grafana server configured.";root.classList.remove("error");return; }
+  $("grafana-id").value=item.integration_id;$("grafana-name").value=item.display_name;
+  $("grafana-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Connection configured":"Configuration required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load dashboard diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/grafana-diagnostics");
+        const summary=data.summary||{},pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({health:data.health,summary,dashboards:(data.dashboards||[]).slice(0,25)},null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(summary.dashboards_returned)+" dashboards · DB "+data.health.database+" · Grafana "+data.health.version;
+      } catch(error) { root.textContent="Grafana diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove saved connection","danger",async()=>{
+      if(!confirm("Remove saved Grafana connection for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/grafana-credentials",{method:"DELETE"});details.replaceChildren();showNotice("Grafana connection removed.");await load(); }
+      catch(error) { showNotice("Could not remove Grafana connection: "+error.message,true); }
+    }));
+  }
+}
+$("grafana-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("grafana-id").value.trim(),base_url=$("grafana-url").value.trim();
+  const bearer_token=$("grafana-token").value,button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations"),existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"grafana",display_name:$("grafana-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="grafana") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("grafana-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/grafana-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,bearer_token:bearer_token||null})
+    });
+    $("grafana-token").value="";showNotice("Grafana connection saved. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("grafana-token").value="";$("grafana-status").textContent="Grafana setup failed: "+error.message;
+    $("grafana-status").classList.add("error");showNotice("Grafana setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
 function renderSources(sources, integrations) {
   const root=$("sources"); root.replaceChildren();
   if(!sources.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS sources configured";root.append(p);return;}

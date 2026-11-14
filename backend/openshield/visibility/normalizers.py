@@ -1,10 +1,9 @@
-import hashlib  # noqa: I001
+import hashlib
 import json
 from datetime import UTC, datetime
 from typing import Any
 
 from openshield.events.models import EventEnvelope, EventSource, Severity
-
 
 SURICATA_FIELDS = (
     "src_ip", "src_port", "dest_ip", "dest_port", "proto", "app_proto",
