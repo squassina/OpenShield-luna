@@ -1,4 +1,5 @@
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 import pytest
 
@@ -107,3 +108,19 @@ def test_grafana_rejects_unexpected_health_and_search_envelopes():
         GrafanaError, match="search endpoint"
     ):
         client.diagnostics()
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [(302, "HTTP 302"), (401, "rejected the configured credentials")],
+)
+def test_grafana_rejects_redirects_and_authentication_failures(status, message):
+    client = GrafanaClient("https://grafana.example", "read-token")
+    opener = Mock()
+    opener.open.side_effect = HTTPError(
+        "https://grafana.example/api/health", status, "request failed", {}, None
+    )
+    with patch("openshield.integrations.grafana.build_opener", return_value=opener), pytest.raises(
+        GrafanaError, match=message
+    ):
+        client._get("/api/health")
