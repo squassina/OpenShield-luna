@@ -931,6 +931,10 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
         def read(self, size):
             return self.payload
 
+    monkeypatch.delenv("OPENSHIELD_PIHOLE_PASSWORD", raising=False)
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_USERNAME", raising=False)
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_PASSWORD", raising=False)
+
     for kind, base_url, payload in (
         ("pihole", "https://pihole.example", b'{"queries":[]}'),
         ("adguard", "https://adguard.example", b'{"data":[]}'),
