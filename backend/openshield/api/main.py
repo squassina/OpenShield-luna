@@ -30,6 +30,13 @@ from openshield.execution.service import (
     reject_decision,
 )
 from openshield.execution.worker import run_expiration_loop
+from openshield.execution.service import (
+    ExecutionError,
+    approve_decision,
+    process_gateway_command_result,
+    reject_decision,
+)
+from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
@@ -69,6 +76,12 @@ from openshield.threat_intel.providers import (
     lookup_crowdsec,
     lookup_misp,
 )
+from openshield.threat_intel.engine import enrich_events
+from openshield.threat_intel.providers import (
+    ThreatIntelProviderError,
+    lookup_crowdsec,
+    lookup_misp,
+)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -86,9 +99,17 @@ async def _dns_polling_lifespan(app: FastAPI):
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
     execution_task = asyncio.create_task(run_expiration_loop(store, registry))
+    execution_task = asyncio.create_task(run_expiration_loop(store, registry))
     try:
         yield
     finally:
+        for background_task in (task, execution_task):
+            if background_task is not None:
+                background_task.cancel()
+                try:
+                    await background_task
+                except asyncio.CancelledError:
+                    pass
         for background_task in (task, execution_task):
             if background_task is not None:
                 background_task.cancel()
@@ -261,6 +282,10 @@ adapters = {
     "misp": ThreatIntelAdapter("misp"),
     "ollama": AIProviderAdapter("ollama"),
     "openai": AIProviderAdapter("openai"),
+    "crowdsec": ThreatIntelAdapter("crowdsec"),
+    "misp": ThreatIntelAdapter("misp"),
+    "ollama": AIProviderAdapter("ollama"),
+    "openai": AIProviderAdapter("openai"),
 }
 
 
@@ -318,6 +343,68 @@ class OpenWrtCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=1, max_length=512)
+
+
+class ThreatIntelCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class ThreatIntelEnrichRequest(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class IncidentStatusRequest(BaseModel):
+    status: Literal["open", "acknowledged", "closed", "false_positive"]
+    reason: str = Field(default="", max_length=500)
+
+
+class AIProviderCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class AIInvestigationRequest(BaseModel):
+    provider_id: str = Field(min_length=2, max_length=64)
+
+
+class GatewayCommandResultRequest(BaseModel):
+    status: Literal["completed", "failed"]
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class PolicyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    indicator_type: Literal["ip", "domain"]
+    indicator_value: str = Field(min_length=3, max_length=253)
+    action: Literal["block_ip", "block_domain"]
+    integration_id: str = Field(min_length=2, max_length=64)
+    min_risk_score: int = Field(ge=0, le=100)
+    autonomy_level: int = Field(ge=0, le=3, default=0)
+    ttl_seconds: int = Field(ge=60, le=86400, default=3600)
+    require_approval: bool = True
+    direction: Literal["source", "destination"] = "destination"
+
+
+class PolicyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+    min_risk_score: int | None = Field(default=None, ge=0, le=100)
+    autonomy_level: int | None = Field(default=None, ge=0, le=3)
+    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
+    require_approval: bool | None = None
+    direction: Literal["source", "destination"] | None = None
+
+
+class PolicyEvaluationRequest(BaseModel):
+    policy_id: str = Field(min_length=2, max_length=64)
+
+
+class PolicyDecisionRejectionRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class EmergencyStopRequest(BaseModel):
+    active: bool
 
 
 class ThreatIntelCredentials(BaseModel):
@@ -449,6 +536,12 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
+    result = adapters[item.kind].probe(item)
+    if item.kind in {"crowdsec", "misp"}:
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    if item.kind == "openai":
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    return result
     result = adapters[item.kind].probe(item)
     if item.kind in {"crowdsec", "misp"}:
         result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
@@ -599,6 +692,70 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "provider": item.kind,
             "records_available": len(records),
             "imported": 0,
+        }
+    if item.kind in {"crowdsec", "misp"}:
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not secret or not isinstance(secret.get("api_key"), str):
+            raise HTTPException(status_code=409, detail="Threat intelligence API key is not configured")
+        try:
+            if item.kind == "crowdsec":
+                result = lookup_crowdsec("8.8.8.8", secret["api_key"])
+                matches = int(bool(result.get("matched")))
+            else:
+                base_url = item.config.get("base_url")
+                if not isinstance(base_url, str):
+                    raise HTTPException(status_code=422, detail="MISP base URL is not configured")
+                result = lookup_misp(base_url, secret["api_key"], "ip", "192.0.2.1")
+                matches = len(result.get("attributes", []))
+        except ThreatIntelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": item.kind,
+            "matches": matches,
+            "message": "Provider authentication and API request succeeded.",
+        }
+    if item.kind == "ollama":
+        base_url = item.config.get("base_url", "http://localhost:11434")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
+        try:
+            models = test_ollama(base_url)
+        except (AIProviderError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured Ollama model is not installed")
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "ollama", "models": models, "model_available": True,
+        }
+    if item.kind == "openai":
+        if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+            raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
+        if item.config.get("cloud_enabled") is not True:
+            raise HTTPException(status_code=409, detail="Cloud AI is not explicitly enabled for this integration")
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        api_key = secret.get("api_key") if secret else None
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
+        try:
+            models = test_openai(api_key)
+        except AIProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured OpenAI model is not available to this API key")
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "openai", "models_available": len(models), "model_available": True,
         }
     if item.kind in {"crowdsec", "misp"}:
         try:
