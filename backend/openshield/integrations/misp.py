@@ -123,3 +123,16 @@ class MispClient:
                 "source_timestamp": str(item.get("timestamp") or "")[:40],
             })
         return result
+
+
+class MispAdapter:
+    kind = "misp"
+
+    def probe(self, integration) -> dict[str, object]:
+        return {
+            "integration_id": integration.integration_id,
+            "kind": self.kind,
+            "status": "configured" if integration.config.get("auth_configured") else "needs_credentials",
+            "transport": "misp_rest_api",
+            "capabilities": ["health_check", "read_events"],
+        }
