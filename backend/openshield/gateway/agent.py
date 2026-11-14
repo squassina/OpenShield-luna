@@ -131,6 +131,53 @@ def _openwrt_config_signature(config: object) -> str | None:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _process_gateway_commands(
+    client: GatewayConnectorClient,
+    openwrt_client: OpenWrtRPCClient | None,
+    commands: object,
+) -> None:
+    if not isinstance(commands, list):
+        return
+    for command in commands:
+        if not isinstance(command, dict):
+            continue
+        command_id = command.get("command_id")
+        execution_id = command.get("execution_id")
+        action = command.get("action")
+        payload = command.get("payload")
+        if not all(isinstance(value, str) and value for value in (command_id, execution_id, action)):
+            continue
+        if not isinstance(payload, dict):
+            payload = {}
+        try:
+            if openwrt_client is None:
+                raise OpenWrtRPCError("OpenWrt RPC is not configured")
+            if action == "block_ip":
+                ip_value = payload.get("ip")
+                direction = payload.get("direction")
+                if not isinstance(ip_value, str) or direction not in {"source", "destination"}:
+                    raise ValueError("Invalid firewall block command")
+                result = openwrt_client.apply_firewall_block(execution_id, ip_value, direction)
+                result["status"] = "applied"
+            elif action == "unblock_ip":
+                section = payload.get("section")
+                if not isinstance(section, str):
+                    raise ValueError("Invalid firewall rollback command")
+                result = openwrt_client.remove_firewall_block(section)
+                result["status"] = "rolled_back"
+            else:
+                raise ValueError("Unsupported gateway command")
+            client.report_command_result(command_id, "completed", result)
+        except (OpenWrtRPCError, ValueError, GatewayTransportError):
+            logger.warning("Gateway command failed; details withheld for command %s", command_id)
+            try:
+                client.report_command_result(
+                    command_id, "failed", {"status": "failed", "error": "gateway_command_failed"},
+                )
+            except GatewayTransportError:
+                logger.warning("Gateway command result delivery deferred for command %s", command_id)
+
+
 def run_agent(
     client: GatewayConnectorClient,
     heartbeat_interval: float = 30.0,
@@ -206,6 +253,7 @@ def run_agent(
                                 _event(integration_id, "gateway.discovery", discovery),
                                 spool,
                             )
+                _process_gateway_commands(client, openwrt_client, heartbeat.get("commands", []))
                 if spool is not None:
                     _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:

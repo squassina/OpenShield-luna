@@ -97,6 +97,27 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div class="toolbar"><select id="ai-provider" aria-label="AI provider"><option value="">Select AI provider</option></select></div>
     <div id="ai-results" aria-live="polite"></div>
   </section>
+  <section class="panel">
+    <h2>Policy and bounded response</h2>
+    <p>Enforcement is disabled by default. Emergency stop starts active; global autonomy cap defaults to L0. Configure explicit exact-indicator policies only after reviewing the P5 runbook.</p>
+    <div class="toolbar"><span id="policy-runtime-status">Loading response controls…</span><button id="emergency-stop" type="button" class="danger" disabled>Emergency stop</button></div>
+    <form id="policy-form" class="inline">
+      <input id="policy-name" placeholder="Policy name" required maxlength="120">
+      <select id="policy-action" aria-label="Response action"><option value="block_domain">Block domain (DNS)</option><option value="block_ip">Block IP (OpenWrt)</option></select>
+      <select id="policy-indicator-type" aria-label="Indicator type"><option value="domain">Domain</option><option value="ip">IP</option></select>
+      <input id="policy-indicator" placeholder="malicious.example" required maxlength="253">
+      <select id="policy-integration" aria-label="Enforcement integration" required><option value="">Select integration</option></select>
+      <input id="policy-risk" type="number" min="0" max="100" value="80" required aria-label="Minimum risk score">
+      <select id="policy-autonomy" aria-label="Autonomy level"><option value="0">L0 · Observe</option><option value="1">L1 · Approval</option><option value="2">L2 · Bounded auto</option><option value="3">L3 · High autonomy</option></select>
+      <input id="policy-ttl" type="number" min="60" max="86400" value="3600" required aria-label="TTL seconds">
+      <select id="policy-direction" aria-label="IP direction"><option value="destination">LAN → WAN destination</option><option value="source">WAN → LAN source</option></select>
+      <label><input id="policy-approval" type="checkbox" checked> Require human approval</label>
+      <button class="primary" type="submit">Create policy</button>
+    </form>
+    <h3>Policies</h3><div id="policies" class="table-wrap"></div>
+    <h3>Pending decisions</h3><div id="policy-decisions" class="table-wrap"></div>
+    <h3>Response executions</h3><div id="executions" class="table-wrap"></div>
+  </section>
   <section class="columns">
     <article class="panel"><h2>Network sensors</h2><div id="sensors" class="table-wrap"></div></article>
     <article class="panel"><h2>Observed IP inventory</h2><div id="inventory" class="table-wrap"></div></article>
@@ -137,7 +158,7 @@ const table = (target, headers, rows) => {
   const t=document.createElement("table"), thead=document.createElement("thead"), tr=document.createElement("tr");
   headers.forEach(h=>{const th=document.createElement("th");th.textContent=h;tr.append(th);});thead.append(tr);t.append(thead);
   const tbody=document.createElement("tbody");
-  rows.forEach(row=>{const line=document.createElement("tr");row.forEach(value=>{const td=document.createElement("td");td.textContent=String(value??"—");line.append(td);});tbody.append(line);});
+  rows.forEach(row=>{const line=document.createElement("tr");row.forEach(value=>{const td=document.createElement("td");if(value instanceof Node)td.append(value);else td.textContent=String(value??"—");line.append(td);});tbody.append(line);});
   t.append(tbody);root.append(t);
 };
 let providerIds=[];
@@ -145,11 +166,13 @@ async function load() {
   $("refresh").disabled=true; showNotice("Refreshing dashboard…");
   try {
     const days=$("period").value;
-    const [report,sources,sensors,devices,integrations,lists,inventory,incidents]=await Promise.all([
+    const [report,sources,sensors,devices,integrations,lists,inventory,incidents,policyState,decisions,executions,control]=await Promise.all([
       api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
       api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
       api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/incidents?limit=50")
+      api("/api/v1/incidents?limit=50"),api("/api/v1/policies"),
+      api("/api/v1/policy-decisions?limit=50"),api("/api/v1/executions?limit=50"),
+      api("/api/v1/control/emergency-stop")
     ]);
     $("queries").textContent=fmt(report.totals.queries);
     $("blocked").textContent=fmt(report.totals.blocked);
@@ -158,6 +181,7 @@ async function load() {
     table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
     renderSources(sources,integrations)
+    renderPolicyPanel(policyState,decisions,executions,control,integrations)
     renderIncidents(incidents)
     renderAIProviders(integrations);
     renderIntegrations(integrations);
@@ -173,6 +197,8 @@ async function load() {
 }
 
 let editingIntegrationId=null;
+let currentPolicies=[];
+let currentIntegrations=[];
 function actionButton(label, className, handler) {
   const button=document.createElement("button");
   button.type="button"; button.textContent=label;
@@ -281,6 +307,8 @@ $("integration-edit-form").addEventListener("submit",async event=>{
   } catch(error) { showNotice("Could not update integration: "+error.message,true); }
   finally { button.disabled=false; }
 });
+$("policy-action").addEventListener("change",()=>{const action=$("policy-action").value;$("policy-indicator-type").value=action==="block_ip"?"ip":"domain";$("policy-indicator").placeholder=action==="block_ip"?"8.8.8.8":"malicious.example";$("policy-direction").disabled=action!=="block_ip";const current= $("policy-integration").value;const kinds=action==="block_ip"?["openwrt"]:["pihole","adguard"];const options=currentIntegrations.filter(item=>kinds.includes(item.kind)&&item.enabled!==false);$("policy-integration").replaceChildren(new Option("Select integration",""),...options.map(item=>new Option(item.display_name+" ("+item.kind+")",item.integration_id)));if(options.some(item=>item.integration_id===current))$("policy-integration").value=current;});
+$("policy-form").addEventListener("submit",async event=>{event.preventDefault();const action=$("policy-action").value;const payload={name:$("policy-name").value.trim(),indicator_type:action==="block_ip"?"ip":"domain",indicator_value:$("policy-indicator").value.trim(),action,integration_id:$("policy-integration").value,min_risk_score:Number($("policy-risk").value),autonomy_level:Number($("policy-autonomy").value),ttl_seconds:Number($("policy-ttl").value),require_approval:$("policy-approval").checked,direction:$("policy-direction").value};const button=event.submitter;button.disabled=true;try{await api("/api/v1/policies",{method:"POST",body:JSON.stringify(payload)});showNotice("Policy created. Evaluate incidents explicitly to create decisions.");$("policy-form").reset();$("policy-autonomy").value="0";$("policy-approval").checked=true;$("policy-action").dispatchEvent(new Event("change"));await load();}catch(error){showNotice("Policy creation failed: "+error.message,true);}finally{button.disabled=false;}});
 $("service-kind").addEventListener("change",()=>{
   const kind=$("service-kind").value;
   const needsUrl=["pihole","adguard","misp","ollama"].includes(kind);
@@ -375,6 +403,41 @@ function renderAIResult(investigation) {
   }
   const scope=document.createElement("p");scope.className="empty";scope.textContent="Context scope: "+investigation.context_scope.mode+" · Prompt "+investigation.prompt_version;root.append(scope);
 }
+function renderPolicyPanel(policyState,decisions,executions,control,integrations) {
+  currentPolicies=policyState.items||[];currentIntegrations=integrations||[];
+  const status=$("policy-runtime-status");
+  status.textContent="Enforcement "+(control.enforcement_enabled?"ENABLED":"disabled")+" · Emergency stop "+(control.active?"ACTIVE":"released")+" · Global autonomy L"+control.max_autonomy_level;
+  const stop=$("emergency-stop");stop.disabled=control.active&&!control.enforcement_enabled;
+  stop.textContent=control.active?"Release emergency stop":"Activate emergency stop";
+  stop.onclick=async()=>{try{await api("/api/v1/control/emergency-stop",{method:"POST",body:JSON.stringify({active:!control.active})});showNotice(control.active?"Emergency stop released.":"Emergency stop activated.");await load();}catch(error){showNotice("Emergency-stop update failed: "+error.message,true);}};
+  const action=$("policy-action").value;
+  $("policy-indicator-type").value=action==="block_ip"?"ip":"domain";
+  $("policy-indicator-type").disabled=true;
+  $("policy-direction").disabled=action!=="block_ip";
+  const integrationSelect=$("policy-integration"),selected=integrationSelect.value;
+  integrationSelect.replaceChildren();
+  const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select integration";integrationSelect.append(placeholder);
+  const allowed=action==="block_ip"?["openwrt"]:["pihole","adguard"];
+  currentIntegrations.filter(item=>allowed.includes(item.kind)&&item.enabled!==false).forEach(item=>{
+    const option=document.createElement("option");option.value=item.integration_id;option.textContent=item.display_name+" ("+item.kind+")";integrationSelect.append(option);
+  });
+  if([...integrationSelect.options].some(option=>option.value===selected))integrationSelect.value=selected;
+  table("policies",["Policy","Indicator","Action","Integration","Risk","Autonomy","TTL","Approval","State",""],currentPolicies.map(item=>[
+    item.name,item.indicator_value,item.action,item.integration_id,String(item.min_risk_score),"L"+item.autonomy_level,
+    fmt(item.ttl_seconds)+"s",item.require_approval?"Required":"Policy-controlled",item.enabled?"Enabled":"Disabled",
+    actionButton(item.enabled?"Disable":"Enable","",async()=>{try{await api("/api/v1/policies/"+encodeURIComponent(item.policy_id),{method:"PATCH",body:JSON.stringify({enabled:!item.enabled})});await load();}catch(error){showNotice("Policy update failed: "+error.message,true);}})
+  ]));
+  table("policy-decisions",["Incident","Policy","Decision","Reasons","Actions"],decisions.map(item=>{
+    if(item.status!=="pending_approval")return [item.incident_id,item.policy_id,item.status,(item.rationale.reasons||[]).join(", "),"—"];
+    const actions=document.createElement("div");actions.className="actions";
+    actions.append(actionButton("Approve","",async()=>{try{await api("/api/v1/policy-decisions/"+encodeURIComponent(item.decision_id)+"/approve",{method:"POST"});await load();}catch(error){showNotice("Approval failed: "+error.message,true);}}));
+    actions.append(actionButton("Reject","danger",async()=>{try{await api("/api/v1/policy-decisions/"+encodeURIComponent(item.decision_id)+"/reject",{method:"POST",body:JSON.stringify({reason:"Rejected from dashboard"})});await load();}catch(error){showNotice("Rejection failed: "+error.message,true);}}));
+    return [item.incident_id,item.policy_id,item.status,(item.rationale.reasons||[]).join(", "),actions];
+  }));
+  table("executions",["Indicator","Action","Gateway / DNS","Status","Expires","TTL"],executions.map(item=>[
+    item.indicator_value,item.action,item.integration_id,item.status,item.expires_at||"—",fmt(item.ttl_seconds)+"s"
+  ]));
+}
 function renderIncidents(items) {
   const root=$("incidents");root.replaceChildren();
   if(!items.length){const p=document.createElement("p");p.className="empty";p.textContent="No threat intelligence incidents. Enrich recent events after configuring a provider.";root.append(p);return;}
@@ -389,6 +452,8 @@ function renderIncidents(items) {
       const button=actionButton(label,"",async()=>{try{await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id),{method:"PATCH",body:JSON.stringify({status,reason:"Updated from dashboard"})});await load();}catch(error){showNotice("Incident update failed: "+error.message,true);}});
       wrap.append(button);
     }
+    const matchingPolicies=currentPolicies.filter(policy=>policy.enabled&&policy.indicator_type===item.indicator_type&&policy.indicator_value===item.indicator_value);
+    if(matchingPolicies.length)wrap.append(actionButton("Evaluate policy","",async()=>{try{const results=[];for(const policy of matchingPolicies){const decision=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id)+"/evaluate",{method:"POST",body:JSON.stringify({policy_id:policy.policy_id})});results.push(policy.name+": "+decision.status);}showNotice(results.join(" · "));await load();}catch(error){showNotice("Policy evaluation failed: "+error.message,true);}}));
     const evidence=actionButton("Evidence","",async()=>{try{const detail=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id));showNotice(detail.summary+" Evidence events: "+detail.timeline.length+". Factors: "+(detail.risk_factors||[]).map(x=>x.factor+" +"+x.points).join(", "));}catch(error){showNotice("Could not load incident evidence: "+error.message,true);}});
     const investigate=actionButton("AI investigate","",async()=>{const provider_id=$("ai-provider").value;if(!provider_id){showNotice("Select an AI provider first.",true);return;}try{const result=await api("/api/v1/incidents/"+encodeURIComponent(item.incident_id)+"/investigate",{method:"POST",body:JSON.stringify({provider_id})});renderAIResult(result);}catch(error){showNotice("AI investigation failed: "+error.message,true);}});
     wrap.append(evidence,investigate);actions.append(wrap);row.append(actions);body.append(row);

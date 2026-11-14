@@ -1,4 +1,6 @@
+import ipaddress
 import json
+import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -9,7 +11,7 @@ class OpenWrtRPCError(RuntimeError):
 
 
 class OpenWrtRPCClient:
-    """Read-only client for the OpenWrt rpcd ubus HTTP endpoint."""
+    """OpenWrt rpcd ubus client with read-only discovery and scoped firewall writes."""
 
     def __init__(
         self,
@@ -123,6 +125,87 @@ class OpenWrtRPCClient:
             },
             "interfaces": normalized_interfaces,
         }
+
+    def apply_firewall_block(
+        self, execution_id: str, ip_value: str, direction: str
+    ) -> dict[str, object]:
+        try:
+            address = ipaddress.ip_address(ip_value)
+        except ValueError as exc:
+            raise ValueError("Firewall block requires a valid IP address") from exc
+        if not address.is_global:
+            raise ValueError("Firewall block accepts public IP addresses only")
+        if direction not in {"source", "destination"}:
+            raise ValueError("Firewall block direction must be source or destination")
+        section = "os_" + re.sub(r"[^a-f0-9]", "", execution_id.lower())[:16]
+        try:
+            existing = self.call("uci", "get", {"config": "firewall", "section": section})
+        except OpenWrtRPCError:
+            existing = None
+        if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
+            return {"section": section, "verified": True, "already_present": True}
+        values: dict[str, object] = {
+            "name": f"OpenShield {section}",
+            "proto": "all",
+            "target": "REJECT",
+            "family": "ipv4" if address.version == 4 else "ipv6",
+            "enabled": "1",
+        }
+        if direction == "source":
+            values.update({"src": "wan", "dest": "lan", "src_ip": str(address)})
+        else:
+            values.update({"src": "lan", "dest": "wan", "dest_ip": str(address)})
+        try:
+            created = self.call(
+                "uci", "add",
+                {"config": "firewall", "type": "rule", "name": section, "values": values},
+            )
+            if isinstance(created.get("section"), str):
+                section = created["section"]
+        except OpenWrtRPCError:
+            existing = self.call("uci", "get", {"config": "firewall", "section": section})
+            if isinstance(existing, dict) and isinstance(existing.get("values"), dict):
+                return {"section": section, "verified": True, "already_present": True}
+            raise
+        try:
+            self.call("uci", "apply", {"rollback": True, "timeout": 30})
+            verified = self.call("uci", "get", {"config": "firewall", "section": section})
+            if not isinstance(verified, dict) or not isinstance(verified.get("values"), dict):
+                raise OpenWrtRPCError("OpenWrt firewall rule verification failed")
+            self.call("uci", "confirm", {})
+        except OpenWrtRPCError:
+            try:
+                self.call("uci", "revert", {"config": "firewall"})
+            except OpenWrtRPCError:
+                pass
+            raise
+        return {"section": section, "verified": True, "already_present": False}
+
+    def remove_firewall_block(self, section: str) -> dict[str, object]:
+        if not re.fullmatch(r"os_[a-f0-9]{1,16}", section):
+            raise ValueError("Invalid OpenShield firewall section")
+        try:
+            self.call("uci", "delete", {"config": "firewall", "section": section})
+        except OpenWrtRPCError:
+            current = self.call("uci", "get", {"config": "firewall"})
+            values = current.get("values")
+            if isinstance(values, dict) and section not in values:
+                return {"section": section, "removed": True, "already_absent": True}
+            raise
+        try:
+            self.call("uci", "apply", {"rollback": True, "timeout": 30})
+            current = self.call("uci", "get", {"config": "firewall"})
+            values = current.get("values")
+            if not isinstance(values, dict) or section in values:
+                raise OpenWrtRPCError("OpenWrt firewall rule rollback verification failed")
+            self.call("uci", "confirm", {})
+        except OpenWrtRPCError:
+            try:
+                self.call("uci", "revert", {"config": "firewall"})
+            except OpenWrtRPCError:
+                pass
+            raise
+        return {"section": section, "removed": True, "already_absent": False}
 
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")
