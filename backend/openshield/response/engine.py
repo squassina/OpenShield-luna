@@ -85,7 +85,14 @@ def execute_dns_block(
             sync_provider_lists(provider, store.list_privacy_lists(RESPONSE_LIST_ID))
             error = "provider_sync_failed; local change reverted"
         except (DnsProviderError, ValueError, TypeError):
-            error = "provider_sync_and_compensation_failed; inspect provider state"
+            # Keep an owned local marker so the expiry worker can retry compensation.
+            store.upsert_privacy_list(RESPONSE_LIST_ID, "block", domain, marker)
+            retry_at = datetime.now(UTC) + timedelta(seconds=5)
+            return _update(
+                store, action, "rollback_pending",
+                expires_at=datetime.now(UTC), next_attempt_at=retry_at, attempts=1,
+                error="provider_sync_and_compensation_failed; rollback retry scheduled",
+            )
         return _update(store, action, "failed", error=error, expires_at=None)
 
     expires_at = datetime.now(UTC) + timedelta(seconds=int(action["ttl_seconds"]))
