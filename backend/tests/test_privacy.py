@@ -942,14 +942,19 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
         context = FakeSSLContext()
         seen = {}
 
-        monkeypatch.setattr(providers.ssl, "create_default_context", lambda: context)
+        monkeypatch.setattr(
+            providers.ssl, "create_default_context",
+            lambda expected_context=context: expected_context,
+        )
 
-        def fake_urlopen(request, timeout, context=None):
-            seen["request"] = request
-            seen["context"] = context
-            return FakeResponse(payload)
+        def make_urlopen(expected_payload, captured):
+            def fake_urlopen(request, timeout, context=None):
+                captured["request"] = request
+                captured["context"] = context
+                return FakeResponse(expected_payload)
+            return fake_urlopen
 
-        monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+        monkeypatch.setattr(providers, "urlopen", make_urlopen(payload, seen))
         integration = Integration(
             integration_id=f"{kind}-tls", kind=kind, display_name=kind.title(),
             capabilities=[], config={
