@@ -46,7 +46,7 @@ def test_connector_can_load_gateway_token_without_encryption_key(
     (root / "gateway.token").write_text("shared-token\n", encoding="ascii")
     monkeypatch.setenv("OPENSHIELD_RUNTIME_SECRETS_DIR", str(root))
     monkeypatch.delenv("OPENSHIELD_SECRET_KEY", raising=False)
-    monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "")
 
     load_runtime_secrets(create=False, include_encryption=False)
 
