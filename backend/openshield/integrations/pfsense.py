@@ -29,7 +29,8 @@ class PfSenseClient:
         try:
             parsed = urlsplit(base_url)
             hostname = parsed.hostname
-            parsed.port
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError("pfSense URL port is outside the valid range")
         except ValueError as exc:
             raise ValueError("pfSense URL must be a valid absolute HTTP(S) origin") from exc
         if (
@@ -48,7 +49,7 @@ class PfSenseClient:
 
     def get(self, path: str) -> dict[str, object] | list[object]:
         if (
-            not path.startswith("/api/v2/") or ".." in path
+            not path.startswith("/api/v2/") or ".." in path or "//" in path
             or "?" in path or "#" in path or "\\" in path
         ):
             raise ValueError("Invalid pfSense API path")
