@@ -11,6 +11,22 @@ from openshield.gateway.models import GatewayConnection
 from openshield.integrations.models import Integration
 
 
+def _has_valid_device_address(device: dict[str, object]) -> bool:
+    candidates = [device.get("ip_address")]
+    for field in ("ipv4_addresses", "ipv6_addresses"):
+        values = device.get(field)
+        if isinstance(values, list):
+            candidates.extend(values)
+    for value in candidates:
+        if isinstance(value, str):
+            try:
+                ipaddress.ip_address(value)
+                return True
+            except ValueError:
+                continue
+    return False
+
+
 class StorageConfigurationError(RuntimeError):
     pass
 
@@ -379,15 +395,7 @@ CREATE TABLE IF NOT EXISTS events (
                 mac = device.get("mac_address")
                 if not isinstance(mac, str) or not re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", mac):
                     continue
-                addresses = [
-                    device.get("ip_address"),
-                    *(device.get("ipv4_addresses") or []),
-                    *(device.get("ipv6_addresses") or []),
-                ]
-                if not any(
-                    isinstance(address, str) and _is_valid_ip_address(address)
-                    for address in addresses
-                ):
+                if not _has_valid_device_address(device):
                     continue
                 normalized_mac = mac.lower()
                 cursor.execute(
