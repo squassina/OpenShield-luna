@@ -24,8 +24,8 @@ from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatReq
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
-from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
+from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
