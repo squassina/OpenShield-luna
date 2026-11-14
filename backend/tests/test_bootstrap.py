@@ -16,7 +16,7 @@ def test_runtime_secrets_are_generated_once_and_reused(
 
     load_runtime_secrets(create=True)
     encryption_key = os.environ["OPENSHIELD_SECRET_KEY"]
-    gateway_token = __import__("os").environ["OPENSHIELD_GATEWAY_TOKEN"]
+    gateway_token = os.environ["OPENSHIELD_GATEWAY_TOKEN"]
     Fernet(encryption_key.encode("ascii"))
     assert len(gateway_token) >= 64
     assert (tmp_path / "secrets" / "fernet.key").stat().st_mode & 0o777 == 0o600
