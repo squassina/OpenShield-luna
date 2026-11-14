@@ -502,9 +502,7 @@ CREATE TABLE IF NOT EXISTS events (
             )
         return payload
 
-    def list_incident_investigations(
-        self, incident_id: str, limit: int = 10
-    ) -> list[dict[str, object]]:
+    def get_policy(self, policy_id: str) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -879,49 +877,6 @@ CREATE TABLE IF NOT EXISTS events (
             self._insert_audit(
                 cursor, "response.emergency_stop.updated", actor_id, "emergency_stop", value,
             )
-
-    def create_incident_investigation(
-        self, investigation_id: str, incident_id: str, provider_integration_id: str,
-        provider_kind: str, model: str, prompt_version: str,
-        context_scope: dict[str, object], result: dict[str, object],
-    ) -> dict[str, object]:
-        created_at = datetime.now(UTC)
-        payload = {
-            "investigation_id": investigation_id,
-            "incident_id": incident_id,
-            "provider_integration_id": provider_integration_id,
-            "provider_kind": provider_kind,
-            "model": model,
-            "prompt_version": prompt_version,
-            "context_scope": context_scope,
-            "result": result,
-            "created_at": created_at.isoformat(),
-        }
-        with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO incident_investigations
-                    (investigation_id, incident_id, provider_integration_id, provider_kind,
-                     model, prompt_version, context_scope, result, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    investigation_id, incident_id, provider_integration_id, provider_kind,
-                    model, prompt_version, Jsonb(context_scope), Jsonb(result), created_at,
-                ),
-            )
-            self._insert_audit(
-                cursor, "incident.investigation.created", None, incident_id,
-                {
-                    "investigation_id": investigation_id,
-                    "provider_integration_id": provider_integration_id,
-                    "provider_kind": provider_kind,
-                    "model": model,
-                    "prompt_version": prompt_version,
-                    "context_scope": context_scope,
-                },
-            )
-        return payload
 
     def list_incident_investigations(
         self, incident_id: str, limit: int = 10
