@@ -282,3 +282,8 @@ Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Nod
 ## DNS classification provenance
 
 DNS classifications are descriptive privacy signals, not threat verdicts. OpenShield pins the AdGuard CNAME original-trackers dataset (MIT), and uses it only when the DNS provider supplies an observed CNAME answer; a hostname alone is not enough. It records the upstream commit, source update timestamp, matched target, and confidence with each event. A scheduled workflow checks for feed changes weekly and opens a review PR; it never applies an update automatically. The local suffix/TLD heuristics remain a fallback and carry lower confidence. User overrides (`allow` or `tracker`) take precedence for the matching domain and its subdomains; raw DNS domain, client, timestamp, and response status remain unchanged.
+
+
+## P3 — Threat intelligence
+
+P3 adds optional CrowdSec CTI and MISP integrations, encrypted provider API keys, bounded on-demand IOC enrichment, a six-hour provider cache, deterministic explainable risk scoring, incident timelines, and audited false-positive/acknowledge/close workflows. See [the threat intelligence runbook](docs/operations/threat-intelligence.md). No P3 finding authorizes network enforcement; P5 owns policy and response.

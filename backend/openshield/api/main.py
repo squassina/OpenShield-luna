@@ -26,6 +26,7 @@ from openshield.integrations.models import IntegrationRegistration, IntegrationU
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.integrations.threat_intel import ThreatIntelAdapter
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.polling import (
@@ -37,6 +38,12 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.threat_intel.engine import enrich_events
+from openshield.threat_intel.providers import (
+    ThreatIntelProviderError,
+    lookup_crowdsec,
+    lookup_misp,
+)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -210,6 +217,8 @@ adapters = {
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
     "adguard": DnsPrivacyAdapter("adguard"),
+    "crowdsec": ThreatIntelAdapter("crowdsec"),
+    "misp": ThreatIntelAdapter("misp"),
 }
 
 
@@ -228,6 +237,19 @@ class OpenWrtCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=1, max_length=512)
+
+
+class ThreatIntelCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class ThreatIntelEnrichRequest(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class IncidentStatusRequest(BaseModel):
+    status: Literal["open", "acknowledged", "closed", "false_positive"]
+    reason: str = Field(default="", max_length=500)
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -297,7 +319,10 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
-    return adapters[item.kind].probe(item)
+    result = adapters[item.kind].probe(item)
+    if item.kind in {"crowdsec", "misp"}:
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    return result
 
 
 
@@ -321,6 +346,32 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "records_available": len(records),
             "imported": 0,
         }
+    if item.kind in {"crowdsec", "misp"}:
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not secret or not isinstance(secret.get("api_key"), str):
+            raise HTTPException(status_code=409, detail="Threat intelligence API key is not configured")
+        try:
+            if item.kind == "crowdsec":
+                result = lookup_crowdsec("8.8.8.8", secret["api_key"])
+                matches = int(bool(result.get("matched")))
+            else:
+                base_url = item.config.get("base_url")
+                if not isinstance(base_url, str):
+                    raise HTTPException(status_code=422, detail="MISP base URL is not configured")
+                result = lookup_misp(base_url, secret["api_key"], "ip", "192.0.2.1")
+                matches = len(result.get("attributes", []))
+        except ThreatIntelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": item.kind,
+            "matches": matches,
+            "message": "Provider authentication and API request succeeded.",
+        }
     if item.kind in {"suricata", "zeek"}:
         return {
             "status": "configured",
@@ -329,6 +380,87 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "ingestion_endpoint": f"/api/v1/sensors/{integration_id}/events",
         }
     raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
+
+@app.put("/api/v1/integrations/{integration_id}/threat-intel-credentials", tags=["integrations"])
+def save_threat_intel_credentials(
+    integration_id: str, credentials: ThreatIntelCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"crowdsec", "misp"}:
+        raise HTTPException(status_code=404, detail="Threat intelligence integration not found")
+    if not os.getenv("OPENSHIELD_SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="OPENSHIELD_SECRET_KEY is required for provider credentials")
+    if integration.kind == "misp":
+        base_url = integration.config.get("base_url")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="MISP integration requires config.base_url")
+        parsed = urlsplit(base_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            raise HTTPException(status_code=422, detail="MISP base URL must be an absolute HTTP(S) URL without credentials")
+    try:
+        SecretStore(store).set(
+            integration_id, {"api_key": credentials.api_key.get_secret_value()},
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "saved", "integration_id": integration_id,
+        "credentials_configured": True, "secret_storage": "encrypted",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/threat-intel-credentials", status_code=204, tags=["integrations"])
+def delete_threat_intel_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"crowdsec", "misp"}:
+        raise HTTPException(status_code=404, detail="Threat intelligence integration not found")
+    store.delete_integration_secret(integration_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/threat-intel/enrich", tags=["threat-intelligence"])
+def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, object]:
+    try:
+        return enrich_events(store, registry, list(dict.fromkeys(request.event_ids)))
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/incidents", tags=["incidents"])
+def list_incidents(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    status: str | None = None,
+) -> list[dict[str, object]]:
+    if status is not None and status not in {"open", "acknowledged", "closed", "false_positive"}:
+        raise HTTPException(status_code=422, detail="Invalid incident status")
+    return store.list_incidents(limit=limit, status=status)
+
+
+@app.get("/api/v1/incidents/{incident_id}", tags=["incidents"])
+def get_incident(incident_id: str) -> dict[str, object]:
+    incident = store.get_incident(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {
+        **incident,
+        "timeline": [event.model_dump(mode="json") for event in store.get_incident_events(incident_id)],
+    }
+
+
+@app.patch("/api/v1/incidents/{incident_id}", tags=["incidents"])
+def update_incident_status(
+    incident_id: str, request: IncidentStatusRequest
+) -> dict[str, object]:
+    incident = store.update_incident_status(incident_id, request.status, request.reason)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
 
 @app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
 def save_openwrt_credentials(
