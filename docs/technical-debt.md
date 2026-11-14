@@ -76,3 +76,31 @@ P1 software is considered complete when CI passes and documented API behavior is
 - Sensor event IDs are scoped by integration to prevent cross-sensor collisions; malformed non-object records are rejected.
 - Gateway outbox restart persistence is explicitly covered by a test; physical forwarding independence remains a hardware acceptance task.
 - Event retention has a bounded deletion primitive and an explicit CLI command. It is disabled by default; configure `OPENSHIELD_EVENT_RETENTION_DAYS` and run `python -m openshield.maintenance` in the backend environment.
+
+
+## Device identity and topology enrichment — implementation status
+
+Issues [#5](https://github.com/squassina/OpenShield-luna/issues/5) and
+[#8](https://github.com/squassina/OpenShield-luna/issues/8) are implemented in
+the device-identity/topology feature branch:
+
+- OpenWrt host hints and DHCPv4/v6 leases retain per-address source provenance,
+  confidence, and observation timestamps.
+- IP inventory is enriched with MAC/hostname only when one current gateway
+  identity maps to the address. Multiple current MAC mappings are reported as
+  conflicts; expired mappings remain visible as stale candidates and are not
+  silently merged.
+- OpenWrt interface snapshots expose configured subnets, explicit VLAN IDs
+  when supplied by the RPC response, and default gateway addresses.
+- Observed sensor connections carry source integration/event provenance and
+  first/last observation times. Explicit translated source/destination IP
+  fields produce separate NAT-translation edges.
+- Subnet membership is exposed as an inferred relationship with the
+  authoritative OpenWrt interface source and confidence. VLAN IDs are never
+  guessed from interface names.
+- MAC/IP associations are observations, not cryptographic device
+  authentication. Randomized MACs and cross-gateway identity resolution remain
+  limitations.
+
+Physical firmware validation and the limits of the data exposed by the
+installed LuCI/DHCP backend remain operational acceptance work.

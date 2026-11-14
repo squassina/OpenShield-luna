@@ -1256,19 +1256,162 @@ def list_router_devices(
         "devices": devices,
     }
 
+def _identity_index(now: datetime) -> dict[str, dict[str, object]]:
+    candidates: dict[str, list[dict[str, object]]] = {}
+    for item in store.list_device_identity_observations():
+        address = _classify_ip(item["ip_address"])
+        if address is None:
+            continue
+        candidates.setdefault(address[0], []).append(item)
+
+    result: dict[str, dict[str, object]] = {}
+    for address, observations in candidates.items():
+        by_device: dict[tuple[str, str], dict[str, object]] = {}
+        for item in observations:
+            key = (str(item["gateway_id"]), str(item["mac_address"]))
+            candidate = by_device.setdefault(key, {
+                "gateway_id": item["gateway_id"],
+                "mac_address": item["mac_address"],
+                "first_seen": item["first_seen_at"],
+                "last_seen": item["last_seen_at"],
+                "sources": set(),
+                "confidence": "low",
+            })
+            candidate["sources"].add(item["source"])
+            if item["confidence"] == "high" or (
+                item["confidence"] == "medium" and candidate["confidence"] == "low"
+            ):
+                candidate["confidence"] = item["confidence"]
+            candidate["first_seen"] = min(candidate["first_seen"], item["first_seen_at"])
+            candidate["last_seen"] = max(candidate["last_seen"], item["last_seen_at"])
+
+        normalized = []
+        for candidate in by_device.values():
+            last_seen = candidate["last_seen"]
+            normalized.append({
+                **candidate,
+                "sources": sorted(candidate["sources"]),
+                "first_seen": candidate["first_seen"].isoformat(),
+                "last_seen": last_seen.isoformat(),
+                "status": "current" if now - last_seen <= timedelta(seconds=90) else "stale",
+            })
+        current = [item for item in normalized if item["status"] == "current"]
+        status = (
+            "conflict" if len(current) > 1
+            else "identified" if len(current) == 1
+            else "stale" if normalized else "unknown"
+        )
+        result[address] = {
+            "identity_status": status,
+            "identity_candidates": sorted(
+                normalized, key=lambda item: (item["gateway_id"], item["mac_address"])
+            ),
+            "current_identity": current[0] if len(current) == 1 else None,
+        }
+    return result
+
+
+def _network_segments() -> list[dict[str, object]]:
+    segments = []
+    for snapshot in store.list_gateway_discovery_snapshots():
+        interfaces = snapshot["payload"].get("interfaces", [])
+        if not isinstance(interfaces, list):
+            continue
+        for interface in interfaces:
+            if not isinstance(interface, dict):
+                continue
+            subnets = interface.get("subnets", [])
+            if not isinstance(subnets, list):
+                continue
+            for subnet in subnets:
+                if not isinstance(subnet, dict) or not isinstance(subnet.get("subnet"), str):
+                    continue
+                try:
+                    network = ipaddress.ip_network(subnet["subnet"], strict=False)
+                except ValueError:
+                    continue
+                vlan_id = interface.get("vlan_id")
+                if (
+                    not isinstance(vlan_id, int)
+                    or isinstance(vlan_id, bool)
+                    or not 1 <= vlan_id <= 4094
+                ):
+                    vlan_id = None
+                segments.append({
+                    "subnet": str(network),
+                    "ip_version": network.version,
+                    "prefix_length": network.prefixlen,
+                    "gateway_id": snapshot["gateway_id"],
+                    "interface": interface.get("name"),
+                    "device": interface.get("device"),
+                    "vlan_id": vlan_id,
+                    "gateway_addresses": interface.get("gateway_addresses", []),
+                    "source": "openwrt.network.interface.dump",
+                    "confidence": "high",
+                })
+    return segments
+
+
+def _node_metadata(
+    address: str,
+    identities: dict[str, dict[str, object]],
+    segments: list[dict[str, object]],
+    device_index: dict[tuple[str, str], dict[str, object]],
+) -> dict[str, object]:
+    identity = identities.get(address, {})
+    current = identity.get("current_identity")
+    metadata: dict[str, object] = {
+        "ip_address": address,
+        "scope": _classify_ip(address)[1],
+        "ip_version": ipaddress.ip_address(address).version,
+        "identity_status": identity.get("identity_status", "unknown"),
+        "identity_candidates": identity.get("identity_candidates", []),
+    }
+    if isinstance(current, dict):
+        device = device_index.get((current["gateway_id"], current["mac_address"]), {})
+        metadata.update({
+            "mac_address": current["mac_address"],
+            "hostname": device.get("name"),
+            "vendor": device.get("vendor"),
+            "gateway_id": current["gateway_id"],
+            "interface": device.get("interface"),
+            "identity_sources": current["sources"],
+            "identity_confidence": current["confidence"],
+            "identity_first_seen": current["first_seen"],
+            "identity_last_seen": current["last_seen"],
+        })
+    matching_segments = []
+    parsed = ipaddress.ip_address(address)
+    for segment in segments:
+        try:
+            network = ipaddress.ip_network(segment["subnet"], strict=False)
+        except ValueError:
+            continue
+        if parsed in network:
+            matching_segments.append(segment)
+    metadata["network_segments"] = matching_segments
+    return metadata
+
+
 @app.get("/api/v1/inventory/devices", tags=["inventory"])
 def list_network_devices(
     limit: Annotated[int, Query(ge=1, le=2000)] = 500,
 ) -> list[dict[str, object]]:
+    identities = _identity_index(datetime.now(UTC))
+    segments = _network_segments()
+    device_index = {
+        (item["gateway_id"], item["mac_address"]): item["payload"]
+        for item in store.list_gateway_devices()
+    }
     result = []
-    for item in store.list_inventory_observations():
+    for item in store.list_inventory_observations(limit=limit):
         classified = _classify_ip(item["ip_address"])
         if classified is None:
             continue
         address, scope = classified
+        metadata = _node_metadata(address, identities, segments, device_index)
         result.append({
-            "ip_address": address,
-            "ip_version": ipaddress.ip_address(address).version,
+            **metadata,
             "scope": scope,
             "protocols": sorted(item["protocols"]),
             "first_seen": item["first_seen"].isoformat(),
@@ -1283,9 +1426,15 @@ def list_network_devices(
 def get_network_topology(
     limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
 ) -> dict[str, object]:
-    links: dict[tuple[str, str, str], int] = {}
+    identities = _identity_index(datetime.now(UTC))
+    segments = _network_segments()
+    device_index = {
+        (item["gateway_id"], item["mac_address"]): item["payload"]
+        for item in store.list_gateway_devices()
+    }
+    links: dict[tuple[str, str, str], dict[str, object]] = {}
     node_scopes: dict[str, str] = {}
-    for item in store.list_topology_observations():
+    for item in store.list_topology_observations(limit=limit):
         source_ip = _classify_ip(item["source"])
         target_ip = _classify_ip(item["target"])
         if source_ip is None or target_ip is None:
@@ -1294,10 +1443,10 @@ def get_network_topology(
         target, target_scope = target_ip
         node_scopes[source] = source_scope
         node_scopes[target] = target_scope
-        links[(source, target, item["protocol"])] = item["observations"]
+        links[(source, target, item["protocol"])] = item
 
     edges = []
-    for (source, target, protocol), count in list(links.items())[:limit]:
+    for (source, target, protocol), item in links.items():
         source_scope = node_scopes[source]
         target_scope = node_scopes[target]
         if source_scope == "private" and target_scope == "public":
@@ -1311,17 +1460,67 @@ def get_network_topology(
         else:
             direction = "other"
         edges.append({
-            "source": source, "target": target, "protocol": protocol,
-            "observations": count, "direction": direction,
+            "source": source,
+            "target": target,
+            "protocol": protocol,
+            "observations": item["observations"],
+            "direction": direction,
+            "relationship": "connection",
+            "evidence_type": "observed",
+            "confidence": "high",
+            "source_integration_ids": item["source_integration_ids"],
+            "source_event_types": item["source_event_types"],
+            "first_seen": item["first_seen"].isoformat(),
+            "last_seen": item["last_seen"].isoformat(),
         })
-    nodes = sorted(node_scopes)
-    node_details = [
-        {"ip_address": address, "scope": node_scopes[address],
-         "ip_version": ipaddress.ip_address(address).version}
-        for address in nodes
-    ]
-    return {"nodes": nodes, "node_details": node_details, "edges": edges}
 
+    for item in store.list_nat_observations(limit=limit):
+        source_ip = _classify_ip(item["source"])
+        target_ip = _classify_ip(item["target"])
+        if source_ip is None or target_ip is None:
+            continue
+        source, source_scope = source_ip
+        target, target_scope = target_ip
+        node_scopes[source] = source_scope
+        node_scopes[target] = target_scope
+        edges.append({
+            "source": source,
+            "target": target,
+            "protocol": item["protocol"],
+            "observations": item["observations"],
+            "direction": "translation",
+            "relationship": "nat_translation",
+            "evidence_type": "observed",
+            "confidence": "high",
+            "source_integration_ids": item["source_integration_ids"],
+            "source_event_types": item["source_event_types"],
+            "first_seen": item["first_seen"].isoformat(),
+            "last_seen": item["last_seen"].isoformat(),
+        })
+
+    node_details = [
+        _node_metadata(address, identities, segments, device_index)
+        for address in sorted(node_scopes)
+    ]
+    relationships = []
+    for detail in node_details:
+        for segment in detail["network_segments"]:
+            relationships.append({
+                "source": detail["ip_address"],
+                "target": segment["subnet"],
+                "relationship": "network_segment_membership",
+                "evidence_type": "inferred",
+                "confidence": segment["confidence"],
+                "source_integration_ids": [segment["gateway_id"]],
+                "source_event_types": ["gateway.discovery"],
+            })
+    return {
+        "nodes": sorted(node_scopes),
+        "node_details": node_details,
+        "edges": edges[:limit],
+        "segments": segments,
+        "relationships": relationships[:limit],
+    }
 
 @app.post("/api/v1/dns/{integration_id}/queries", status_code=202, tags=["privacy"])
 def ingest_dns_queries(
