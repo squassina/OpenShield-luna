@@ -129,7 +129,7 @@ The connector is outbound-only and does not sit in the packet-forwarding path. W
 
 For physical gateway testing, outage/restart drills, and acceptance evidence, follow [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md).
 
-The OpenWrt account should have only the ubus permissions needed for `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and the constrained `openshield.get_ipv4_neighbors` helper. Never grant generic `file.exec` access. Use HTTPS where supported. For HTTP-only management, isolate the management network because credentials are not encrypted in transit.
+The OpenWrt account should have only read access to `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `luci-rpc.getDHCPLeases`. Reuse the existing LuCI ACL groups; do not install packages, scripts, or ACL files on the router. Never grant `file.exec` or write permissions. Use HTTPS where supported. For HTTP-only management, isolate the management network because credentials are not encrypted in transit.
 
 No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
 
