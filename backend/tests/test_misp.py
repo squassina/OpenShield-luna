@@ -68,6 +68,37 @@ def test_misp_search_returns_only_supported_to_ids_indicators():
     body = json.loads(request.data)
     assert body["to_ids"] is True
     assert body["limit"] == 25
+    assert body["page"] == 1
+
+
+def test_misp_search_paginates_and_deduplicates_indicators():
+    def page(items):
+        return response(json.dumps({"response": {"Attribute": items}}).encode())
+
+    def indicator(identifier):
+        return {
+            "uuid": identifier,
+            "type": "domain",
+            "value": f"{identifier}.example",
+            "to_ids": True,
+        }
+
+    first = [indicator(f"ioc-{index}") for index in range(250)]
+    second = [indicator(f"ioc-{index}") for index in range(200, 450)]
+    third = [indicator("ioc-450")]
+    opener = Mock()
+    opener.open.side_effect = [page(first), page(second), page(third)]
+    client = MispClient("https://misp.example", "api-key")
+
+    with patch("openshield.integrations.misp.build_opener", return_value=opener):
+        result = client.search_indicators(limit=1000)
+
+    assert len(result) == 451
+    assert result[0]["indicator_id"] == "ioc-0"
+    assert result[-1]["indicator_id"] == "ioc-450"
+    assert opener.open.call_count == 3
+    pages = [json.loads(call.args[0].data)["page"] for call in opener.open.call_args_list]
+    assert pages == [1, 2, 3]
 
 
 @pytest.mark.parametrize(
