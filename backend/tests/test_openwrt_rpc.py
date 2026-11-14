@@ -25,8 +25,8 @@ def test_openwrt_rpc_authenticates_and_discovers_read_only_data() -> None:
             "11:22:33:44:55:66": {"name": "phone"},
         }]),
         response([0, {"neighbors":
-            "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\\n"
-            "192.0.2.11 dev br-lan lladdr 11:22:33:44:55:66 STALE\\n"
+            "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
+            "192.0.2.11 dev br-lan lladdr 11:22:33:44:55:66 STALE\n"
             "192.0.2.12 dev br-lan FAILED"
         }]),
     ]
@@ -83,15 +83,14 @@ def test_openwrt_rpc_rejects_invalid_payload() -> None:
     ):
         OpenWrtRPCClient("http://router", "user", "password").login()
 
- 
 
 def test_openwrt_neighbor_parser_aggregates_addresses_and_ignores_invalid_rows() -> None:
     interfaces = [{"name": "lan", "device": "br-lan", "l3_device": "br-lan"}]
     hints = {"aa:bb:cc:dd:ee:ff": "desktop"}
     devices = OpenWrtRPCClient._parse_ipv4_neighbors(
-        "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\\n"
-        "192.0.2.11 dev br-lan lladdr aa:bb:cc:dd:ee:ff STALE\\n"
-        "192.0.2.12 dev br-lan FAILED\\n"
+        "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
+        "192.0.2.11 dev br-lan lladdr aa:bb:cc:dd:ee:ff STALE\n"
+        "192.0.2.12 dev br-lan FAILED\n"
         "not-an-ip dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE",
         hints,
         interfaces,
