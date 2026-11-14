@@ -542,3 +542,59 @@ def test_openwrt_status_marks_old_rpc_check_as_stale(monkeypatch) -> None:
     response=client.get("/api/v1/integrations/home-gateway/test")
     assert response.status_code==200
     assert response.json()["status"]=="router_rpc_stale"
+
+
+def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    registered = client.post("/api/v1/integrations", json={
+        "integration_id": "opnsense-home",
+        "kind": "opnsense",
+        "display_name": "Home firewall",
+        "config": {"base_url": "https://192.0.2.1"},
+    })
+    assert registered.status_code == 201
+
+    saved = client.put("/api/v1/integrations/opnsense-home/opnsense-credentials", json={
+        "base_url": "https://192.0.2.1",
+        "api_key": "test-api-key",
+        "api_secret": "sensitive-api-secret",
+    })
+    assert saved.status_code == 200
+    assert "sensitive-api-secret" not in saved.text
+    integration = client.get("/api/v1/integrations").json()[0]
+    assert integration["config"]["credentials_configured"] is True
+    assert "api_secret" not in str(integration)
+    encrypted = main.store.get_integration_secret("opnsense-home")
+    assert encrypted and b"sensitive-api-secret" not in encrypted
+    assert SecretStore(main.store).get("opnsense-home") == {
+        "base_url": "https://192.0.2.1",
+        "api_key": "test-api-key",
+        "api_secret": "sensitive-api-secret",
+    }
+
+    class FakeOPNsenseClient:
+        def __init__(self, base_url, api_key, api_secret):
+            assert base_url == "https://192.0.2.1"
+            assert api_key == "test-api-key"
+            assert api_secret == "sensitive-api-secret"
+
+        def diagnostics(self):
+            return {
+                "system": {"hostname": "firewall"},
+                "firewall": {"states": 12},
+                "arp": {"rows": []},
+            }
+
+    monkeypatch.setattr(main, "OPNsenseClient", FakeOPNsenseClient)
+    diagnostics = client.get("/api/v1/integrations/opnsense-home/opnsense-diagnostics")
+    assert diagnostics.status_code == 200
+    assert diagnostics.json()["status"] == "connected"
+    assert diagnostics.json()["system"]["hostname"] == "firewall"
+
+    assert client.delete("/api/v1/integrations/opnsense-home/opnsense-credentials").status_code == 204
+    assert client.get("/api/v1/integrations/opnsense-home/opnsense-diagnostics").status_code == 409
