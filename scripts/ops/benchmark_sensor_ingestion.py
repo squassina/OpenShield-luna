@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Measure sequential synthetic Suricata/Zeek ingestion against an existing OpenShield sensor."""
 
 from __future__ import annotations
@@ -61,7 +60,7 @@ class Api:
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Request failed for {path}: {exc.reason}") from exc
         if not isinstance(result, dict):
-            raise RuntimeError(f"Unexpected API response for {path}")
+            raise TypeError(f"Unexpected API response for {path}")
         return result
 
 
@@ -105,7 +104,7 @@ def count_events(api: Api, integration_id: str) -> int:
         result = api.request(page_path)
         items = result.get("items")
         if not isinstance(items, list):
-            raise RuntimeError("Event listing response has no items array")
+            raise TypeError("Event listing response has no items array")
         total += len(items)
         cursor = result.get("next_cursor")
         if not cursor:
@@ -205,6 +204,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, TypeError, ValueError) as exc:
         print(f"benchmark failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
