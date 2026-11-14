@@ -184,6 +184,7 @@ CREATE TABLE IF NOT EXISTS events (
                 CREATE INDEX IF NOT EXISTS threat_indicators_value_idx
                 ON threat_indicators (indicator_type, lower(value))
                 """,
+                """
                 CREATE TABLE IF NOT EXISTS audit_records (
                     audit_id BIGSERIAL PRIMARY KEY,
                     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
