@@ -900,6 +900,10 @@ def report_gateway_action_result(
             if (
                 request.result.get("status") != expected_status
                 or request.result.get("ip") != action.get("indicator_value")
+                or (
+                    request.status == "active"
+                    and request.result.get("ttl_seconds") != action.get("ttl_seconds")
+                )
             ):
                 raise HTTPException(status_code=422, detail="Gateway firewall verification result is invalid")
             if request.status == "active" and (
@@ -944,6 +948,12 @@ def report_gateway_action_result(
         if request.status == "failed":
             if current_status == "cancelled_by_kill_switch":
                 return action
+            if store.get_response_control()["kill_switch_enabled"]:
+                return store.update_response_action(
+                    action_id,
+                    {**action, "status": "cancelled_by_kill_switch", "cancelled_at": datetime.now(UTC).isoformat()},
+                    expires_at=None, next_attempt_at=None,
+                ) or {}
             attempts = int(action.get("attempts", 0)) + 1
             retry_at = datetime.now(UTC) + timedelta(seconds=min(300, 5 * (2 ** min(attempts, 6))))
             return store.update_response_action(

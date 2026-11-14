@@ -138,7 +138,11 @@ class OpenWrtRPCClient:
             "openshield-firewall", "block_ip",
             {"ip": str(address), "ttl_seconds": ttl_seconds},
         )
-        if result.get("status") not in {"blocked", "already_blocked"} or result.get("ip") != str(address):
+        if (
+            result.get("status") not in {"blocked", "already_blocked"}
+            or result.get("ip") != str(address)
+            or result.get("ttl_seconds") != ttl_seconds
+        ):
             raise OpenWrtRPCError("OpenWrt firewall plugin returned an invalid block result")
         return result
 

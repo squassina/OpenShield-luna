@@ -301,8 +301,44 @@ def test_firewall_policy_requires_approval_and_executes_through_gateway(monkeypa
     rolled_back = client.post(
         f"/api/v1/gateway/actions/{action['action_id']}/result",
         headers=gateway_headers,
-        json={"gateway_id":"home-gateway","status":"rolled_back","result":{"status":"unblocked"}},
+        json={"gateway_id":"home-gateway","status":"rolled_back","result":{"status":"unblocked","ip":"8.8.8.8"}},
     )
     assert rolled_back.status_code == 200
     assert rolled_back.json()["status"] == "rolled_back"
     assert main.store.get_response_action(action["action_id"])["status"] == "rolled_back"
+
+
+def test_kill_switch_reconciles_gateway_action_already_in_flight(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "gateway-test-token")
+    _create_incident("incident-ip-race", "9.9.9.9", 70, indicator_type="ip")
+    headers = {"Authorization":"Bearer gateway-test-token"}
+    assert client.post("/api/v1/gateway/connect",headers=headers,json={
+        "protocol_version":"openshield.gateway.v1","gateway_id":"home-gateway",
+        "gateway_type":"openwrt","connector_version":"0.1.0",
+        "capabilities":["discover","health_check","execute_action","verify_action"],
+    }).status_code == 201
+    assert client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",headers=headers,
+        json={"base_url":"https://192.0.2.1","username":"rpc","password":"secret"},
+    ).status_code == 200
+    assert client.post("/api/v1/response/policies",json={
+        "name":"Manual firewall approval","provider_integration_id":"home-gateway",
+        "action_type":"firewall_block_ip","min_risk_score":60,"ttl_seconds":300,
+        "approval_required":False,"enabled":True,
+    }).status_code == 201
+    action=client.post("/api/v1/incidents/incident-ip-race/response/evaluate").json()["actions"][0]
+    assert client.post(f"/api/v1/response/actions/{action['action_id']}/approve").json()["status"]=="queued"
+
+    stopped=client.put("/api/v1/response/control",json={"enabled":True,"reason":"Race test"})
+    assert stopped.json()["cancelled_pending"]==1
+    in_flight=client.post(
+        f"/api/v1/gateway/actions/{action['action_id']}/result",headers=headers,
+        json={"gateway_id":"home-gateway","status":"active","result":{
+            "status":"blocked","ip":"9.9.9.9","ttl_seconds":300,
+        }},
+    )
+    assert in_flight.status_code==200
+    assert in_flight.json()["status"]=="rollback_queued"
