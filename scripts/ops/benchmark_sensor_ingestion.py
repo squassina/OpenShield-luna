@@ -163,7 +163,9 @@ def main() -> int:
         sent += size
 
     elapsed = time.perf_counter() - started
+    read_started = time.perf_counter()
     final_count = count_events(api, args.integration_id)
+    read_elapsed = time.perf_counter() - read_started
     observed_delta = final_count - baseline
     if observed_delta < accepted:
         raise RuntimeError(
@@ -181,6 +183,10 @@ def main() -> int:
         "duplicates": duplicates,
         "elapsed_seconds": round(elapsed, 3),
         "ingestion_events_per_second": round(accepted / elapsed, 2) if elapsed else 0,
+        "read_elapsed_seconds": round(read_elapsed, 3),
+        "read_events_per_second": (
+            round(observed_delta / read_elapsed, 2) if read_elapsed else 0
+        ),
         "request_latency_ms": {
             "p50": round(percentile(latencies, 0.50) * 1000, 2),
             "p95": round(percentile(latencies, 0.95) * 1000, 2),
