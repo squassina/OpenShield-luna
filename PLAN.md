@@ -403,6 +403,8 @@ Scope:
 
 **Goal:** support broader operational use where validated by demand.
 
+**Implementation status:** P6 baseline is underway on the chained branch. Current increment adds multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
+
 Scope:
 - Multiple gateways and sites.
 - Multi-tenancy if justified by validated requirements.
