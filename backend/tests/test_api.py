@@ -858,7 +858,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
     assert diagnostics.json()["summary"]["agents_available"] == 1
-    assert diagnostics.json()["agents"][ "data"]["affected_items"][0]["id"] == "001"
+    assert diagnostics.json()["agents"]["data"]["affected_items"][0]["id"] == "001"
 
     connection = client.post("/api/v1/integrations/wazuh-home/test")
     assert connection.status_code == 200
