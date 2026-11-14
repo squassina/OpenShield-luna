@@ -5,7 +5,6 @@ from openshield.api import main
 from openshield.core.secrets import SecretStore
 
 
-
 client = TestClient(main.app)
 
 
