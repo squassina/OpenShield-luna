@@ -376,7 +376,7 @@ def save_opnsense_credentials(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     registry.update(integration_id, IntegrationUpdate(config={
         **integration.config, "base_url": credentials.base_url.rstrip("/"),
-        "credentials_configured": True,
+        "auth_configured": True,
     }))
     return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
 
@@ -388,7 +388,7 @@ def delete_opnsense_credentials(integration_id: str) -> Response:
         raise HTTPException(status_code=404, detail="OPNsense integration not found")
     SecretStore(store).delete(integration_id)
     registry.update(integration_id, IntegrationUpdate(config={
-        **integration.config, "credentials_configured": False,
+        **integration.config, "auth_configured": False,
     }))
     return Response(status_code=204)
 

@@ -85,7 +85,7 @@ class OPNsenseAdapter:
         return {
             "integration_id": integration.integration_id,
             "kind": self.kind,
-            "status": "configured" if integration.config.get("credentials_configured") else "needs_credentials",
+            "status": "configured" if integration.config.get("auth_configured") else "needs_credentials",
             "transport": "opnsense_rest_api",
             "capabilities": [item.value for item in self.capabilities],
         }

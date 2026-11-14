@@ -567,7 +567,7 @@ def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
     assert saved.status_code == 200
     assert "sensitive-api-secret" not in saved.text
     integration = client.get("/api/v1/integrations").json()[0]
-    assert integration["config"]["credentials_configured"] is True
+    assert integration["config"]["auth_configured"] is True
     assert "api_secret" not in str(integration)
     encrypted = main.store.get_integration_secret("opnsense-home")
     assert encrypted and b"sensitive-api-secret" not in encrypted
@@ -598,3 +598,4 @@ def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
 
     assert client.delete("/api/v1/integrations/opnsense-home/opnsense-credentials").status_code == 204
     assert client.get("/api/v1/integrations/opnsense-home/opnsense-diagnostics").status_code == 409
+    assert client.get("/api/v1/integrations").json()[0]["config"]["auth_configured"] is False

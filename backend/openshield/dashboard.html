@@ -279,7 +279,7 @@ async function loadOpnsenseStatus(integrations) {
   $("opnsense-id").value=item.integration_id;
   $("opnsense-name").value=item.display_name;
   $("opnsense-url").value=item.config?.base_url||"";
-  const configured=item.config?.credentials_configured===true;
+  const configured=item.config?.auth_configured===true;
   root.textContent=item.display_name+" · "+(configured?"Credentials configured":"Credentials required");
   root.classList.remove("error");
   if(configured) {
