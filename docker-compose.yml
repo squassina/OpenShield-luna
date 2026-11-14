@@ -34,6 +34,8 @@ services:
       OPENSHIELD_CLOUD_AI_ENABLED: ${OPENSHIELD_CLOUD_AI_ENABLED:-false}
       OPENSHIELD_ENFORCEMENT_ENABLED: ${OPENSHIELD_ENFORCEMENT_ENABLED:-false}
       OPENSHIELD_MAX_AUTONOMY_LEVEL: ${OPENSHIELD_MAX_AUTONOMY_LEVEL:-0}
+    volumes:
+      - ./certs:/run/openshield/ca:ro
     depends_on:
       openshield-db:
         condition: service_healthy
