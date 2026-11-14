@@ -69,6 +69,7 @@ from openshield.threat_intel.providers import (
 )
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
+
 load_runtime_secrets(create=True)
 configure_logging()
 
