@@ -916,11 +916,22 @@ def test_misp_credentials_are_encrypted_and_sync_indicators(monkeypatch):
         "to_ids": True,
         "source_timestamp": "1760000000",
     }]
+    main.store.upsert_threat_indicators("misp-lab", [{
+        "indicator_id": "stale-ioc",
+        "indicator_type": "domain",
+        "value": "stale.example",
+    }])
     monkeypatch.setattr(main.MispClient, "search_indicators", lambda self, limit: indicators)
     synced = client.post("/api/v1/integrations/misp-lab/misp-sync?limit=50")
     assert synced.status_code == 200
     assert synced.json()["stored"] == 1
-    assert client.get("/api/v1/threat-intel/indicators").json()["count"] == 1
+    assert synced.json()["removed"] == 1
+    assert synced.json()["reconciled"] is True
+    stored_ids = {
+        item["indicator_id"]
+        for item in client.get("/api/v1/threat-intel/indicators?integration_id=misp-lab").json()["items"]
+    }
+    assert stored_ids == {"misp-uuid-1"}
 
     sensor = client.post("/api/v1/integrations", json={
         "integration_id": "suricata-lab",
