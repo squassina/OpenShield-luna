@@ -15,6 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr
 
+from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
@@ -458,12 +459,6 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     if item.kind == "openai":
         result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
     return result
-    result = adapters[item.kind].probe(item)
-    if item.kind in {"crowdsec", "misp"}:
-        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
-    if item.kind == "openai":
-        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
-    return result
 
 
 
@@ -505,32 +500,6 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         return {
             "status": "connected", "integration_id": integration_id, "provider": "pfsense",
             "system_information_available": bool(system), "imported": 0,
-        }
-    if item.kind == "crowdsec":
-        try:
-            credentials = SecretStore(store).get(integration_id)
-            if credentials is None:
-                raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
-            diagnostics = CrowdSecClient(
-                str(credentials["base_url"]),
-                str(credentials["bouncer_api_key"]),
-                str(credentials.get("machine_id") or "") or None,
-                str(credentials.get("machine_password") or "") or None,
-            ).diagnostics()
-        except SecretConfigurationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
-        except CrowdSecError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        summary = diagnostics["summary"]
-        return {
-            "status": "connected",
-            "integration_id": integration_id,
-            "provider": "crowdsec",
-            "alerts_available": summary["alerts_available"],
-            "decisions_available": summary["decisions_available"],
-            "imported": 0,
         }
     if item.kind == "wazuh":
         try:
@@ -1315,6 +1284,61 @@ def grafana_diagnostics(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
     except GrafanaError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+@app.put("/api/v1/integrations/{integration_id}/ai-credentials", tags=["integrations"])
+def save_ai_credentials(
+    integration_id: str, credentials: AIProviderCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openai":
+        raise HTTPException(status_code=404, detail="OpenAI integration not found")
+    if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
+    if not os.getenv("OPENSHIELD_SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="OPENSHIELD_SECRET_KEY is required for provider credentials")
+    if integration.config.get("cloud_enabled") is not True:
+        raise HTTPException(status_code=409, detail="Explicitly enable cloud use for this integration before storing its API key")
+    try:
+        SecretStore(store).set(
+            integration_id, {"api_key": credentials.api_key.get_secret_value()},
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "saved", "integration_id": integration_id,
+        "credentials_configured": True, "secret_storage": "encrypted",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/ai-credentials", status_code=204, tags=["integrations"])
+def delete_ai_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openai":
+        raise HTTPException(status_code=404, detail="OpenAI integration not found")
+    store.delete_integration_secret(integration_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/incidents/{incident_id}/investigate", tags=["ai"])
+def investigate_incident_route(
+    incident_id: str, request: AIInvestigationRequest
+) -> dict[str, object]:
+    try:
+        return investigate_incident(store, registry, incident_id, request.provider_id)
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/incidents/{incident_id}/investigations", tags=["ai"])
+def list_incident_investigations(incident_id: str) -> list[dict[str, object]]:
+    if store.get_incident(incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return store.list_incident_investigations(incident_id, limit=20)
+
+
 @app.put("/api/v1/integrations/{integration_id}/threat-intel-credentials", tags=["integrations"])
 def save_threat_intel_credentials(
     integration_id: str, credentials: ThreatIntelCredentials
