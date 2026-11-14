@@ -456,14 +456,7 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-<<<<<<< HEAD
-                "TRUNCATE TABLE audit_records, threat_indicators, network_device_address_observations, "
-                "network_devices, gateway_discovery_snapshots, integration_poll_cursors, "
-                "privacy_classification_overrides, integration_secrets, events, privacy_lists, "
-                "gateway_connections, integrations RESTART IDENTITY"
-=======
-                "TRUNCATE TABLE audit_records, integration_poll_cursors, privacy_classification_overrides, incident_events, incidents, threat_intel_cache, integration_secrets, events, privacy_lists, gateway_connections, integrations RESTART IDENTITY"
->>>>>>> f6d8942 (feat(p3): add persistent threat intel cache and incident storage)
+                "TRUNCATE TABLE integrations, integration_secrets, events, threat_intel_cache, incidents, incident_events, incident_investigations, policies, policy_decisions, response_executions, gateway_commands, runtime_controls, integration_poll_cursors, privacy_lists, privacy_classification_overrides, gateway_connections, gateway_discovery_snapshots, network_devices, network_device_address_observations, threat_indicators, audit_records RESTART IDENTITY CASCADE"
             )
 
     def create_incident_investigation(
