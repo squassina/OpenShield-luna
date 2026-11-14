@@ -1093,7 +1093,7 @@ def save_openwrt_credentials(
     if not os.getenv("OPENSHIELD_GATEWAY_TOKEN"):
         raise HTTPException(
             status_code=503,
-            detail="Configure OPENSHIELD_GATEWAY_TOKEN on Node and connector before storing router credentials",
+            detail="Local Gateway Connector authentication is not initialized; check the connector service",
         )
     try:
         parsed = urlsplit(credentials.base_url)
