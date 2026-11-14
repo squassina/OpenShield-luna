@@ -954,7 +954,12 @@ def test_misp_sync_rejects_wrong_kind_and_disabled_integration():
 def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
     from openshield.api import main
 
-    register_integration("suricata-lab")
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "suricata-lab",
+        "kind": "suricata",
+        "display_name": "Suricata lab",
+    })
+    assert created.status_code == 201
     main.store.upsert_threat_indicators("suricata-lab", [{
         "indicator_id": "domain-1",
         "indicator_type": "domain",
@@ -962,7 +967,7 @@ def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
         "to_ids": True,
     }])
     event = sample_event("domain-event", "suricata-lab")
-    event["source"] = {"integration_id": "suricata-lab", "kind": "openwrt"}
+    event["source"] = {"integration_id": "suricata-lab", "kind": "suricata"}
     event["payload"] = {"domain": "sub.evil.example"}
     assert client.post("/api/v1/events", json=event).status_code == 202
     assert client.get("/api/v1/threat-intel/matches").json()["count"] == 0
