@@ -214,7 +214,18 @@ def evaluate_incident(
             "error": None,
         }
         created, inserted = store.create_response_action(action)
-        if inserted and status == "approved":
+        if (
+            not inserted
+            and not control["kill_switch_enabled"]
+            and created.get("status") in {"blocked_by_kill_switch", "cancelled_by_kill_switch"}
+        ):
+            created = _update(
+                store, created, status,
+                expires_at=None,
+                error=None,
+                requested_at=datetime.now(UTC).isoformat(),
+            )
+        if (inserted or created.get("status") == "approved") and created.get("status") == "approved":
             created = execute_dns_block(store, registry, created)
         actions.append(created)
     return {"incident_id": incident_id, "actions": actions}
