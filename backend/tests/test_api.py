@@ -881,3 +881,88 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
         if item["integration_id"] == "wazuh-home"
     )
     assert integration["config"]["auth_configured"] is False
+
+
+def test_misp_credentials_are_encrypted_and_sync_indicators(monkeypatch):
+    from cryptography.fernet import Fernet
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "misp-lab",
+        "kind": "misp",
+        "display_name": "MISP lab",
+        "config": {"base_url": "https://misp.example"},
+    })
+    assert created.status_code == 201
+    credentials = client.put("/api/v1/integrations/misp-lab/misp-credentials", json={
+        "base_url": "https://misp.example",
+        "api_key": "misp-secret-value",
+    })
+    assert credentials.status_code == 200
+    assert credentials.json()["secret_storage"] == "encrypted"
+    assert "misp-secret-value" not in credentials.text
+    encrypted = main.store.get_integration_secret("misp-lab")
+    assert encrypted and b"misp-secret-value" not in encrypted
+
+    indicators = [{
+        "indicator_id": "misp-uuid-1",
+        "indicator_type": "ip-src",
+        "value": "198.51.100.23",
+        "category": "Network activity",
+        "event_id": "misp-event-42",
+        "comment": "test indicator",
+        "to_ids": True,
+        "source_timestamp": "1760000000",
+    }]
+    monkeypatch.setattr(main.MispClient, "search_indicators", lambda self, limit: indicators)
+    synced = client.post("/api/v1/integrations/misp-lab/misp-sync?limit=50")
+    assert synced.status_code == 200
+    assert synced.json()["stored"] == 1
+    assert client.get("/api/v1/threat-intel/indicators").json()["count"] == 1
+
+    sensor = client.post("/api/v1/integrations", json={
+        "integration_id": "suricata-lab",
+        "kind": "suricata",
+        "display_name": "Suricata lab",
+    })
+    assert sensor.status_code == 201
+    event = sample_event("sensor-event-1", "suricata-lab")
+    event["source"] = {"integration_id": "suricata-lab", "kind": "suricata"}
+    event["event_type"] = "network.connection"
+    event["payload"] = {"src_ip": "198.51.100.23", "dest_ip": "192.0.2.15"}
+    assert client.post("/api/v1/events", json=event).status_code == 202
+    matches = client.get("/api/v1/threat-intel/matches").json()
+    assert matches["count"] == 1
+    assert matches["items"][0]["indicator"]["indicator_id"] == "misp-uuid-1"
+    assert matches["items"][0]["event"]["event_id"] == "sensor-event-1"
+
+
+def test_misp_sync_rejects_wrong_kind_and_disabled_integration():
+    register_integration("router-lab")
+    assert client.post("/api/v1/integrations/router-lab/misp-sync").status_code == 404
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "misp-disabled",
+        "kind": "misp",
+        "display_name": "Disabled MISP",
+    })
+    assert created.status_code == 201
+    assert client.patch("/api/v1/integrations/misp-disabled", json={"enabled": False}).status_code == 200
+    assert client.post("/api/v1/integrations/misp-disabled/misp-sync").status_code == 409
+
+
+def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
+    from openshield.api import main
+
+    register_integration("suricata-lab")
+    main.store.upsert_threat_indicators("suricata-lab", [{
+        "indicator_id": "domain-1",
+        "indicator_type": "domain",
+        "value": "evil.example",
+        "to_ids": True,
+    }])
+    event = sample_event("domain-event", "suricata-lab")
+    event["source"] = {"integration_id": "suricata-lab", "kind": "openwrt"}
+    event["payload"] = {"domain": "sub.evil.example"}
+    assert client.post("/api/v1/events", json=event).status_code == 202
+    assert client.get("/api/v1/threat-intel/matches").json()["count"] == 0
