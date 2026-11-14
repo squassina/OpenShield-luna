@@ -283,3 +283,20 @@ Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Nod
 ## DNS classification provenance
 
 DNS classifications are descriptive privacy signals, not threat verdicts. OpenShield pins the AdGuard CNAME original-trackers dataset (MIT), and uses it only when the DNS provider supplies an observed CNAME answer; a hostname alone is not enough. It records the upstream commit, source update timestamp, matched target, and confidence with each event. A scheduled workflow checks for feed changes weekly and opens a review PR; it never applies an update automatically. The local suffix/TLD heuristics remain a fallback and carry lower confidence. User overrides (`allow` or `tracker`) take precedence for the matching domain and its subdomains; raw DNS domain, client, timestamp, and response status remain unchanged.
+
+
+## pfSense CE read-only integration
+
+OpenShield can connect to pfSense Community Edition through the **community-maintained pfSense REST API v2 package** ([documentation](https://pfrest.org/)). This package is not built into pfSense CE. An administrator must install and configure it separately, enable API-key authentication, and grant only the read privileges required by the selected endpoints. OpenShield never installs packages or changes pfSense configuration.
+
+In the dashboard, add a **pfSense CE firewall** integration with its HTTPS base URL and API key. OpenShield encrypts the key at rest using \`OPENSHIELD_SECRET_KEY\`; the key is not stored in integration configuration or returned by the API. The connector sends the key in the \`X-API-Key\` header and performs GET requests only.
+
+Read-only diagnostics currently query:
+
+- \`GET /api/v2/status/system\`
+- \`GET /api/v2/status/interfaces\`
+- \`GET /api/v2/diagnostics/arp_table\`
+- \`GET /api/v2/status/dhcp_server/leases\`
+- \`GET /api/v2/status/gateways\`
+
+The REST API package must expose these endpoints for the installed version and the API key's user must have corresponding read privileges. Use HTTPS with a trusted certificate. The integration does not create firewall rules, apply configuration, restart services, or install/upgrade the pfSense API package.
