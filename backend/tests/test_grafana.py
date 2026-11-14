@@ -39,7 +39,7 @@ def test_grafana_reads_health_and_dashboard_metadata_with_bearer_auth():
     assert requests[1].full_url.endswith("/api/search/?type=dash-db&limit=100")
     assert all(request.get_header("Authorization") == "Bearer read-token" for request in requests)
     assert result["health"]["database"] == "ok"
-    assert result["summary"] == {"dashboards_available": 1, "dashboards_limit": 100}
+    assert result["summary"] == {"dashboards_returned": 1, "dashboards_limit": 100}
     assert result["dashboards"][0]["uid"] == "abc"
 
 
