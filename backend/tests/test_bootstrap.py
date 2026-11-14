@@ -11,8 +11,8 @@ def test_runtime_secrets_are_generated_once_and_reused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENSHIELD_RUNTIME_SECRETS_DIR", str(tmp_path / "secrets"))
-    monkeypatch.delenv("OPENSHIELD_SECRET_KEY", raising=False)
-    monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", "")
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "")
 
     load_runtime_secrets(create=True)
     encryption_key = os.environ["OPENSHIELD_SECRET_KEY"]
