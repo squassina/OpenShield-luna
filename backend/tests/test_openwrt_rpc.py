@@ -41,15 +41,15 @@ def test_openwrt_rpc_discovers_devices_from_standard_luci_methods() -> None:
     assert result["interfaces"][0]["name"] == "lan"
     assert result["devices"] == [
         {
-            "mac_address": "11:22:33:44:55:66", "name": "phone",
-            "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
-            "ipv6_addresses": [], "device": "", "interface": "lan", "source": "luci-rpc",
-        },
-        {
             "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
             "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
             "ipv6_addresses": ["2001:db8::10"], "device": "", "interface": "Unmapped",
             "source": "luci-rpc",
+        },
+        {
+            "mac_address": "11:22:33:44:55:66", "name": "phone",
+            "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
+            "ipv6_addresses": [], "device": "", "interface": "lan", "source": "luci-rpc",
         },
     ]
     assert mocked.call_count == 5
