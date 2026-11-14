@@ -659,7 +659,7 @@ async function loadGrafanaStatus(integrations) {
         const summary=data.summary||{},pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
         pre.textContent=JSON.stringify({health:data.health,summary,dashboards:(data.dashboards||[]).slice(0,25)},null,2);
         details.replaceChildren(pre);
-        root.textContent=item.display_name+" · Connected · "+fmt(summary.dashboards_available)+" dashboards · DB "+data.health.database+" · Grafana "+data.health.version;
+        root.textContent=item.display_name+" · Connected · "+fmt(summary.dashboards_returned)+" dashboards · DB "+data.health.database+" · Grafana "+data.health.version;
       } catch(error) { root.textContent="Grafana diagnostics failed: "+error.message;root.classList.add("error"); }
       finally { button.disabled=false; }
     }));
