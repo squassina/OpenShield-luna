@@ -713,31 +713,30 @@ Business and SaaS authentication must be implemented and reviewed before those d
 
 ## OpenWrt device inventory and logical topology — implementation checkpoint
 
-**Software implementation:** merged into `main` by PR #26 (`87c867b0b9e586f1c5d62ad33c09a59afd7ae61f`). CI passed build, lint, and tests.
+Software implementation: MAC-keyed inventory and persistence were introduced by PR #26. The current implementation uses only standard LuCI ubus methods; it does not install or configure anything on the OpenWrt router.
 
 Implemented:
-- Gateway Connector queries `network.interface dump`, `luci-rpc getHostHints`, and the restricted `openshield.get_ipv4_neighbors` rpcd method.
-- The custom rpcd helper exposes only the fixed `ip -4 neigh show` command. It accepts no caller-controlled command or arguments; generic `file.exec` permission is not required.
-- IPv4 neighbor rows are validated and normalized. Devices are keyed by MAC, with multiple IPv4 addresses aggregated and kernel devices mapped to logical interfaces (preferring `l3_device`).
-- The latest gateway/interface snapshot and device inventory are persisted in PostgreSQL. First-seen and last-seen timestamps survive disappearance from the current neighbor table.
-- Discovery refreshes on each connector heartbeat (default 30 seconds). The API exposes the router inventory and marks devices online when last seen within 90 seconds; otherwise they remain visible as offline.
-- The dashboard displays devices grouped by gateway and logical interface, including an Unmapped group for devices without a resolved interface.
-- Installation and acceptance steps are documented in `docs/operations/openwrt-validation.md`, section 10.
+- Gateway Connector authenticates to the existing /ubus endpoint using the router's normal rpcd session login.
+- Discovery reads system.board, network.interface dump, luci-rpc getHostHints, and luci-rpc getDHCPLeases.
+- LuCI host hints supply MAC-keyed IPv4/IPv6 addresses and known hostnames; DHCP leases enrich devices with hostname and logical interface when present.
+- Devices are keyed by MAC. PostgreSQL preserves first-seen and last-seen timestamps after devices disappear from the current LuCI response.
+- Discovery refreshes on each connector heartbeat (default 30 seconds). The API exposes router inventory and marks devices online when last seen within 90 seconds; otherwise they remain visible as offline.
+- The dashboard groups devices by DHCP logical interface and shows devices without interface metadata under Unmapped.
+- No router-side package, helper, ACL file, shell command, SSH access, or custom ubus object is used. No firewall, routing, wireless, or forwarding configuration is changed.
 
-Not yet validated on physical hardware:
-1. Install the helper and ACL on the Dynalink DL-WRX36.
-2. Assign the ACL to the dedicated rpcd account and verify every RPC method through authenticated remote calls.
-3. Compare discovered MAC, host hint, IPv4, and logical interface against known wired/wireless clients.
-4. Verify address changes retain MAC identity; verify disappearance, the 90-second offline transition, and later rediscovery.
-5. Run connector restart and Node outage/recovery checks; confirm inventory and outbox recovery.
-6. Confirm no firewall, routing, wireless, or forwarding changes occur.
+Hardware validation still required:
+1. Confirm required LuCI methods and built-in ACL groups exist on the Dynalink DL-WRX36 firmware.
+2. Verify authenticated read-only RPC calls with the dedicated account.
+3. Compare discovered MAC, hostname, IPv4/IPv6 and logical interface against known clients.
+4. Verify IP changes retain MAC identity; verify disappearance, the 90-second offline transition and rediscovery.
+5. Run connector restart and Node outage/recovery checks; confirm forwarding remains independent.
 
-Known limitations / follow-up:
-- IPv6 neighbor discovery (NDP) is not implemented.
-- Discovery depends on IPv4 neighbor-cache entries; a device that has not generated a neighbor entry will not be newly discovered. Sleeping clients may be marked offline.
-- Friendly names depend on OpenWrt host hints; missing names remain `(sem-nome)`.
-- Wi-Fi association data, full DHCP lease data, VLAN/bridge membership, switch-port mapping, and physical Layer-2 links are not included.
+Known limitations:
+- Inventory coverage is limited to host hints and DHCP lease records exposed by the installed LuCI/DHCP stack.
+- DHCP logical-interface metadata is not available for every host hint; those devices remain Unmapped.
+- This is not a complete Wi-Fi association, bridge/VLAN, switch-port, or physical Layer-2 topology map.
 - MAC identity is scoped to one gateway. Cross-source identity reconciliation with Suricata/Zeek, randomized-MAC handling, spoofing detection, and confidence scoring remain open.
 - The 90-second presence threshold is an initial heuristic and must be reviewed against real router behavior.
 
-Track physical gateway acceptance under [Issue #2](https://github.com/squassina/OpenShield/issues/2), broader identity enrichment under [Issue #5](https://github.com/squassina/OpenShield/issues/5), and richer topology semantics under [Issue #8](https://github.com/squassina/OpenShield/issues/8). The consolidated register is `docs/technical-debt.md`.
+Track physical gateway acceptance under [Issue #2](https://github.com/squassina/OpenShield/issues/2), broader identity enrichment under [Issue #5](https://github.com/squassina/OpenShield/issues/5), and richer topology semantics under [Issue #8](https://github.com/squassina/OpenShield/issues/8). See docs/technical-debt.md and docs/operations/openwrt-validation.md.
+
