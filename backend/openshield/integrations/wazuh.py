@@ -127,7 +127,7 @@ class WazuhClient:
         if not isinstance(payload, dict):
             raise WazuhError("Wazuh Server API returned an unexpected response")
         error = payload.get("error", 0)
-        if error not in {0, "0", None}:
+        if error not in (0, "0", None):
             raise WazuhError("Wazuh Server API reported an application error")
         return payload
 
