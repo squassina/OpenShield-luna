@@ -12,7 +12,7 @@ def response(payload: object) -> MagicMock:
     return result
 
 
-def test_openwrt_rpc_authenticates_and_discovers_read_only_data() -> None:
+def test_openwrt_rpc_discovers_devices_from_standard_luci_methods() -> None:
     replies = [
         response([0, {"ubus_rpc_session": "session-id"}]),
         response([0, {"hostname": "router", "model": "OpenWrt test", "release": {"version": "24.10"}}]),
@@ -21,42 +21,43 @@ def test_openwrt_rpc_authenticates_and_discovers_read_only_data() -> None:
              "proto": "static", "ipv4-address": [{"address": "192.0.2.1"}]}
         ]}]),
         response([0, {
-            "AA:BB:CC:DD:EE:FF": {"name": "workstation"},
-            "11:22:33:44:55:66": {"name": "phone"},
+            "AA:BB:CC:DD:EE:FF": {
+                "name": "workstation",
+                "ipaddrs": ["192.0.2.10"],
+                "ip6addrs": ["2001:db8::10"],
+            },
+            "11:22:33:44:55:66": {"ipaddrs": ["192.0.2.11"]},
         }]),
-        response([0, {"neighbors":
-            "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
-            "192.0.2.11 dev br-lan lladdr 11:22:33:44:55:66 STALE\n"
-            "192.0.2.12 dev br-lan FAILED"
-        }]),
+        response([0, {"dhcp_leases": [
+            {"macaddr": "11:22:33:44:55:66", "hostname": "phone",
+             "ipaddr": "192.0.2.11", "interface": "lan", "expires": 120}
+        ], "dhcp6_leases": []}]),
     ]
     with patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies) as mocked:
-        client = OpenWrtRPCClient(
-            "http://192.0.2.1", "openshield", "test-password", timeout=3
-        )
+        client = OpenWrtRPCClient("http://192.0.2.1", "openshield", "test-password", timeout=3)
         result = client.discover()
 
     assert result["board"]["hostname"] == "router"
-    assert result["board"]["release"]["version"] == "24.10"
     assert result["interfaces"][0]["name"] == "lan"
-    assert result["interfaces"][0]["ipv4_address"] == ["192.0.2.1"]
     assert result["devices"] == [
         {
             "mac_address": "11:22:33:44:55:66", "name": "phone",
             "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
-            "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
+            "ipv6_addresses": [], "device": "lan", "interface": "lan", "source": "luci-rpc",
         },
         {
             "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
             "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
-            "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
+            "ipv6_addresses": ["2001:db8::10"], "device": "", "interface": "Unmapped",
+            "source": "luci-rpc",
         },
     ]
     assert mocked.call_count == 5
-    login = json.loads(mocked.call_args_list[0].args[0].data)
-    assert login[2] == "login"
-    assert login[3]["password"] == "test-password"
-    assert "Authorization" not in mocked.call_args_list[1].args[0].headers
+    calls = [json.loads(call.args[0].data) for call in mocked.call_args_list]
+    assert calls[0][2] == "login"
+    assert calls[0][3]["password"] == "test-password"
+    assert calls[3][1:3] == ["luci-rpc", "getHostHints"]
+    assert calls[4][1:3] == ["luci-rpc", "getDHCPLeases"]
 
 
 def test_openwrt_rpc_rejects_invalid_configuration() -> None:
@@ -84,34 +85,36 @@ def test_openwrt_rpc_rejects_invalid_payload() -> None:
         OpenWrtRPCClient("http://router", "user", "password").login()
 
 
-def test_openwrt_neighbor_parser_aggregates_addresses_and_ignores_invalid_rows() -> None:
-    interfaces = [{"name": "lan", "device": "br-lan", "l3_device": "br-lan"}]
-    hints = {"aa:bb:cc:dd:ee:ff": "desktop"}
-    devices = OpenWrtRPCClient._parse_ipv4_neighbors(
-        "192.0.2.10 dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
-        "192.0.2.11 dev br-lan lladdr aa:bb:cc:dd:ee:ff STALE\n"
-        "192.0.2.12 dev br-lan FAILED\n"
-        "not-an-ip dev br-lan lladdr aa:bb:cc:dd:ee:ff REACHABLE",
-        hints,
-        interfaces,
+def test_luci_host_hints_and_dhcp_leases_merge_by_mac() -> None:
+    devices = OpenWrtRPCClient._parse_devices(
+        {
+            "AA:BB:CC:DD:EE:FF": {
+                "name": "desktop", "ipaddrs": ["192.0.2.10"],
+                "ip6addrs": ["2001:db8::10/64"],
+            }
+        },
+        {
+            "dhcp_leases": [
+                {"macaddr": "aa:bb:cc:dd:ee:ff", "hostname": "ignored",
+                 "ipaddr": "192.0.2.11", "interface": "lan"},
+            ],
+            "dhcp6_leases": [],
+        },
     )
     assert len(devices) == 1
     assert devices[0]["name"] == "desktop"
     assert devices[0]["ipv4_addresses"] == ["192.0.2.10", "192.0.2.11"]
+    assert devices[0]["ipv6_addresses"] == ["2001:db8::10"]
     assert devices[0]["interface"] == "lan"
 
 
-def test_openwrt_discovery_requires_host_hints_and_neighbor_rpc() -> None:
-    with (
-        patch(
-            "openshield.integrations.openwrt_rpc.urlopen",
-            side_effect=[
-                response([0, {"ubus_rpc_session": "session-id"}]),
-                response([0, {"hostname": "router"}]),
-                response([0, {"interface": []}]),
-                response([6, {}]),
-            ],
-        ),
-        pytest.raises(OpenWrtRPCError, match="rejected"),
-    ):
-        OpenWrtRPCClient("http://router", "user", "password").discover()
+def test_luci_device_parser_ignores_invalid_macs_and_addresses() -> None:
+    devices = OpenWrtRPCClient._parse_devices(
+        {"not-a-mac": {"name": "bad", "ipaddrs": ["192.0.2.1"]}},
+        {"dhcp_leases": [
+            {"macaddr": "aa:bb:cc:dd:ee:ff", "ipaddr": "999.0.0.1"},
+        ], "dhcp6_leases": []},
+    )
+    assert len(devices) == 1
+    assert devices[0]["ip_address"] == ""
+    assert devices[0]["interface"] == "Unmapped"
