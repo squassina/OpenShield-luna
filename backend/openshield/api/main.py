@@ -578,94 +578,61 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "records_available": len(records),
             "imported": 0,
         }
-    if item.kind in {"crowdsec", "misp"}:
+    if item.kind == "crowdsec":
         try:
             secret = SecretStore(store).get(integration_id)
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if not secret or not isinstance(secret.get("api_key"), str):
-            raise HTTPException(status_code=409, detail="Threat intelligence API key is not configured")
+        if not secret:
+            raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+        if isinstance(secret.get("bouncer_api_key"), str):
+            try:
+                diagnostics = CrowdSecClient(
+                    str(secret["base_url"]),
+                    secret["bouncer_api_key"],
+                    str(secret.get("machine_id") or "") or None,
+                    str(secret.get("machine_password") or "") or None,
+                ).diagnostics()
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+            except CrowdSecError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            summary = diagnostics["summary"]
+            return {
+                "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
+                "alerts_available": summary["alerts_available"],
+                "decisions_available": summary["decisions_available"], "imported": 0,
+            }
+        api_key = secret.get("api_key")
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="CrowdSec API key is not configured")
         try:
-            if item.kind == "crowdsec":
-                result = lookup_crowdsec("8.8.8.8", secret["api_key"])
-                matches = int(bool(result.get("matched")))
-            else:
-                base_url = item.config.get("base_url")
-                if not isinstance(base_url, str):
-                    raise HTTPException(status_code=422, detail="MISP base URL is not configured")
-                result = lookup_misp(base_url, secret["api_key"], "ip", "192.0.2.1")
-                matches = len(result.get("attributes", []))
+            result = lookup_crowdsec("8.8.8.8", api_key)
         except ThreatIntelProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
-            "status": "connected",
-            "integration_id": integration_id,
-            "provider": item.kind,
-            "matches": matches,
+            "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
+            "matches": int(bool(result.get("matched"))),
             "message": "Provider authentication and API request succeeded.",
         }
-    if item.kind == "ollama":
-        base_url = item.config.get("base_url", "http://localhost:11434")
-        if not isinstance(base_url, str):
-            raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
-        try:
-            models = test_ollama(base_url)
-        except (AIProviderError, ValueError) as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        configured_model = item.config.get("model")
-        if not isinstance(configured_model, str) or configured_model not in models:
-            raise HTTPException(status_code=409, detail="Configured Ollama model is not installed")
-        return {
-            "status": "connected", "integration_id": integration_id,
-            "provider": "ollama", "models": models, "model_available": True,
-        }
-    if item.kind == "openai":
-        if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
-            raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
-        if item.config.get("cloud_enabled") is not True:
-            raise HTTPException(status_code=409, detail="Cloud AI is not explicitly enabled for this integration")
+    if item.kind == "misp":
         try:
             secret = SecretStore(store).get(integration_id)
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         api_key = secret.get("api_key") if secret else None
+        base_url = item.config.get("base_url")
         if not isinstance(api_key, str) or not api_key:
-            raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
+            raise HTTPException(status_code=409, detail="MISP API key is not configured")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="MISP base URL is not configured")
         try:
-            models = test_openai(api_key)
-        except AIProviderError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        configured_model = item.config.get("model")
-        if not isinstance(configured_model, str) or configured_model not in models:
-            raise HTTPException(status_code=409, detail="Configured OpenAI model is not available to this API key")
-        return {
-            "status": "connected", "integration_id": integration_id,
-            "provider": "openai", "models_available": len(models), "model_available": True,
-        }
-    if item.kind in {"crowdsec", "misp"}:
-        try:
-            secret = SecretStore(store).get(integration_id)
-        except SecretConfigurationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        if not secret or not isinstance(secret.get("api_key"), str):
-            raise HTTPException(status_code=409, detail="Threat intelligence API key is not configured")
-        try:
-            if item.kind == "crowdsec":
-                result = lookup_crowdsec("8.8.8.8", secret["api_key"])
-                matches = int(bool(result.get("matched")))
-            else:
-                base_url = item.config.get("base_url")
-                if not isinstance(base_url, str):
-                    raise HTTPException(status_code=422, detail="MISP base URL is not configured")
-                result = lookup_misp(base_url, secret["api_key"], "ip", "192.0.2.1")
-                matches = len(result.get("attributes", []))
+            result = lookup_misp(base_url, api_key, "ip", "192.0.2.1")
         except ThreatIntelProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
-            "status": "connected",
-            "integration_id": integration_id,
-            "provider": item.kind,
-            "matches": matches,
+            "status": "connected", "integration_id": integration_id, "provider": "misp",
+            "matches": len(result.get("attributes", [])),
             "message": "Provider authentication and API request succeeded.",
         }
     if item.kind == "ollama":
