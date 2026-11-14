@@ -49,14 +49,14 @@ def test_grafana_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
             return {
                 "health": {"database": "ok", "version": "11.2.0", "commit": "abc123"},
                 "dashboards": [{"uid": "abc", "title": "Overview", "type": "dash-db"}],
-                "summary": {"dashboards_available": 1, "dashboards_limit": 100},
+                "summary": {"dashboards_returned": 1, "dashboards_limit": 100},
             }
 
     monkeypatch.setattr(main, "GrafanaClient", FakeGrafanaClient)
     diagnostics = client.get("/api/v1/integrations/grafana-home/grafana-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
-    assert diagnostics.json()["summary"]["dashboards_available"] == 1
+    assert diagnostics.json()["summary"]["dashboards_returned"] == 1
     check = client.post("/api/v1/integrations/grafana-home/test")
     assert check.status_code == 200
     assert check.json()["provider"] == "grafana"
