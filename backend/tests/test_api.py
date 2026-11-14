@@ -885,6 +885,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
 
 def test_misp_credentials_are_encrypted_and_sync_indicators(monkeypatch):
     from cryptography.fernet import Fernet
+
     from openshield.api import main
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
