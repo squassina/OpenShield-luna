@@ -154,7 +154,11 @@ def test_inventory_ignores_invalid_unspecified_and_multicast_addresses() -> None
     assert response.status_code == 202
     assert client.get("/api/v1/inventory/devices").json() == []
     assert client.get("/api/v1/inventory/topology").json() == {
-        "nodes": [], "node_details": [], "edges": []
+        "nodes": [],
+        "node_details": [],
+        "edges": [],
+        "segments": [],
+        "relationships": [],
     }
 
 
