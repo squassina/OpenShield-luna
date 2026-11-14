@@ -127,6 +127,18 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="prometheus-status" class="notice" role="status" aria-live="polite">No Prometheus server configured.</div>
     <div id="prometheus-details" class="table-wrap"></div>
     <div id="prometheus-actions" class="toolbar"></div>
+    <h3>Grafana dashboards</h3>
+    <p>Read-only Grafana HTTP API diagnostics. OpenShield checks instance health and lists up to 100 dashboards. It does not change dashboards, data sources, alerts, or metrics. A service-account bearer token is optional and encrypted at rest.</p>
+    <form id="grafana-form" class="inline">
+      <input id="grafana-id" placeholder="Integration ID (e.g. grafana-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Grafana integration ID">
+      <input id="grafana-name" placeholder="Display name" value="Grafana" required maxlength="120" aria-label="Grafana display name">
+      <input id="grafana-url" type="url" placeholder="http://grafana:3000" required aria-label="Grafana URL">
+      <input id="grafana-token" type="password" placeholder="Service account token (optional)" autocomplete="new-password" aria-label="Grafana service account token">
+      <button class="primary" type="submit">Save Grafana connection</button>
+    </form>
+    <div id="grafana-status" class="notice" role="status" aria-live="polite">No Grafana server configured.</div>
+    <div id="grafana-details" class="table-wrap"></div>
+    <div id="grafana-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -230,6 +242,7 @@ async function load() {
     await loadCrowdSecStatus(integrations);
     await loadWazuhStatus(integrations);
     await loadPrometheusStatus(integrations);
+      await loadGrafanaStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -626,6 +639,57 @@ $("prometheus-form").addEventListener("submit",async event=>{
   } catch(error) {
     $("prometheus-token").value="";$("prometheus-status").textContent="Prometheus setup failed: "+error.message;
     $("prometheus-status").classList.add("error");showNotice("Prometheus setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadGrafanaStatus(integrations) {
+  const root=$("grafana-status"),details=$("grafana-details"),actions=$("grafana-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="grafana");
+  if(!item) { root.textContent="No Grafana server configured.";root.classList.remove("error");return; }
+  $("grafana-id").value=item.integration_id;$("grafana-name").value=item.display_name;
+  $("grafana-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Connection configured":"Configuration required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load dashboard diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/grafana-diagnostics");
+        const summary=data.summary||{},pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({health:data.health,summary,dashboards:(data.dashboards||[]).slice(0,25)},null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(summary.dashboards_available)+" dashboards · DB "+data.health.database+" · Grafana "+data.health.version;
+      } catch(error) { root.textContent="Grafana diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove saved connection","danger",async()=>{
+      if(!confirm("Remove saved Grafana connection for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/grafana-credentials",{method:"DELETE"});details.replaceChildren();showNotice("Grafana connection removed.");await load(); }
+      catch(error) { showNotice("Could not remove Grafana connection: "+error.message,true); }
+    }));
+  }
+}
+$("grafana-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("grafana-id").value.trim(),base_url=$("grafana-url").value.trim();
+  const bearer_token=$("grafana-token").value,button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations"),existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"grafana",display_name:$("grafana-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="grafana") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("grafana-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/grafana-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,bearer_token:bearer_token||null})
+    });
+    $("grafana-token").value="";showNotice("Grafana connection saved. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("grafana-token").value="";$("grafana-status").textContent="Grafana setup failed: "+error.message;
+    $("grafana-status").classList.add("error");showNotice("Grafana setup failed: "+error.message,true);
   } finally { button.disabled=false; }
 });
 function renderSources(sources, integrations) {
