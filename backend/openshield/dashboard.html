@@ -115,6 +115,18 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="wazuh-status" class="notice" role="status" aria-live="polite">No Wazuh Server API configured.</div>
     <div id="wazuh-details" class="table-wrap"></div>
     <div id="wazuh-actions" class="toolbar"></div>
+    <h3>Prometheus metrics server</h3>
+    <p>Read-only Prometheus HTTP API diagnostics. OpenShield checks runtime information and scrape target health; it does not import, store, or re-export metrics. Bearer token is optional and encrypted at rest.</p>
+    <form id="prometheus-form" class="inline">
+      <input id="prometheus-id" placeholder="Integration ID (e.g. prometheus-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Prometheus integration ID">
+      <input id="prometheus-name" placeholder="Display name" value="Prometheus" required maxlength="120" aria-label="Prometheus display name">
+      <input id="prometheus-url" type="url" placeholder="http://prometheus:9090" required aria-label="Prometheus URL">
+      <input id="prometheus-token" type="password" placeholder="Bearer token (optional)" autocomplete="new-password" aria-label="Prometheus bearer token">
+      <button class="primary" type="submit">Save Prometheus connection</button>
+    </form>
+    <div id="prometheus-status" class="notice" role="status" aria-live="polite">No Prometheus server configured.</div>
+    <div id="prometheus-details" class="table-wrap"></div>
+    <div id="prometheus-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -217,6 +229,7 @@ async function load() {
     await loadPfsenseStatus(integrations);
     await loadCrowdSecStatus(integrations);
     await loadWazuhStatus(integrations);
+    await loadPrometheusStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -562,6 +575,57 @@ $("wazuh-form").addEventListener("submit",async event=>{
     $("wazuh-username").value="";$("wazuh-password").value="";
     $("wazuh-status").textContent="Wazuh setup failed: "+error.message;
     $("wazuh-status").classList.add("error");showNotice("Wazuh setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadPrometheusStatus(integrations) {
+  const root=$("prometheus-status"),details=$("prometheus-details"),actions=$("prometheus-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="prometheus");
+  if(!item) { root.textContent="No Prometheus server configured.";root.classList.remove("error");return; }
+  $("prometheus-id").value=item.integration_id;$("prometheus-name").value=item.display_name;
+  $("prometheus-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Connection configured":"Configuration required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load target diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/prometheus-diagnostics");
+        const summary=data.summary||{},pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({runtime:data.runtime,summary,targets:(data.targets||[]).slice(0,25)},null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(summary.targets_up)+" up / "+fmt(summary.targets_available)+" targets";
+      } catch(error) { root.textContent="Prometheus diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove saved connection","danger",async()=>{
+      if(!confirm("Remove saved Prometheus connection for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/prometheus-credentials",{method:"DELETE"});details.replaceChildren();showNotice("Prometheus connection removed.");await load(); }
+      catch(error) { showNotice("Could not remove Prometheus connection: "+error.message,true); }
+    }));
+  }
+}
+$("prometheus-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("prometheus-id").value.trim(),base_url=$("prometheus-url").value.trim();
+  const bearer_token=$("prometheus-token").value,button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations"),existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"prometheus",display_name:$("prometheus-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="prometheus") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("prometheus-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/prometheus-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,bearer_token:bearer_token||null})
+    });
+    $("prometheus-token").value="";showNotice("Prometheus connection saved. Load diagnostics to verify targets.");await load();
+  } catch(error) {
+    $("prometheus-token").value="";$("prometheus-status").textContent="Prometheus setup failed: "+error.message;
+    $("prometheus-status").classList.add("error");showNotice("Prometheus setup failed: "+error.message,true);
   } finally { button.disabled=false; }
 });
 function renderSources(sources, integrations) {
