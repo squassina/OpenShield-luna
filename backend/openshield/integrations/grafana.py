@@ -59,7 +59,8 @@ class GrafanaClient:
             headers["Authorization"] = f"Bearer {self._bearer_token}"
         request = Request(self._base_url + path, headers=headers, method="GET")
         try:
-            with build_opener(_NoRedirectHandler()).open(request, timeout=self._timeout) as response:
+            opener = build_opener(_NoRedirectHandler())
+            with opener.open(request, timeout=self._timeout) as response:
                 raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
             if exc.code in {401, 403}:
@@ -122,7 +123,9 @@ class GrafanaAdapter:
         return {
             "integration_id": integration.integration_id,
             "kind": self.kind,
-            "status": "configured" if integration.config.get("auth_configured") else "needs_credentials",
+            "status": (
+                "configured" if integration.config.get("auth_configured") else "needs_credentials"
+            ),
             "transport": "grafana_http_api_read_only",
             "capabilities": [item.value for item in self.capabilities],
         }
