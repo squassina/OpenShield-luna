@@ -271,6 +271,12 @@ def test_firewall_policy_requires_approval_and_executes_through_gateway(monkeypa
     )
     assert heartbeat.status_code == 200
     assert heartbeat.json()["pending_actions"][0]["action_id"] == action["action_id"]
+    invalid_evidence = client.post(
+        f"/api/v1/gateway/actions/{action['action_id']}/result",
+        headers=gateway_headers,
+        json={"gateway_id":"home-gateway","status":"active","result":{"status":"blocked","ip":"1.1.1.1"}},
+    )
+    assert invalid_evidence.status_code == 422
     applied = client.post(
         f"/api/v1/gateway/actions/{action['action_id']}/result",
         headers=gateway_headers,

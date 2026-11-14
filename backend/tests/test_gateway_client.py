@@ -366,3 +366,54 @@ def test_connector_client_sends_gateway_bearer_token_and_receives_router_config(
     request = mocked.call_args.args[0]
     assert request.get_header("Authorization") == "Bearer connector-token"
     assert result["openwrt_config"]["password"] == "secret"
+
+
+def test_gateway_agent_executes_and_rolls_back_queued_firewall_actions() -> None:
+    from openshield.gateway.agent import _process_response_actions
+
+    class FakeOpenWrt:
+        def __init__(self):
+            self.calls = []
+
+        def block_ip(self, ip_value, ttl_seconds):
+            self.calls.append(("block", ip_value, ttl_seconds))
+            return {"status": "blocked", "ip": ip_value, "ttl_seconds": ttl_seconds}
+
+        def unblock_ip(self, ip_value):
+            self.calls.append(("unblock", ip_value))
+            return {"status": "unblocked", "ip": ip_value}
+
+    class FakeNode:
+        def __init__(self):
+            self.results = []
+
+        def report_action_result(self, action_id, status, result=None, error=None):
+            self.results.append((action_id, status, result, error))
+
+    openwrt = FakeOpenWrt()
+    node = FakeNode()
+    _process_response_actions(node, openwrt, [
+        {"action_id":"action-1","action_type":"firewall_block_ip","indicator_value":"8.8.8.8","ttl_seconds":300,"status":"queued"},
+        {"action_id":"action-1","action_type":"firewall_block_ip","indicator_value":"8.8.8.8","ttl_seconds":300,"status":"rollback_queued"},
+    ])
+    assert openwrt.calls == [
+        ("block", "8.8.8.8", 300),
+        ("unblock", "8.8.8.8"),
+    ]
+    assert [item[1] for item in node.results] == ["active", "rolled_back"]
+
+
+def test_connector_client_reports_firewall_action_result_with_gateway_token() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps({"status":"active"}).encode()
+    client = GatewayConnectorClient(
+        "https://openshield.example", "home-gateway", gateway_token="connector-token",
+    )
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        client.report_action_result(
+            "action-1", "active", result={"status":"blocked","ip":"8.8.8.8"},
+        )
+    request = mocked.call_args.args[0]
+    assert request.full_url.endswith("/api/v1/gateway/actions/action-1/result")
+    assert request.get_header("Authorization") == "Bearer connector-token"
+    assert json.loads(request.data)["gateway_id"] == "home-gateway"

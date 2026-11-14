@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -89,3 +90,10 @@ def test_openwrt_firewall_rejects_private_ipv4_and_invalid_ttl() -> None:
         client.block_ip("8.8.8.8", 30)
     with pytest.raises(ValueError, match="public IPv4"):
         client.unblock_ip("10.0.0.1")
+
+
+def test_openwrt_rpc_plugin_script_has_valid_shell_syntax() -> None:
+    import subprocess
+
+    plugin = Path(__file__).resolve().parents[2] / "scripts/openwrt/openshield-firewall"
+    subprocess.run(["sh", "-n", str(plugin)], check=True)

@@ -657,6 +657,8 @@ CREATE TABLE IF NOT EXISTS events (
             if row is None:
                 return None
             merged = {**row[0], **payload}
+            if attempts is not None:
+                merged["attempts"] = attempts
             cursor.execute(
                 """
                 UPDATE response_actions
