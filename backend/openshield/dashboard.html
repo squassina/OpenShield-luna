@@ -63,6 +63,19 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="openwrt-status" class="notice" role="status" aria-live="polite">Checking router status…</div>
     <div id="openwrt-details" class="table-wrap"></div>
     <div id="openwrt-actions" class="toolbar"></div>
+    <h3>OPNsense firewall</h3>
+    <p>Configure a read-only OPNsense API key. The API secret is encrypted by OpenShield and never returned to the browser.</p>
+    <form id="opnsense-form" class="inline">
+      <input id="opnsense-id" placeholder="Integration ID (e.g. opnsense-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="OPNsense integration ID">
+      <input id="opnsense-name" placeholder="Display name" value="OPNsense firewall" required maxlength="120" aria-label="OPNsense display name">
+      <input id="opnsense-url" type="url" placeholder="https://192.168.1.1" required aria-label="OPNsense URL">
+      <input id="opnsense-key" placeholder="API key" required autocomplete="off" aria-label="OPNsense API key">
+      <input id="opnsense-secret" type="password" placeholder="API secret" required autocomplete="new-password" aria-label="OPNsense API secret">
+      <button class="primary" type="submit">Save OPNsense credentials</button>
+    </form>
+    <div id="opnsense-status" class="notice" role="status" aria-live="polite">No OPNsense firewall configured.</div>
+    <div id="opnsense-details" class="table-wrap"></div>
+    <div id="opnsense-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -161,6 +174,7 @@ async function load() {
     renderIntegrations(integrations);
     renderRouterTopology(inventoryTopology);
     await loadOpenWrtStatus(integrations);
+    await loadOpnsenseStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -257,6 +271,61 @@ async function loadOpenWrtStatus(integrations) {
     } catch(error) { showNotice("Could not remove credentials: "+error.message,true); }
   }));
 }
+async function loadOpnsenseStatus(integrations) {
+  const root=$("opnsense-status"),details=$("opnsense-details"),actions=$("opnsense-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="opnsense");
+  if(!item) { root.textContent="No OPNsense firewall configured.";root.classList.remove("error");return; }
+  $("opnsense-id").value=item.integration_id;
+  $("opnsense-name").value=item.display_name;
+  $("opnsense-url").value=item.config?.base_url||"";
+  const configured=item.config?.credentials_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"Credentials configured":"Credentials required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/opnsense-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({system:data.system,firewall:data.firewall,arp:data.arp},null,2);
+        details.replaceChildren(pre);root.textContent=item.display_name+" · Connected · Read-only diagnostics loaded";
+      } catch(error) { root.textContent="OPNsense diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted OPNsense credentials for "+item.integration_id+"?"))return;
+      try { await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/opnsense-credentials",{method:"DELETE"});details.replaceChildren();showNotice("OPNsense credentials removed.");await load(); }
+      catch(error) { showNotice("Could not remove OPNsense credentials: "+error.message,true); }
+    }));
+  }
+}
+$("opnsense-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("opnsense-id").value.trim(),base_url=$("opnsense-url").value.trim();
+  const api_key=$("opnsense-key").value.trim(),api_secret=$("opnsense-secret").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"opnsense",display_name:$("opnsense-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="opnsense") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("opnsense-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/opnsense-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,api_key,api_secret})
+    });
+    $("opnsense-key").value="";$("opnsense-secret").value="";
+    showNotice("OPNsense credentials saved encrypted. Run diagnostics to verify access.");await load();
+  } catch(error) {
+    $("opnsense-key").value="";$("opnsense-secret").value="";
+    $("opnsense-status").textContent="OPNsense setup failed: "+error.message;
+    $("opnsense-status").classList.add("error");showNotice("OPNsense setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
 function renderSources(sources, integrations) {
   const root=$("sources"); root.replaceChildren();
   if(!sources.length){const p=document.createElement("p");p.className="empty";p.textContent="No DNS sources configured";root.append(p);return;}
