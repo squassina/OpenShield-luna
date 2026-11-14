@@ -15,6 +15,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr
 
+from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError, SecretStore
@@ -47,6 +48,7 @@ from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sy
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
+load_runtime_secrets(create=True)
 configure_logging()
 
 @asynccontextmanager
