@@ -169,6 +169,38 @@ def test_ingest_event_preserves_source_provenance() -> None:
     assert stored[0]["source"]["integration_id"] == "router-lab"
 
 
+def test_router_device_inventory_uses_mac_identity_and_tracks_presence() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    old_seen = datetime.now(UTC) - timedelta(seconds=120)
+    event = sample_event("discovery-old", integration_id="home-gateway")
+    event["event_type"] = "gateway.discovery"
+    event["observed_at"] = old_seen.isoformat()
+    event["payload"] = {
+        "board": {"hostname": "router"},
+        "interfaces": [{"name": "lan", "device": "br-lan", "up": True}],
+        "devices": [{
+            "mac_address": "aa:bb:cc:dd:ee:ff", "name": "desktop",
+            "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
+            "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
+        }],
+    }
+    assert client.post("/api/v1/events", json=event).status_code == 202
+    first = client.get("/api/v1/inventory/router-devices").json()
+    assert first["gateways"][0]["board"]["hostname"] == "router"
+    assert first["devices"][0]["status"] == "offline"
+
+    event["event_id"] = "discovery-new"
+    event["observed_at"] = datetime.now(UTC).isoformat()
+    event["payload"]["devices"][0]["ip_address"] = "192.0.2.20"
+    event["payload"]["devices"][0]["ipv4_addresses"] = ["192.0.2.20"]
+    assert client.post("/api/v1/events", json=event).status_code == 202
+    current = client.get("/api/v1/inventory/router-devices").json()["devices"]
+    assert len(current) == 1
+    assert current[0]["mac_address"] == "aa:bb:cc:dd:ee:ff"
+    assert current[0]["ip_address"] == "192.0.2.20"
+    assert current[0]["status"] == "online"
+    assert current[0]["first_seen"] == old_seen.isoformat()
+
 def test_event_from_unknown_source_is_rejected() -> None:
     assert client.post("/api/v1/events", json=sample_event()).status_code == 400
 
