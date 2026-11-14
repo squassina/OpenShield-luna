@@ -1,5 +1,6 @@
-from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
+
+from cryptography.fernet import Fernet
 
 from openshield.api import main
 from openshield.core.secrets import SecretStore
