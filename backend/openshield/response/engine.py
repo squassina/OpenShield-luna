@@ -357,12 +357,13 @@ def set_kill_switch(
         return {**control, "rolled_back": 0, "rollback_pending": 0}
 
     cancelled = 0
-    for action in store.list_response_actions(limit=500, status="pending_approval"):
-        _update(
-            store, action, "cancelled_by_kill_switch", expires_at=None,
-            cancelled_at=datetime.now(UTC).isoformat(),
-        )
-        cancelled += 1
+    for status in ("pending_approval", "queued"):
+        for action in store.list_response_actions(limit=500, status=status):
+            _update(
+                store, action, "cancelled_by_kill_switch", expires_at=None,
+                cancelled_at=datetime.now(UTC).isoformat(),
+            )
+            cancelled += 1
     rolled_back = pending = 0
     for action in store.list_active_response_actions():
         try:
