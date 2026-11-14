@@ -554,7 +554,7 @@ CREATE TABLE IF NOT EXISTS events (
                 SELECT 1 FROM response_executions
                 WHERE indicator_type = %s AND indicator_value = %s AND integration_id = %s
                   AND status IN ('pending_gateway', 'active', 'rollback_pending', 'rollback_failed')
-                  AND (%s IS NULL OR execution_id <> %s)
+                  AND (%s::text IS NULL OR execution_id <> %s)
                 LIMIT 1
                 """,
                 (indicator_type, indicator_value, integration_id, exclude_execution_id, exclude_execution_id),
