@@ -31,6 +31,7 @@ def _create_incident(
     incident_id: str = "incident-domain-1",
     domain: str = "bad.example",
     risk_score: int = 70,
+    indicator_type: str = "domain",
 ) -> str:
     from openshield.api import main
 
@@ -55,7 +56,7 @@ def _create_incident(
     main.store.upsert_incident(
         {
             "incident_id": incident_id,
-            "indicator_type": "domain",
+            "indicator_type": indicator_type,
             "indicator_value": domain,
             "title": "Threat intelligence match",
             "summary": "Test incident",
@@ -220,3 +221,82 @@ def test_response_policy_rejects_unsupported_provider_and_bounds_ttl() -> None:
         "min_risk_score": 50, "ttl_seconds": 10,
     })
     assert invalid_ttl.status_code == 422
+
+
+def test_firewall_policy_requires_approval_and_executes_through_gateway(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "gateway-test-token")
+    _create_incident("incident-ip-1", "8.8.8.8", 75, indicator_type="ip")
+
+    gateway_headers = {"Authorization": "Bearer gateway-test-token"}
+    connected = client.post("/api/v1/gateway/connect", headers=gateway_headers, json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "gateway_type": "openwrt",
+        "connector_version": "0.1.0",
+        "capabilities": ["discover", "health_check", "execute_action", "verify_action"],
+    })
+    assert connected.status_code == 201
+    credentials = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        headers=gateway_headers,
+        json={"base_url":"https://192.0.2.1","username":"rpc","password":"router-secret"},
+    )
+    assert credentials.status_code == 200
+
+    policy = client.post("/api/v1/response/policies", json={
+        "name":"Block malicious public IP",
+        "provider_integration_id":"home-gateway",
+        "action_type":"firewall_block_ip",
+        "min_risk_score":60,
+        "ttl_seconds":300,
+        "approval_required":False,
+        "enabled":True,
+    })
+    assert policy.status_code == 201
+    evaluated = client.post("/api/v1/incidents/incident-ip-1/response/evaluate")
+    action = evaluated.json()["actions"][0]
+    assert action["status"] == "pending_approval"
+    approved = client.post(f"/api/v1/response/actions/{action['action_id']}/approve")
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "queued"
+
+    heartbeat = client.post(
+        "/api/v1/gateway/heartbeat", headers=gateway_headers,
+        json={"protocol_version":"openshield.gateway.v1","gateway_id":"home-gateway"},
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["pending_actions"][0]["action_id"] == action["action_id"]
+    applied = client.post(
+        f"/api/v1/gateway/actions/{action['action_id']}/result",
+        headers=gateway_headers,
+        json={
+            "gateway_id":"home-gateway","status":"active",
+            "result":{"status":"blocked","ip":"8.8.8.8","ttl_seconds":300},
+        },
+    )
+    assert applied.status_code == 200
+    assert applied.json()["status"] == "active"
+
+    stopped = client.put("/api/v1/response/control", json={
+        "enabled":True,"reason":"Emergency stop firewall test",
+    })
+    assert stopped.status_code == 200
+    assert stopped.json()["rollback_pending"] == 1
+    rollback_heartbeat = client.post(
+        "/api/v1/gateway/heartbeat", headers=gateway_headers,
+        json={"protocol_version":"openshield.gateway.v1","gateway_id":"home-gateway"},
+    )
+    assert rollback_heartbeat.json()["pending_actions"][0]["status"] == "rollback_queued"
+    rolled_back = client.post(
+        f"/api/v1/gateway/actions/{action['action_id']}/result",
+        headers=gateway_headers,
+        json={"gateway_id":"home-gateway","status":"rolled_back","result":{"status":"unblocked"}},
+    )
+    assert rolled_back.status_code == 200
+    assert rolled_back.json()["status"] == "rolled_back"
+    assert main.store.get_response_action(action["action_id"])["status"] == "rolled_back"
