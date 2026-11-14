@@ -384,7 +384,7 @@ function renderResponsePolicies(policies,integrations) {
   select.replaceChildren();
   const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select enforcement provider";select.append(placeholder);
   const supportedKinds=actionType==="firewall_block_ip"?["openwrt"]:["pihole","adguard"];
-  integrations.filter(item=>supportedKinds.includes(item.kind)&&item.enabled!==false).forEach(item=>{
+  integrations.filter(item=>supportedKinds.includes(item.kind)&&item.enabled!==false&&(actionType!=="firewall_block_ip"||item.config?.rpc_configured===true)).forEach(item=>{
     const option=document.createElement("option");option.value=item.integration_id;
     option.textContent=item.display_name+" ("+item.kind+")";select.append(option);
   });
