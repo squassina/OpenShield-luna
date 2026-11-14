@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from typing import ClassVar
 
 from openshield.integrations.models import Capability, Integration
 
