@@ -441,3 +441,26 @@ def test_openwrt_test_endpoint_distinguishes_missing_connector(monkeypatch) -> N
     check = client.get("/api/v1/integrations/home-gateway/test")
     assert check.status_code == 200
     assert check.json()["status"] == "connector_disconnected"
+
+def test_operations_report_summarizes_multiple_gateways_and_bounded_state() -> None:
+    first = client.post("/api/v1/gateway/connect", json=gateway_payload("home-router"))
+    second = client.post("/api/v1/gateway/connect", json=gateway_payload("lab-router"))
+    assert first.status_code == second.status_code == 201
+
+    response = client.get("/api/v1/reports/operations?limit=25")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["sample_limit"] == 25
+    assert report["gateways"]["total"] == 2
+    assert report["gateways"]["by_status"] == {"connected": 2}
+    assert report["integrations"]["total"] == 2
+    assert report["incidents"]["open"] == 0
+    assert report["policy_decisions"]["sampled"] == 0
+    assert report["executions"]["sampled"] == 0
+    assert report["audit"]["recent_records"] <= 25
+    assert report["generated_at"]
+
+
+def test_operations_report_rejects_unbounded_limit() -> None:
+    assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
+
