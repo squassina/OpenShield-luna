@@ -150,3 +150,14 @@ def test_wazuh_rejects_api_application_errors_and_invalid_agent_envelope():
         pytest.raises(WazuhError, match="unexpected response"),
     ):
         client.diagnostics()
+
+
+def test_wazuh_rejects_malformed_error_field_without_leaking_type_error():
+    client = WazuhClient("https://wazuh.example:55000", "reader", "strong-password")
+    opener = Mock()
+    opener.open.return_value = response(b'{"error": [], "data": {}}')
+    with (
+        patch("openshield.integrations.wazuh.build_opener", return_value=opener),
+        pytest.raises(WazuhError, match="application error"),
+    ):
+        client._get("/", "token")
