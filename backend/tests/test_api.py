@@ -784,3 +784,100 @@ def test_crowdsec_requires_machine_id_and_password_together(monkeypatch) -> None
         },
     )
     assert response.status_code == 422
+
+
+
+def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    registered = client.post("/api/v1/integrations", json={
+        "integration_id": "wazuh-home",
+        "kind": "wazuh",
+        "display_name": "Home Wazuh manager",
+        "config": {"base_url": "https://192.0.2.30:55000"},
+    })
+    assert registered.status_code == 201
+
+    credentials = {
+        "base_url": "https://192.0.2.30:55000",
+        "username": "openshield-reader",
+        "password": "sensitive-wazuh-password",
+    }
+    saved = client.put(
+        "/api/v1/integrations/wazuh-home/wazuh-credentials",
+        json=credentials,
+    )
+    assert saved.status_code == 200
+    assert "sensitive-wazuh-password" not in saved.text
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "wazuh-home"
+    )
+    assert integration["config"]["auth_configured"] is True
+    assert "username" not in str(integration)
+    assert "password" not in str(integration)
+    encrypted = main.store.get_integration_secret("wazuh-home")
+    assert encrypted
+    assert b"sensitive-wazuh-password" not in encrypted
+    assert SecretStore(main.store).get("wazuh-home") == credentials
+
+    class FakeWazuhClient:
+        def __init__(self, base_url, username, password):
+            assert base_url == "https://192.0.2.30:55000"
+            assert username == "openshield-reader"
+            assert password == "sensitive-wazuh-password"
+
+        def diagnostics(self):
+            return {
+                "api": {"data": {"api_version": "4.14.0"}, "error": 0},
+                "manager_info": {"data": {"affected_items": [{"version": "4.14.0"}]}, "error": 0},
+                "manager_status": {
+                    "data": {"affected_items": [{"wazuh-analysisd": "running"}]},
+                    "error": 0,
+                },
+                "agents": {
+                    "data": {
+                        "affected_items": [{"id": "001", "status": "active"}],
+                        "total_affected_items": 1,
+                    },
+                    "error": 0,
+                },
+                "summary": {
+                    "agents_available": 1,
+                    "agents_returned": 1,
+                    "agents_limit": 500,
+                },
+            }
+
+    monkeypatch.setattr(main, "WazuhClient", FakeWazuhClient)
+    diagnostics = client.get("/api/v1/integrations/wazuh-home/wazuh-diagnostics")
+    assert diagnostics.status_code == 200
+    assert diagnostics.headers["cache-control"] == "no-store"
+    assert diagnostics.json()["summary"]["agents_available"] == 1
+    assert diagnostics.json()["agents"][ "data"]["affected_items"][0]["id"] == "001"
+
+    connection = client.post("/api/v1/integrations/wazuh-home/test")
+    assert connection.status_code == 200
+    assert connection.json()["provider"] == "wazuh"
+    assert connection.json()["agents_available"] == 1
+    assert connection.json()["imported"] == 0
+
+    probe = client.get("/api/v1/integrations/wazuh-home/probe")
+    assert probe.status_code == 200
+    assert probe.json()["status"] == "configured"
+
+    assert client.delete(
+        "/api/v1/integrations/wazuh-home/wazuh-credentials"
+    ).status_code == 204
+    assert client.get(
+        "/api/v1/integrations/wazuh-home/wazuh-diagnostics"
+    ).status_code == 409
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "wazuh-home"
+    )
+    assert integration["config"]["auth_configured"] is False
