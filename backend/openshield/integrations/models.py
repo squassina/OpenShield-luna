@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -27,6 +28,13 @@ class IntegrationRegistration(BaseModel):
     @classmethod
     def reject_secret_material(cls, config: dict[str, Any]) -> dict[str, Any]:
         forbidden = ("password", "secret", "token", "credential", "private_key", "api_key")
+        ca_bundle_path = config.get("ca_bundle_path")
+        if ca_bundle_path not in (None, "") and (
+            not isinstance(ca_bundle_path, str)
+            or chr(0) in ca_bundle_path
+            or not Path(ca_bundle_path).is_absolute()
+        ):
+            raise ValueError("Integration ca_bundle_path must be an absolute file path")
 
         def validate(value: Any) -> None:
             if isinstance(value, dict):
