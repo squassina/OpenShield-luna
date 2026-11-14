@@ -894,8 +894,21 @@ def report_gateway_action_result(
     if action.get("action_type") != "firewall_block_ip":
         raise HTTPException(status_code=422, detail="Unsupported gateway action type")
     current_status = action.get("status")
-    if current_status == "queued":
+    if current_status in {"queued", "cancelled_by_kill_switch"}:
         if request.status in {"active", "already_enforced"}:
+            if request.status == "active" and (
+                current_status == "cancelled_by_kill_switch"
+                or store.get_response_control()["kill_switch_enabled"]
+            ):
+                return store.update_response_action(
+                    action_id,
+                    {
+                        **action, "status": "rollback_queued",
+                        "rollback_reason": "global_kill_switch",
+                        "rollback_requested_at": datetime.now(UTC).isoformat(),
+                    },
+                    expires_at=None, next_attempt_at=None,
+                ) or {}
             if request.status == "active":
                 expires_at = datetime.now(UTC) + timedelta(seconds=int(action["ttl_seconds"]))
                 updated = store.update_response_action(
@@ -923,6 +936,8 @@ def report_gateway_action_result(
                 )
             return updated or {}
         if request.status == "failed":
+            if current_status == "cancelled_by_kill_switch":
+                return action
             attempts = int(action.get("attempts", 0)) + 1
             retry_at = datetime.now(UTC) + timedelta(seconds=min(300, 5 * (2 ** min(attempts, 6))))
             return store.update_response_action(
