@@ -58,6 +58,9 @@ case "${1:-}" in
                 ;;
             unblock_ip)
                 nft delete element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1 || true
+                if nft get element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1; then
+                    fail "nftables element remains after rollback"
+                fi
                 printf '{"status":"unblocked","ip":"%s"}\n' "$ip"
                 ;;
             *)
