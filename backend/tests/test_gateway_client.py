@@ -195,6 +195,7 @@ def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pyt
     assert node.heartbeat_calls == 1
     assert [event.event_type for event in node.events] == [
         "gateway.discovery",
+        "gateway.discovery",
         "gateway.health",
     ]
     assert all(event.schema_version == "openshield.event.v1" for event in node.events)
