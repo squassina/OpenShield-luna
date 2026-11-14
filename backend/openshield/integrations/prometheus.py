@@ -22,7 +22,10 @@ class PrometheusClient:
     """Read-only Prometheus HTTP API client; metrics are not ingested by OpenShield."""
 
     MAX_RESPONSE_BYTES = 1_048_576
-    ENDPOINTS = {"/api/v1/status/runtimeinfo", "/api/v1/targets?state=active"}
+    ENDPOINTS: ClassVar[set[str]] = {
+        "/api/v1/status/runtimeinfo",
+        "/api/v1/targets?state=active",
+    }
 
     def __init__(self, base_url: str, bearer_token: str | None = None, timeout: float = 8.0):
         try:
