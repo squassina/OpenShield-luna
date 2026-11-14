@@ -59,7 +59,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <input id="openwrt-password" type="password" placeholder="RPC password" required autocomplete="new-password" aria-label="RPC password">
       <button class="primary" type="submit">Save router credentials</button>
     </form>
-    <div class="notice">Use a dedicated rpcd account with read-only access to <code>session.login</code>, <code>system.board</code> and <code>network.interface.dump</code>. Do not use the router root account. Prefer HTTPS with a trusted certificate. The connector runs near the router and opens an outbound connection to this Node; OpenShield does not change firewall, routing, wireless or DNS settings.</div>
+    <div class="notice">Use a dedicated rpcd account with read-only access to <code>session.login</code>, <code>system.board</code>, <code>network.interface.dump</code>, <code>luci-rpc.getHostHints</code> and <code>luci-rpc.getDHCPLeases</code>. Reuse the LuCI/rpcd services already installed; OpenShield does not install packages, scripts or ACL files on the router. Prefer HTTPS with a trusted certificate. The connector runs near the router and opens an outbound connection to this Node; OpenShield does not change firewall, routing, wireless or DNS settings.</div>
     <div id="openwrt-status" class="notice" role="status" aria-live="polite">Checking router status…</div>
     <div id="openwrt-details" class="table-wrap"></div>
     <div id="openwrt-actions" class="toolbar"></div>
@@ -382,9 +382,9 @@ function renderRouterTopology(data) {
         const state=document.createElement("span");state.className="device-state "+(item.status==="online"?"online":"offline");
         state.textContent=item.status==="online"?"Online":"Offline";
         const meta=document.createElement("small");
-        meta.textContent=[item.ip_address,(item.ipv4_addresses||[]).join(", "),item.mac_address].filter(Boolean).join(" · ");
+        meta.textContent=[item.ip_address,(item.ipv4_addresses||[]).join(", "),(item.ipv6_addresses||[]).join(", "),item.mac_address].filter(Boolean).join(" · ");
         const detail=document.createElement("small");
-        detail.textContent="L2: "+(item.device||"—")+" · Visto: "+new Date(item.last_seen).toLocaleString();
+        detail.textContent="Interface: "+(item.interface||"Unmapped")+" · Visto: "+new Date(item.last_seen).toLocaleString();
         card.append(name,state,meta,detail);group.append(card);
       });
       panel.append(group);

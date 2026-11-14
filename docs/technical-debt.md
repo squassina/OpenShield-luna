@@ -11,32 +11,37 @@ This register separates known operational and product limitations from the compl
 
 ## P0 — OpenWrt device inventory and topology
 
-**Implemented:** PR [#26](https://github.com/squassina/OpenShield-luna/pull/26) merged into `main` (merge commit `87c867b0b9e586f1c5d62ad33c09a59afd7ae61f`). The connector now collects IPv4 neighbors, resolves host hints and logical interfaces, and forwards a MAC-keyed inventory. PostgreSQL preserves first/last-seen data; the dashboard groups devices by logical interface and retains offline entries.
+Implemented: PR [#26](https://github.com/squassina/OpenShield-luna/pull/26) introduced MAC-keyed inventory and PostgreSQL first/last-seen persistence. The native-LuCI refactor removes the custom rpcd helper and uses standard LuCI ubus methods only.
 
-**Still required before calling the feature hardware-validated:**
-- Install `scripts/openwrt/openshield-rpcd` and `scripts/openwrt/openshield-rpcd-acl.json` on the target router.
-- Assign the least-privilege ACL to the dedicated rpcd account and verify the calls using that account (not only as root).
-- Validate on the Dynalink DL-WRX36 and record exact OpenWrt/rpcd versions and ACL behavior.
-- Confirm MAC/name/interface results against known wired and wireless clients, including a client whose IPv4 address changes.
-- Verify online-to-offline transition, persistence after disappearance, connector restart, and Node outage/recovery.
-- Confirm the helper does not alter firewall, routing, wireless, or forwarding state.
+Current discovery path:
+- system.board and network.interface dump provide router/interface metadata.
+- luci-rpc getHostHints provides MAC-keyed IPv4/IPv6 host hints from LuCI's existing data sources.
+- luci-rpc getDHCPLeases enriches clients with DHCP hostname, addresses and logical interface where available.
+- No custom router files, scripts, packages, ACL files, shell commands, or file.exec permissions are required.
+- PostgreSQL preserves first/last-seen data; the dashboard groups devices by DHCP logical interface and keeps unresolved devices under Unmapped.
 
-**Known coverage limits (follow-up work):**
-- Discovery currently uses IPv4 neighbor entries. IPv6 NDP is not collected.
-- Devices with no current neighbor entry are not newly discovered. Sleeping clients may appear offline even when powered on.
-- Hostnames depend on `luci-rpc getHostHints`; a missing hint is shown as `(sem-nome)`.
-- Wi-Fi association tables, full DHCP lease data, bridge/VLAN membership, switch ports, and physical Layer-2 links are not collected.
-- MAC identity is scoped to a gateway. Cross-source identity reconciliation, randomized-MAC handling, spoofing detection, and confidence scoring are not implemented.
-- The 90-second online threshold is a fixed initial heuristic; tune it against real heartbeat/neighbor behavior after hardware validation.
+Still required before hardware validation:
+- Verify the target firmware exposes the required ubus methods and built-in LuCI ACL groups.
+- Validate authenticated read-only calls from the dedicated account on the Dynalink DL-WRX36.
+- Compare MAC/name/IP/interface results against known wired and wireless clients.
+- Verify address changes retain MAC identity; verify disappearance, the 90-second offline transition, and rediscovery.
+- Run connector restart and Node outage/recovery checks; confirm forwarding is unaffected.
 
-The detailed installation and acceptance procedure is in [the OpenWrt validation runbook](operations/openwrt-validation.md), section 10. The physical validation is tracked under [Issue #2](https://github.com/squassina/OpenShield/issues/2), and broader identity/topology work under [Issues #5 and #8](https://github.com/squassina/OpenShield/issues/5).
+Known coverage limits:
+- Host hints and DHCP leases reflect what LuCI and the router's DHCP backend know; they do not guarantee visibility of every associated, static, sleeping or powered-on device.
+- Logical interface is available when the DHCP lease reports it; host-hint-only devices remain Unmapped.
+- Wi-Fi association detail, bridge/VLAN membership, switch ports and physical Layer-2 links are not guaranteed by this inventory.
+- MAC identity is scoped to a gateway. Cross-source identity reconciliation, randomized-MAC handling, spoofing detection and confidence scoring remain open.
+- The 90-second online threshold is an initial heuristic; tune it against real router behavior.
+
+The read-only validation procedure is in [the OpenWrt validation runbook](operations/openwrt-validation.md), sections 10–11. Physical validation is tracked under [Issue #2](https://github.com/squassina/OpenShield/issues/2), and broader identity/topology work under [Issues #5 and #8](https://github.com/squassina/OpenShield/issues/5).
 
 ## P1 — Network Visibility
 
 - [Issue #4 — Validate Suricata and Zeek with live sensor deployments](https://github.com/squassina/OpenShield/issues/4)
   - P1 tests validate representative JSON records and the ingestion API. They do not prove live packet capture or end-to-end sensor deployment.
 - [Issue #5 — Complete device identity enrichment across sources](https://github.com/squassina/OpenShield/issues/5)
-  - OpenWrt IPv4 neighbor discovery now adds MAC identity, host-hint names, logical-interface mapping, and first/last-seen history to the router inventory. Remaining: IPv6 NDP, complete DHCP lease and Wi-Fi association ingestion, identity reconciliation across OpenWrt/Suricata/Zeek, conflict handling, and identity confidence.
+  - Native LuCI host hints now provide MAC identity and IPv4/IPv6 address hints; DHCP leases enrich hostname and logical-interface data where available. Remaining: richer Wi-Fi association and topology data, identity reconciliation across OpenWrt/Suricata/Zeek, conflict handling, and identity confidence.
 - [Issue #6 — Event retention, pagination, and sustained-load validation](https://github.com/squassina/OpenShield/issues/6)
   - Event filters/limits and inventory/topology aggregation now execute in PostgreSQL. Retention, cursor pagination, load benchmarks, and long-term storage strategy remain open.
 - [Issue #7 — Authenticate sensor ingestion before Business deployment](https://github.com/squassina/OpenShield/issues/7)

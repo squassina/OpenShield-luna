@@ -24,7 +24,7 @@ OPENSHIELD_API_PASSWORD=<strong-admin-password>
 OPENSHIELD_GATEWAY_SPOOL_PATH=/var/lib/openshield/gateway-spool.sqlite3
 ```
 
-Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. To rotate keys without downtime, set the new key as `OPENSHIELD_SECRET_KEY` and the old key in `OPENSHIELD_SECRET_KEY_PREVIOUS`; secrets are re-encrypted with the new key on read. After all secrets have been read/re-saved, remove the previous key. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use an OpenWrt RPC account with only the ubus permissions required for `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors`. Do not grant `file.exec` or generic shell execution. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
+Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Generate a separate random connector token. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Set `OPENSHIELD_SECRET_KEY` only on Node; back it up securely because losing it makes stored router credentials undecryptable. To rotate keys without downtime, set the new key as `OPENSHIELD_SECRET_KEY` and the old key in `OPENSHIELD_SECRET_KEY_PREVIOUS`; secrets are re-encrypted with the new key on read. After all secrets have been read/re-saved, remove the previous key. The dashboard stores credentials encrypted at rest; the authenticated connector receives them on connect/heartbeat. Do not set router credentials in the connector environment for normal operation. Use a dedicated OpenWrt RPC account with read-only access to `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `luci-rpc.getDHCPLeases`. Reuse the ACL groups already shipped with LuCI (`luci-base-network-status` and `luci-mod-status-realtime`, plus the system board read permission available on the installed release); do not create ACL files or install packages. Never grant `file.exec`, generic shell execution, or write permissions. Use HTTPS where supported. If management RPC is HTTP-only, isolate it on a trusted management network. API Basic authentication protects dashboard/admin routes; gateway traffic uses its separate bearer token.
 
 ## 3. Start and verify
 
@@ -149,46 +149,39 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
 
 
-## 10. Device topology discovery helper
+## 10. Device inventory using native LuCI ubus
 
-The connector refreshes device discovery on every heartbeat (default 30 seconds) using:
-- `network.interface dump`: maps kernel devices, prioritizing `l3_device`, to logical OpenWrt interfaces.
-- `luci-rpc getHostHints`: resolves MAC addresses to friendly names where a DHCP/static host hint exists.
-- `openshield get_ipv4_neighbors`: returns the output of the fixed, read-only `ip -4 neigh show` command.
+The connector uses only the standard /ubus HTTP endpoint and methods exposed by the LuCI backend already present on a normal LuCI installation. No custom rpcd plugin, helper script, package, ACL file, SSH command, or shell execution is installed or required on the router.
 
-Install the restricted rpcd helper and its ACL file from the repository root:
+Read-only calls used during discovery:
+- system.board: router model, hostname, firmware and kernel metadata.
+- network.interface dump: logical interface names, state, protocol and addresses.
+- luci-rpc getHostHints: MAC-keyed host hints assembled by LuCI from the neighbor table, DHCP lease data, static host entries and known interface addresses. Includes IPv4 and IPv6 address hints when available.
+- luci-rpc getDHCPLeases: DHCPv4/v6 lease details, including MAC, address, hostname and logical interface when supplied by the lease backend.
 
-```sh
-scp scripts/openwrt/openshield-rpcd root@ROUTER:/tmp/openshield-rpcd
-scp scripts/openwrt/openshield-rpcd-acl.json root@ROUTER:/tmp/openshield-rpcd-acl.json
-ssh root@ROUTER
-install -d -m 0755 /usr/libexec/rpcd /usr/share/rpcd/acl.d
-install -m 0755 /tmp/openshield-rpcd /usr/libexec/rpcd/openshield
-install -m 0644 /tmp/openshield-rpcd-acl.json /usr/share/rpcd/acl.d/openshield.json
-/etc/init.d/rpcd restart
-ubus list | grep '^openshield$'
-ubus call openshield get_ipv4_neighbors
-ubus call network.interface dump
-ubus call luci-rpc getHostHints
-```
+LuCI's host-hint method already reads the kernel neighbor table internally. OpenShield does not execute ip, read router files directly, or depend on a custom ubus object.
 
-Assign the `openshield-readonly` ACL to the dedicated RPC user/group using the ACL mechanism supported by the installed OpenWrt release. The ACL must allow only `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors` (plus the required session login). Verify the actual authenticated RPC calls with the dedicated account; a successful root-level `ubus call` alone does not prove the account ACL is correct. Do not grant `file.exec`, generic shell execution, or write permissions. The helper accepts no command or arguments and always runs exactly `ip -4 neigh show`.
+The dedicated RPC account needs read-only access to the corresponding existing LuCI ACL groups. On current standard LuCI builds, luci-base-network-status covers host hints and interface status, luci-mod-status-index covers system.board, and luci-mod-status-index-dhcp covers DHCP leases (luci-mod-status-realtime also exposes getDHCPLeases on builds that provide that role). Confirm the exact ACL group names and method availability against the installed firmware. Keep system.board read-only. Do not grant file.exec, broad file access, UCI writes, or any network/firewall write method.
 
 After configuring the router in the dashboard, verify:
-1. The next connector heartbeat succeeds and a new `gateway.discovery` event is ingested.
-2. `GET /api/v1/inventory/router-devices?limit=500` returns the gateway snapshot and MAC-keyed devices.
-3. Devices are grouped under their logical interface in the dashboard; entries without an interface mapping appear under **Unmapped**.
-4. A device's MAC remains the identity when its IPv4 address changes.
-5. A device remains in inventory after it disappears from the neighbor table. Its state changes to `offline` when it has not been seen for more than 90 seconds.
+1. The next connector heartbeat succeeds and a new gateway.discovery event is ingested.
+2. GET /api/v1/inventory/router-devices?limit=500 returns the gateway snapshot and MAC-keyed devices.
+3. Devices with a DHCP lease are grouped under the lease's logical interface; devices known only through host hints appear under Unmapped.
+4. IPv4 and IPv6 addresses are attached to the same MAC where LuCI reports them.
+5. A device's MAC remains the identity when its IP address changes.
+6. A device remains in inventory after disappearing from current host hints. Its state changes to offline when it has not been seen for more than 90 seconds.
 
-**Discovery limitations:** the current implementation reads the IPv4 neighbor table only. It does not yet discover IPv6 neighbors/NDP, Wi-Fi association tables, all DHCP leases, or devices that have never produced a neighbor entry. Friendly names depend on host hints. Offline means “not observed recently”, not proof that the device is powered off. Interface grouping is a logical router-interface view, not a physical Layer-2 topology or a complete VLAN/switch-port map.
+Discovery boundaries: coverage depends on data exposed by the installed LuCI/rpcd-mod-luci and DHCP backend. Host hints can include neighbor and configured host data, but are not a guarantee that every associated or powered-on device is visible. DHCP lease data is limited to leases known to the router. Devices without a valid MAC cannot be merged into the MAC-keyed inventory. Logical interface is taken from DHCP lease metadata when available; host-hint-only devices remain Unmapped. This is not a physical Layer-2 map, switch-port map, or complete Wi-Fi association inventory.
+
+
 
 ## 11. Dashboard router setup
 
-Open the Node dashboard on the trusted LAN and use **OpenWrt router**:
+Open the Node dashboard on the trusted LAN and use OpenWrt router:
 - Enter the stable Gateway ID used by the connector, router management URL, dedicated rpcd username and password.
-- Save credentials. The Node encrypts them using `OPENSHIELD_SECRET_KEY`; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
+- Save credentials. The Node encrypts them using OPENSHIELD_SECRET_KEY; the connector receives them only over the authenticated gateway channel. The password field is cleared after submission.
 - The status panel reports connector presence, most recent RPC health check, board/firmware details and discovered interfaces. A successful check older than 90 seconds is shown as stale.
-- Use **Remove saved credentials** to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
+- Use Remove saved credentials to revoke the encrypted router credentials. The connector stops receiving the router configuration on its next heartbeat.
 
-The dedicated RPC account must have only the read permissions listed in section 10: session login, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `openshield.get_ipv4_neighbors`. Confirm ACL assignment and authenticated calls against the installed OpenWrt release; do not grant generic command execution or broad write permissions.
+No router-side installation or configuration change is part of this workflow. Configure only the read-only permissions for the standard LuCI methods listed in section 10.
+

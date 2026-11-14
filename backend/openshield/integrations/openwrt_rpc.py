@@ -1,3 +1,4 @@
+import ipaddress
 import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -14,14 +15,11 @@ def _valid_mac(value: object) -> bool:
     )
 
 
-def _valid_ipv4(value: object) -> bool:
+def _valid_ip(value: object, version: int) -> bool:
     if not isinstance(value, str):
         return False
-    parts = value.split(".")
-    if len(parts) != 4:
-        return False
     try:
-        return all(0 <= int(part) <= 255 and str(int(part)) == part for part in parts)
+        return ipaddress.ip_address(value).version == version
     except ValueError:
         return False
 
@@ -31,7 +29,7 @@ class OpenWrtRPCError(RuntimeError):
 
 
 class OpenWrtRPCClient:
-    """Read-only client for the OpenWrt rpcd ubus HTTP endpoint."""
+    """Read-only client for the standard OpenWrt LuCI ubus HTTP endpoint."""
 
     def __init__(
         self,
@@ -60,7 +58,7 @@ class OpenWrtRPCClient:
         self._timeout = timeout
         self._session: str | None = None
 
-    def _request(self, payload: list[object]) -> object:
+    def _request(self, payload: list[object]) -> dict[str, object]:
         request = Request(
             self._endpoint,
             data=json.dumps(payload).encode("utf-8"),
@@ -103,91 +101,100 @@ class OpenWrtRPCClient:
             raise OpenWrtRPCError("OpenWrt RPC authentication response was invalid")
         self._session = session
 
-    def call(self, object_name: str, method: str, params: dict[str, object] | None = None) -> dict:
+    def call(
+        self,
+        object_name: str,
+        method: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         if self._session is None:
             self.login()
-        result = self._request(
-            [self._session, object_name, method, params or {}]
-        )
-        return result
+        return self._request([self._session, object_name, method, params or {}])
 
     @staticmethod
-    def _parse_host_hints(value: object) -> dict[str, str]:
-        if not isinstance(value, dict):
+    def _parse_devices(
+        hints: object,
+        leases: object,
+    ) -> list[dict[str, object]]:
+        if not isinstance(hints, dict):
             raise OpenWrtRPCError("OpenWrt host hints response was invalid")
-        result = {}
-        for mac, hint in value.items():
-            if not isinstance(mac, str) or not _valid_mac(mac):
-                continue
-            if not isinstance(hint, dict):
+
+        devices: dict[str, dict[str, object]] = {}
+
+        def get_device(mac_value: object) -> dict[str, object] | None:
+            if not isinstance(mac_value, str) or not _valid_mac(mac_value):
+                return None
+            mac = mac_value.lower()
+            return devices.setdefault(mac, {
+                "mac_address": mac,
+                "name": "(sem-nome)",
+                "ip_address": "",
+                "ipv4_addresses": [],
+                "ipv6_addresses": [],
+                "device": "",
+                "interface": "Unmapped",
+                "source": "luci-rpc",
+            })
+
+        for mac, hint in hints.items():
+            item = get_device(mac)
+            if item is None or not isinstance(hint, dict):
                 continue
             name = hint.get("name")
             if isinstance(name, str) and name.strip():
-                result[mac.lower()] = name.strip()[:128]
-        return result
+                item["name"] = name.strip()[:128]
+            for field, version in (("ipaddrs", 4), ("ip6addrs", 6)):
+                addresses = hint.get(field, [])
+                if not isinstance(addresses, list):
+                    continue
+                target = item["ipv4_addresses"] if version == 4 else item["ipv6_addresses"]
+                for address in addresses:
+                    if isinstance(address, str):
+                        address = address.split("/", 1)[0]
+                    if _valid_ip(address, version) and address not in target:
+                        target.append(address)
+            if item["ipv4_addresses"]:
+                item["ip_address"] = item["ipv4_addresses"][0]
 
-    @staticmethod
-    def _parse_ipv4_neighbors(
-        output: object,
-        hints: dict[str, str],
-        interfaces: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
-        if not isinstance(output, str):
-            raise OpenWrtRPCError("OpenWrt IPv4 neighbor response was invalid")
-        interface_by_l3_device: dict[str, str] = {}
-        interface_by_device: dict[str, str] = {}
-        for item in interfaces:
-            name = item.get("name")
-            if not isinstance(name, str) or not name:
+        if not isinstance(leases, dict):
+            raise OpenWrtRPCError("OpenWrt DHCP leases response was invalid")
+        for field, address_field, version in (
+            ("dhcp_leases", "ipaddr", 4),
+            ("dhcp6_leases", "ip6addr", 6),
+        ):
+            rows = leases.get(field, [])
+            if not isinstance(rows, list):
                 continue
-            l3_device = item.get("l3_device")
-            device = item.get("device")
-            if isinstance(l3_device, str) and l3_device:
-                interface_by_l3_device.setdefault(l3_device, name)
-            if isinstance(device, str) and device:
-                interface_by_device.setdefault(device, name)
-        interface_by_device = {**interface_by_device, **interface_by_l3_device}
+            for lease in rows:
+                if not isinstance(lease, dict):
+                    continue
+                item = get_device(lease.get("macaddr"))
+                if item is None:
+                    continue
+                hostname = lease.get("hostname")
+                if item["name"] == "(sem-nome)" and isinstance(hostname, str) and hostname.strip():
+                    item["name"] = hostname.strip()[:128]
+                address = lease.get(address_field)
+                if isinstance(address, str) and _valid_ip(address, version):
+                    target = item["ipv4_addresses"] if version == 4 else item["ipv6_addresses"]
+                    if address not in target:
+                        target.append(address)
+                    if version == 4 and not item["ip_address"]:
+                        item["ip_address"] = address
+                interface = lease.get("interface")
+                if isinstance(interface, str) and interface:
+                    item["interface"] = interface
 
-        devices: dict[str, dict[str, object]] = {}
-        for line in output.splitlines():
-            fields = line.split()
-            if not fields:
-                continue
-            if not _valid_ipv4(fields[0]):
-                continue
-            address = fields[0]
-            device = ""
-            mac = ""
-            for index, field in enumerate(fields[:-1]):
-                if field == "dev":
-                    device = fields[index + 1]
-                elif field == "lladdr":
-                    mac = fields[index + 1]
-            if not device or not _valid_mac(mac):
-                continue
-            mac = mac.lower()
-            item = devices.setdefault(mac, {
-                "mac_address": mac,
-                "name": hints.get(mac, "(sem-nome)"),
-                "ip_address": address,
-                "ipv4_addresses": [],
-                "device": device,
-                "interface": interface_by_device.get(device, device),
-                "source": "ipv4_neighbor",
-            })
-            addresses = item["ipv4_addresses"]
-            if address not in addresses:
-                addresses.append(address)
-            item["ip_address"] = address
-            item["device"] = device
-            item["interface"] = interface_by_device.get(device, device)
-        return sorted(devices.values(), key=lambda item: (str(item["interface"]), str(item["mac_address"])))
+        return sorted(
+            devices.values(),
+            key=lambda item: (str(item["interface"]), str(item["mac_address"])),
+        )
 
     def discover(self) -> dict[str, object]:
         board = self.call("system", "board")
         interfaces = self.call("network.interface", "dump")
         hints = self.call("luci-rpc", "getHostHints")
-        neighbors = self.call("openshield", "get_ipv4_neighbors")
+        leases = self.call("luci-rpc", "getDHCPLeases")
         raw_interfaces = interfaces.get("interface", [])
         if not isinstance(raw_interfaces, list):
             raise OpenWrtRPCError("OpenWrt interface discovery response was invalid")
@@ -223,20 +230,18 @@ class OpenWrtRPCClient:
             }
         elif isinstance(release, (str, int, float, bool)) or release is None:
             normalized_board["release"] = release
-        host_hints = self._parse_host_hints(hints)
-        devices = self._parse_ipv4_neighbors(
-            neighbors.get("neighbors"), host_hints, normalized_interfaces
-        )
+        devices = self._parse_devices(hints, leases)
         return {
             "board": normalized_board,
             "interfaces": normalized_interfaces,
             "devices": devices,
             "device_discovery": {
-                "source": "ip -4 neigh show",
-                "name_source": "luci-rpc getHostHints",
-                "interface_source": "network.interface dump",
+                "source": "luci-rpc getHostHints + getDHCPLeases",
+                "name_source": "luci-rpc getHostHints / getDHCPLeases",
+                "interface_source": "luci-rpc getDHCPLeases",
             },
         }
+
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")
         return {
