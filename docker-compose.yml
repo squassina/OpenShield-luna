@@ -61,7 +61,7 @@ services:
       dockerfile: Dockerfile
       target: dev
     profiles: ["tools"]
-    command: ["ruff", "check", "openshield", "tests"]
+    command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
 
   openshield-gateway-connector:
     build:
