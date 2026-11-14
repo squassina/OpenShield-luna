@@ -817,6 +817,70 @@ def list_threat_indicators(
     return {"items": items, "count": len(items)}
 
 
+@app.get("/api/v1/threat-intel/matches", tags=["threat-intel"])
+def list_threat_matches(
+    event_limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+    indicator_limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
+) -> dict[str, object]:
+    indicators = store.list_threat_indicators(limit=indicator_limit)
+    events = store.list_events(limit=event_limit)
+    matches = []
+    for event in events:
+        payload = event.payload
+        observed: dict[str, set[str]] = {"ip": set(), "domain": set()}
+        for field in ("src_ip", "dest_ip", "id.orig_h", "id.resp_h"):
+            value = payload.get(field)
+            if isinstance(value, str):
+                try:
+                    observed["ip"].add(str(ipaddress.ip_address(value)))
+                except ValueError:
+                    pass
+        for field in ("domain", "query", "hostname", "host", "url"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            candidate = value.strip()
+            if field == "url" or "://" in candidate:
+                try:
+                    candidate = urlsplit(candidate).hostname or ""
+                except ValueError:
+                    candidate = ""
+            candidate = candidate.rstrip(".").lower()
+            if candidate and "/" not in candidate and " " not in candidate:
+                observed["domain"].add(candidate)
+        for indicator in indicators:
+            indicator_type = indicator["indicator_type"]
+            value = str(indicator["value"])
+            if indicator_type in {"ip-src", "ip-dst"}:
+                try:
+                    matched = str(ipaddress.ip_address(value)) in observed["ip"]
+                except ValueError:
+                    matched = False
+            elif indicator_type in {"domain", "hostname"}:
+                matched = value.rstrip(".").lower() in observed["domain"]
+            else:
+                matched = False
+            if matched:
+                matches.append({
+                    "indicator": indicator,
+                    "event": {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "occurred_at": event.occurred_at.isoformat(),
+                        "source": event.source.model_dump(mode="json"),
+                    },
+                    "match_type": "exact",
+                    "assessment": "threat_intelligence_match",
+                })
+    return {
+        "items": matches,
+        "count": len(matches),
+        "events_scanned": len(events),
+        "indicators_scanned": len(indicators),
+        "note": "Exact IOC matches only; no autonomous blocking or inferred attribution.",
+    }
+
+
 @app.put("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
 def save_wazuh_credentials(
     integration_id: str, credentials: WazuhCredentials
