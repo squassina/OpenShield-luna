@@ -26,6 +26,7 @@ from openshield.integrations.models import IntegrationRegistration, IntegrationU
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
+from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
@@ -165,10 +166,10 @@ async def authenticate_requests(request: Request, call_next):
         if denied is not None:
             return denied
         response = await call_next(request)
-    if (
-        path.startswith("/api/v1/gateway/")
-        or path.endswith("/openwrt-credentials")
-    ):
+    if path.startswith("/api/v1/gateway/") or path.endswith((
+        "/openwrt-credentials", "/opnsense-credentials", "/pfsense-credentials",
+        "/opnsense-diagnostics", "/pfsense-diagnostics",
+    )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -208,6 +209,7 @@ metrics = MetricsRegistry()
 adapters = {
     "openwrt": OpenWrtAdapter(),
     "opnsense": OPNsenseAdapter(),
+    "pfsense": PfSenseAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -230,6 +232,11 @@ class OPNsenseCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     api_key: str = Field(min_length=1, max_length=512)
     api_secret: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class PfSenseCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    api_key: SecretStr = Field(min_length=1, max_length=1024)
 
 
 class OpenWrtCredentials(BaseModel):
@@ -333,6 +340,21 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"status": "connected", "integration_id": integration_id, "provider": "opnsense",
                 "system_information_available": bool(system), "imported": 0}
+    if item.kind == "pfsense":
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="pfSense API key is not configured")
+        try:
+            client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+            system = client.get("/api/v2/status/system")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
+        except PfSenseError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id, "provider": "pfsense",
+            "system_information_available": bool(system), "imported": 0,
+        }
     if item.kind in {"pihole", "adguard"}:
         try:
             records = fetch_dns_records(item)
@@ -412,6 +434,61 @@ def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
     except OPNsenseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
+def save_pfsense_credentials(
+    integration_id: str, credentials: PfSenseCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    try:
+        PfSenseClient(credentials.base_url, credentials.api_key.get_secret_value())
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "api_key": credentials.api_key.get_secret_value(),
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
+def delete_pfsense_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/pfsense-diagnostics", tags=["integrations"])
+def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "pfsense":
+        raise HTTPException(status_code=404, detail="pfSense integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="pfSense API key is not configured")
+        client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
+    except PfSenseError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
