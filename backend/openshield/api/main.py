@@ -24,6 +24,7 @@ from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatReq
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
+from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
@@ -206,6 +207,7 @@ gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
 adapters = {
     "openwrt": OpenWrtAdapter(),
+    "opnsense": OPNsenseAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -222,6 +224,12 @@ class PrivacyListEntry(BaseModel):
 class ClassificationOverrideRequest(BaseModel):
     action: Literal["allow", "tracker"]
     reason: str = Field(default="", max_length=500)
+
+
+class OPNsenseCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    api_key: str = Field(min_length=1, max_length=512)
+    api_secret: SecretStr = Field(min_length=1, max_length=1024)
 
 
 class OpenWrtCredentials(BaseModel):
@@ -309,6 +317,22 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Integration not found")
     if not item.enabled:
         raise HTTPException(status_code=409, detail="Integration is disabled")
+    if item.kind == "opnsense":
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="OPNsense credentials are not configured")
+        try:
+            client = OPNsenseClient(
+                str(credentials["base_url"]), str(credentials["api_key"]),
+                str(credentials["api_secret"]),
+            )
+            system = client.get("/api/diagnostics/system/system_information")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
+        except OPNsenseError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "connected", "integration_id": integration_id, "provider": "opnsense",
+                "system_information_available": bool(system), "imported": 0}
     if item.kind in {"pihole", "adguard"}:
         try:
             records = fetch_dns_records(item)
@@ -329,6 +353,67 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "ingestion_endpoint": f"/api/v1/sensors/{integration_id}/events",
         }
     raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
+
+@app.put("/api/v1/integrations/{integration_id}/opnsense-credentials", tags=["integrations"])
+def save_opnsense_credentials(
+    integration_id: str, credentials: OPNsenseCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    try:
+        client = OPNsenseClient(
+            credentials.base_url, credentials.api_key, credentials.api_secret.get_secret_value()
+        )
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "api_key": credentials.api_key,
+            "api_secret": credentials.api_secret.get_secret_value(),
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "base_url": credentials.base_url.rstrip("/"),
+        "credentials_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/opnsense-credentials", tags=["integrations"])
+def delete_opnsense_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config, "credentials_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/opnsense-diagnostics", tags=["integrations"])
+def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "opnsense":
+        raise HTTPException(status_code=404, detail="OPNsense integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="OPNsense credentials are not configured")
+        client = OPNsenseClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            str(credentials["api_secret"]),
+        )
+        return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
+    except OPNsenseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
 
 @app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
 def save_openwrt_credentials(
