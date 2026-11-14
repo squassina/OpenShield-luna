@@ -622,8 +622,8 @@ def list_response_actions(
     status: str | None = None,
 ) -> list[dict[str, object]]:
     allowed = {
-        "pending_approval", "approved", "active", "already_enforced", "failed",
-        "rollback_pending", "rolled_back", "rejected", "cancelled_by_kill_switch",
+        "pending_approval", "approved", "queued", "active", "already_enforced", "failed",
+        "rollback_pending", "rollback_queued", "rolled_back", "rejected", "cancelled_by_kill_switch",
         "blocked_by_kill_switch", "rollback_conflict",
     }
     if status is not None and status not in allowed:

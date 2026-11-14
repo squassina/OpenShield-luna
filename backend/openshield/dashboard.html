@@ -91,10 +91,11 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
   </section>
   <section class="panel">
     <h2>Autonomous response</h2>
-    <p>Deterministic policies can block matched domains through a selected Pi-hole or AdGuard source. TTL triggers automatic rollback. Critical incidents always require human approval. Firewall/IP enforcement is not enabled in this phase.</p>
+    <p>Deterministic policies can block domains through Pi-hole/AdGuard or public IPv4 indicators through an authenticated OpenWrt nftables plugin. Firewall actions always require human approval. TTL triggers automatic rollback; the global kill switch cancels pending approvals and queues rollback.</p>
     <form id="response-policy-form" class="inline">
       <input id="response-policy-name" placeholder="Policy name" required maxlength="120">
-      <select id="response-policy-provider" required aria-label="DNS enforcement provider"></select>
+      <select id="response-policy-action" aria-label="Response action"><option value="dns_block_domain">DNS domain block</option><option value="firewall_block_ip">OpenWrt IPv4 firewall block</option></select>
+      <select id="response-policy-provider" required aria-label="Enforcement provider"></select>
       <input id="response-policy-score" type="number" min="0" max="100" value="60" required aria-label="Minimum risk score">
       <input id="response-policy-ttl" type="number" min="60" max="604800" value="3600" required aria-label="TTL seconds">
       <label><input id="response-policy-approval" type="checkbox" checked> Require approval</label>
@@ -134,7 +135,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="list-sync" class="toolbar"></div>
   </section>
 </main>
-<footer>OpenShield P2 · Domain classification is heuristic, not a threat verdict. DNS query logs contain sensitive browsing metadata.</footer>
+<footer>OpenShield P5 · Response policies are deterministic; AI investigations never authorize or execute actions.</footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -379,9 +380,11 @@ $("service-form").addEventListener("submit",async event=>{
 
 function renderResponsePolicies(policies,integrations) {
   const select=$("response-policy-provider"),current=select.value;
+  const actionType=$("response-policy-action").value;
   select.replaceChildren();
-  const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select DNS provider";select.append(placeholder);
-  integrations.filter(item=>["pihole","adguard"].includes(item.kind)&&item.enabled!==false).forEach(item=>{
+  const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select enforcement provider";select.append(placeholder);
+  const supportedKinds=actionType==="firewall_block_ip"?["openwrt"]:["pihole","adguard"];
+  integrations.filter(item=>supportedKinds.includes(item.kind)&&item.enabled!==false).forEach(item=>{
     const option=document.createElement("option");option.value=item.integration_id;
     option.textContent=item.display_name+" ("+item.kind+")";select.append(option);
   });
@@ -504,6 +507,7 @@ function renderSyncButtons() {
   providerIds.forEach(item=>{const button=document.createElement("button");button.textContent="Sync lists → "+item.display_name;button.addEventListener("click",async()=>{if(!confirm("Apply the current OpenShield allow/block lists to "+item.display_name+"? This changes DNS filtering."))return;button.disabled=true;try{const result=await api("/api/v1/privacy/lists/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Provider sync verified: "+fmt(result.added)+" added, "+fmt(result.removed)+" removed.");}catch(e){showNotice("Provider sync failed: "+e.message,true);}finally{button.disabled=false;}});root.append(button);});
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
+$("response-policy-action").addEventListener("change",async()=>{try{await load();}catch(error){showNotice("Could not refresh response providers: "+error.message,true);}});
 $("response-policy-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const button=event.submitter;button.disabled=true;
@@ -511,7 +515,7 @@ $("response-policy-form").addEventListener("submit",async event=>{
     const policy=await api("/api/v1/response/policies",{method:"POST",body:JSON.stringify({
       name:$("response-policy-name").value.trim(),
       provider_integration_id:$("response-policy-provider").value,
-      action_type:"dns_block_domain",
+      action_type:$("response-policy-action").value,
       min_risk_score:Number($("response-policy-score").value),
       ttl_seconds:Number($("response-policy-ttl").value),
       approval_required:$("response-policy-approval").checked,

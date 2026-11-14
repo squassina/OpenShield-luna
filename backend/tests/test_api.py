@@ -149,10 +149,16 @@ def test_gateway_heartbeat_requires_existing_connection() -> None:
     assert response.status_code == 409
 
 
-def test_gateway_cannot_advertise_enforcement_capabilities() -> None:
+def test_gateway_enforcement_capabilities_require_bearer_authentication(monkeypatch) -> None:
     payload = gateway_payload()
-    payload["capabilities"] = ["execute_action"]
-    assert client.post("/api/v1/gateway/connect", json=payload).status_code == 422
+    payload["capabilities"] = ["execute_action", "verify_action"]
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "gateway-test-token")
+    assert client.post("/api/v1/gateway/connect", json=payload).status_code == 401
+    response = client.post(
+        "/api/v1/gateway/connect", json=payload,
+        headers={"Authorization": "Bearer gateway-test-token"},
+    )
+    assert response.status_code == 201
 
 
 def test_gateway_rejects_unsupported_type() -> None:
