@@ -356,7 +356,7 @@ def test_openwrt_rpc_adds_and_verifies_scoped_firewall_rule(monkeypatch) -> None
         "abcdef12-3456-7890-abcd-ef1234567890", "8.8.8.8", "destination",
     )
     assert result["verified"] is True
-    add = json.loads(requests[1].data)[3]
+    add = json.loads(requests[2].data)[3]
     assert add["config"] == "firewall"
     assert add["type"] == "rule"
     assert add["values"]["src"] == "lan"
