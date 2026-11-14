@@ -28,6 +28,7 @@ from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
 from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
+from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
@@ -171,6 +172,7 @@ async def authenticate_requests(request: Request, call_next):
         "/openwrt-credentials", "/opnsense-credentials", "/pfsense-credentials",
         "/opnsense-diagnostics", "/pfsense-diagnostics",
         "/crowdsec-credentials", "/crowdsec-diagnostics",
+        "/wazuh-credentials", "/wazuh-diagnostics",
     )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -213,6 +215,7 @@ adapters = {
     "opnsense": OPNsenseAdapter(),
     "pfsense": PfSenseAdapter(),
     "crowdsec": CrowdSecAdapter(),
+    "wazuh": WazuhAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -247,6 +250,12 @@ class CrowdSecCredentials(BaseModel):
     bouncer_api_key: SecretStr = Field(min_length=1, max_length=1024)
     machine_id: str | None = Field(default=None, max_length=128)
     machine_password: SecretStr | None = Field(default=None, max_length=1024)
+
+
+class WazuhCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    username: SecretStr = Field(min_length=1, max_length=256)
+    password: SecretStr = Field(min_length=1, max_length=1024)
 
 
 class OpenWrtCredentials(BaseModel):
@@ -389,6 +398,29 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "provider": "crowdsec",
             "alerts_available": summary["alerts_available"],
             "decisions_available": summary["decisions_available"],
+            "imported": 0,
+        }
+    if item.kind == "wazuh":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="Wazuh credentials are not configured")
+            diagnostics = WazuhClient(
+                str(credentials["base_url"]),
+                str(credentials["username"]),
+                str(credentials["password"]),
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored Wazuh credentials are invalid") from exc
+        except WazuhError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "wazuh",
+            "agents_available": diagnostics["summary"]["agents_available"],
             "imported": 0,
         }
     if item.kind in {"pihole", "adguard"}:
@@ -615,6 +647,74 @@ def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
     except CrowdSecError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
+def save_wazuh_credentials(
+    integration_id: str, credentials: WazuhCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    username = credentials.username.get_secret_value()
+    password = credentials.password.get_secret_value()
+    try:
+        WazuhClient(credentials.base_url, username, password)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "username": username,
+            "password": password,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
+def delete_wazuh_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/wazuh-diagnostics", tags=["integrations"])
+def wazuh_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "wazuh":
+        raise HTTPException(status_code=404, detail="Wazuh integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="Wazuh credentials are not configured")
+        client = WazuhClient(
+            str(credentials["base_url"]),
+            str(credentials["username"]),
+            str(credentials["password"]),
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored Wazuh credentials are invalid") from exc
+    except WazuhError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
