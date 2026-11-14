@@ -147,3 +147,25 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
 
 Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
+
+
+## 10. Validate P5 firewall actions
+
+P5 firewall enforcement is optional and must be installed explicitly. Follow [the response engine runbook](response-engine.md#openwrt-firewall-plugin-installation) to install the rpcd plugin, nftables include, and least-privilege ACL. Do not expose the plugin through a broad rpcd role.
+
+On the router, verify:
+```sh
+ubus -v list openshield-firewall
+nft list set inet fw4 openshield_blocked_v4
+nft list chain inet fw4 openshield_forward
+```
+
+From the dashboard:
+1. Create a policy with action **OpenWrt IPv4 firewall block**, provider `home-gateway`, a short TTL (e.g. 300 seconds), and approval required.
+2. Evaluate an incident containing a public IPv4 indicator.
+3. Approve the pending action. Confirm the connector reports the action as active and the IP appears in the nftables set with a timeout.
+4. Trigger **Rollback** or enable the global kill switch. Confirm the IP disappears from the set and the action becomes `rolled_back`.
+5. Repeat with the Node stopped after a block is applied. Confirm the nftables timeout removes the element without Node availability.
+6. Test a private IPv4 address; the API/client must reject it.
+
+CI verifies request validation, gateway token enforcement, action queue/callback state transitions, and TTL/rollback logic. It does not replace this physical-router validation. Record router model, OpenWrt release, firewall4/nft version, rpcd plugin deployment, action ID, timeout evidence, and rollback result.

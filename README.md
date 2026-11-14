@@ -19,7 +19,7 @@ Residential admin authentication remains disabled by default to preserve the hom
 - **Gateway-first:** a lightweight connector communicates with a separate OpenShield Node. Gateway forwarding never depends on Node availability.
 - **Hybrid integrations:** authorized capability discovery where supported, with manual configuration as fallback.
 - **Local-first AI:** local inference is the default. Cloud AI is optional, disabled by default, and receives minimized/sanitized context.
-- **Deterministic control:** AI recommends; deterministic policy authorizes. P0 exposes no traffic-blocking action.
+- **Deterministic control:** AI recommends; deterministic policy authorizes. P0 remains read-only; P5 adds allowlisted DNS and OpenWrt IPv4 actions behind explicit policy and approval.
 - **Modular monolith:** FastAPI backend with explicit modules and versioned contracts.
 
 See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, risks, and exit criteria.
@@ -62,7 +62,7 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - Admin Basic authentication is opt-in in residential mode; when disabled, anyone who can reach the API can read or modify its data. There are no user accounts, role separation, or tenant isolation.
 - Restrict Node access to a trusted LAN. Do not publish port 8000 to the Internet.
 - OpenWrt credentials are entered through the dashboard and encrypted at rest with `OPENSHIELD_SECRET_KEY`. They are never returned by integration APIs or stored in integration JSON. The authenticated connector receives them on connect/heartbeat. Back up the encryption key securely.
-- OpenWrt RPC is read-only in this baseline. The connector does not modify firewall, routing, wireless, or forwarding settings.
+- OpenWrt discovery remains read-only. Optional P5 firewall enforcement uses a dedicated rpcd plugin and a single nftables set; it does not grant arbitrary command execution or general UCI writes.
 - PostgreSQL schema creation is idempotent; formal versioned migrations, backup/restore automation, pooling, and production database hardening remain pending.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
 - Metrics are process-local and reset on restart.
@@ -296,4 +296,4 @@ P4 adds a local Ollama runtime and an optional OpenAI Responses API adapter. Loc
 
 ## P5 response engine
 
-OpenShield supports explicit deterministic DNS response policies, human approval for critical incidents, provider read-back verification, TTL-based rollback and a global emergency stop. See [the response engine runbook](docs/operations/response-engine.md). Current enforcement is DNS-domain-only; no firewall/IP action is enabled.
+OpenShield supports deterministic DNS-domain and OpenWrt public-IPv4 response policies, human approval for all firewall actions and critical incidents, provider/gateway verification, TTL-based rollback and a global emergency stop. OpenWrt firewall actions require the separately installed least-privilege rpcd plugin. See [the response engine runbook](docs/operations/response-engine.md); physical router validation remains mandatory.
