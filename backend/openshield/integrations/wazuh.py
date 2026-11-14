@@ -103,7 +103,7 @@ class WazuhClient:
 
     def _login(self) -> str:
         basic = base64.b64encode(
-            f"{self._username}:{self._password}".encode("utf-8")
+            f"{self._username}:{self._password}".encode()
         ).decode("ascii")
         raw = self._request(
             "/security/user/authenticate?raw=true",
