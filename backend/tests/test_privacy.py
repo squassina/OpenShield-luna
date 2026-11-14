@@ -948,9 +948,9 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
         )
 
         def make_urlopen(expected_payload, captured):
-            def fake_urlopen(request, timeout, context=None):
+            def fake_urlopen(request, timeout, **kwargs):
                 captured["request"] = request
-                captured["context"] = context
+                captured["context"] = kwargs.get("context")
                 return FakeResponse(expected_payload)
             return fake_urlopen
 
