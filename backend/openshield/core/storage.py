@@ -166,6 +166,25 @@ CREATE TABLE IF NOT EXISTS events (
                 ON network_devices (last_seen_at DESC)
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS threat_indicators (
+                    source_integration_id TEXT NOT NULL REFERENCES integrations(integration_id) ON DELETE CASCADE,
+                    indicator_id TEXT NOT NULL,
+                    indicator_type TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT '',
+                    event_id TEXT NOT NULL DEFAULT '',
+                    comment TEXT NOT NULL DEFAULT '',
+                    to_ids BOOLEAN NOT NULL DEFAULT TRUE,
+                    source_timestamp TEXT NOT NULL DEFAULT '',
+                    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (source_integration_id, indicator_id)
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS threat_indicators_value_idx
+                ON threat_indicators (indicator_type, lower(value))
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS audit_records (
                     audit_id BIGSERIAL PRIMARY KEY,
                     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -199,7 +218,7 @@ CREATE TABLE IF NOT EXISTS events (
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "TRUNCATE TABLE audit_records, network_device_address_observations, "
+                "TRUNCATE TABLE audit_records, threat_indicators, network_device_address_observations, "
                 "network_devices, gateway_discovery_snapshots, integration_poll_cursors, "
                 "privacy_classification_overrides, integration_secrets, events, privacy_lists, "
                 "gateway_connections, integrations RESTART IDENTITY"
@@ -1092,6 +1111,95 @@ CREATE TABLE IF NOT EXISTS events (
                 "action": row[3],
                 "target_id": row[4],
                 "details": row[5],
+            }
+            for row in rows
+        ]
+
+
+    def upsert_threat_indicators(
+        self, integration_id: str, indicators: list[dict[str, object]]
+    ) -> int:
+        if not indicators:
+            return 0
+        rows = [
+            (
+                integration_id,
+                str(item["indicator_id"]),
+                str(item["indicator_type"]),
+                str(item["value"]),
+                str(item.get("category") or ""),
+                str(item.get("event_id") or ""),
+                str(item.get("comment") or ""),
+                bool(item.get("to_ids", True)),
+                str(item.get("source_timestamp") or ""),
+            )
+            for item in indicators
+        ]
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                INSERT INTO threat_indicators (
+                    source_integration_id, indicator_id, indicator_type, value,
+                    category, event_id, comment, to_ids, source_timestamp
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_integration_id, indicator_id) DO UPDATE SET
+                    indicator_type = EXCLUDED.indicator_type,
+                    value = EXCLUDED.value,
+                    category = EXCLUDED.category,
+                    event_id = EXCLUDED.event_id,
+                    comment = EXCLUDED.comment,
+                    to_ids = EXCLUDED.to_ids,
+                    source_timestamp = EXCLUDED.source_timestamp,
+                    synced_at = NOW()
+                """,
+                rows,
+            )
+            self._insert_audit(
+                cursor, "threat.indicators.synced", None, integration_id,
+                {"received": len(rows), "provider": "misp"},
+            )
+        return len(rows)
+
+    def list_threat_indicators(
+        self, integration_id: str | None = None, limit: int = 200
+    ) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            if integration_id:
+                cursor.execute(
+                    """
+                    SELECT source_integration_id, indicator_id, indicator_type, value,
+                           category, event_id, comment, to_ids, source_timestamp, synced_at
+                    FROM threat_indicators
+                    WHERE source_integration_id = %s
+                    ORDER BY synced_at DESC, indicator_type, value
+                    LIMIT %s
+                    """,
+                    (integration_id, limit),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT source_integration_id, indicator_id, indicator_type, value,
+                           category, event_id, comment, to_ids, source_timestamp, synced_at
+                    FROM threat_indicators
+                    ORDER BY synced_at DESC, indicator_type, value
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+            rows = cursor.fetchall()
+        return [
+            {
+                "integration_id": row[0],
+                "indicator_id": row[1],
+                "indicator_type": row[2],
+                "value": row[3],
+                "category": row[4],
+                "event_id": row[5],
+                "comment": row[6],
+                "to_ids": row[7],
+                "source_timestamp": row[8],
+                "synced_at": row[9].isoformat(),
             }
             for row in rows
         ]
