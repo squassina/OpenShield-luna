@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ def test_runtime_secrets_are_generated_once_and_reused(
     monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
 
     load_runtime_secrets(create=True)
-    encryption_key = __import__("os").environ["OPENSHIELD_SECRET_KEY"]
+    encryption_key = os.environ["OPENSHIELD_SECRET_KEY"]
     gateway_token = __import__("os").environ["OPENSHIELD_GATEWAY_TOKEN"]
     Fernet(encryption_key.encode("ascii"))
     assert len(gateway_token) >= 64
@@ -40,8 +41,6 @@ def test_connector_does_not_generate_missing_runtime_secrets(
 def test_connector_can_load_gateway_token_without_encryption_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import os
-
     root = tmp_path / "secrets"
     root.mkdir()
     (root / "gateway.token").write_text("shared-token\n", encoding="ascii")
