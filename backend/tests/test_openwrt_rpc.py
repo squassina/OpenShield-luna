@@ -95,5 +95,5 @@ def test_openwrt_firewall_rejects_private_ipv4_and_invalid_ttl() -> None:
 def test_openwrt_rpc_plugin_script_has_valid_shell_syntax() -> None:
     import subprocess
 
-    plugin = Path(__file__).resolve().parents[2] / "scripts/openwrt/openshield-firewall"
+    plugin = Path(__file__).resolve().parents[1] / "openshield/integrations/openwrt_rpcd/openshield-firewall"
     subprocess.run(["sh", "-n", str(plugin)], check=True)

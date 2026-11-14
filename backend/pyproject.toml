@@ -32,4 +32,4 @@ line-length = 100
 target-version = "py312"
 
 [tool.setuptools.package-data]
-openshield = ["dashboard.html", "privacy/data/*.txt", "privacy/data/*.json"]
+openshield = ["dashboard.html", "privacy/data/*.txt", "privacy/data/*.json", "integrations/openwrt_rpcd/*"]

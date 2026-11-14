@@ -25,7 +25,7 @@ Policies define a minimum incident risk score, provider/gateway, action, TTL (60
 
 ## OpenWrt firewall plugin installation
 
-The firewall action requires OpenWrt firewall4/nftables and the dedicated rpcd executable plugin shipped in `scripts/openwrt/`. Install the three files on the router:
+The firewall action requires OpenWrt firewall4/nftables and the dedicated rpcd executable plugin shipped in `backend/openshield/integrations/openwrt_rpcd/`. Install the three files on the router:
 
 ```sh
 install -D -m 0755 openshield-firewall /usr/libexec/rpcd/openshield-firewall
