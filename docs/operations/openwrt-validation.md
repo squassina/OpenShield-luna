@@ -161,7 +161,7 @@ Read-only calls used during discovery:
 
 LuCI's host-hint method already reads the kernel neighbor table internally. OpenShield does not execute ip, read router files directly, or depend on a custom ubus object.
 
-The dedicated RPC account needs read-only access to the corresponding existing LuCI ACL groups. On standard LuCI builds, luci-base-network-status covers host hints and interface status; luci-mod-status-realtime covers DHCP leases. The exact ACL group names and method availability must be confirmed against the installed firmware. Keep system.board read-only. Do not grant file.exec, broad file access, UCI writes, or any network/firewall write method.
+The dedicated RPC account needs read-only access to the corresponding existing LuCI ACL groups. On current standard LuCI builds, luci-base-network-status covers host hints and interface status, luci-mod-status-index covers system.board, and luci-mod-status-index-dhcp covers DHCP leases (luci-mod-status-realtime also exposes getDHCPLeases on builds that provide that role). Confirm the exact ACL group names and method availability against the installed firmware. Keep system.board read-only. Do not grant file.exec, broad file access, UCI writes, or any network/firewall write method.
 
 After configuring the router in the dashboard, verify:
 1. The next connector heartbeat succeeds and a new gateway.discovery event is ingested.
