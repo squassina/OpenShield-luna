@@ -896,6 +896,12 @@ def report_gateway_action_result(
     current_status = action.get("status")
     if current_status in {"queued", "cancelled_by_kill_switch"}:
         if request.status in {"active", "already_enforced"}:
+            expected_status = "blocked" if request.status == "active" else "already_blocked"
+            if (
+                request.result.get("status") != expected_status
+                or request.result.get("ip") != action.get("indicator_value")
+            ):
+                raise HTTPException(status_code=422, detail="Gateway firewall verification result is invalid")
             if request.status == "active" and (
                 current_status == "cancelled_by_kill_switch"
                 or store.get_response_control()["kill_switch_enabled"]
@@ -947,6 +953,11 @@ def report_gateway_action_result(
             ) or {}
     elif current_status == "rollback_queued":
         if request.status == "rolled_back":
+            if (
+                request.result.get("status") != "unblocked"
+                or request.result.get("ip") != action.get("indicator_value")
+            ):
+                raise HTTPException(status_code=422, detail="Gateway rollback verification result is invalid")
             return store.update_response_action(
                 action_id,
                 {
