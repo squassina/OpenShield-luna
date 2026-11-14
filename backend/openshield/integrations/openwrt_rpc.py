@@ -94,9 +94,80 @@ class OpenWrtRPCClient:
         )
         return result
 
+    @staticmethod
+    def _parse_host_hints(value: object) -> dict[str, str]:
+        if not isinstance(value, dict):
+            raise OpenWrtRPCError("OpenWrt host hints response was invalid")
+        result = {}
+        for mac, hint in value.items():
+            if not isinstance(mac, str) or not _MAC_PATTERN.fullmatch(mac):
+                continue
+            if not isinstance(hint, dict):
+                continue
+            name = hint.get("name")
+            if isinstance(name, str) and name.strip():
+                result[mac.lower()] = name.strip()[:128]
+        return result
+
+    @staticmethod
+    def _parse_ipv4_neighbors(
+        output: object,
+        hints: dict[str, str],
+        interfaces: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        if not isinstance(output, str):
+            raise OpenWrtRPCError("OpenWrt IPv4 neighbor response was invalid")
+        interface_by_device: dict[str, str] = {}
+        for item in interfaces:
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            for key in ("l3_device", "device"):
+                device = item.get(key)
+                if isinstance(device, str) and device:
+                    interface_by_device.setdefault(device, name)
+
+        devices: dict[str, dict[str, object]] = {}
+        for line in output.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            try:
+                address = str(ipaddress.IPv4Address(fields[0]))
+            except ipaddress.AddressValueError:
+                continue
+            device = ""
+            mac = ""
+            for index, field in enumerate(fields[:-1]):
+                if field == "dev":
+                    device = fields[index + 1]
+                elif field == "lladdr":
+                    mac = fields[index + 1]
+            if not device or not _MAC_PATTERN.fullmatch(mac):
+                continue
+            mac = mac.lower()
+            item = devices.setdefault(mac, {
+                "mac_address": mac,
+                "name": hints.get(mac, "(sem-nome)"),
+                "ip_address": address,
+                "ipv4_addresses": [],
+                "device": device,
+                "interface": interface_by_device.get(device, device),
+                "source": "ipv4_neighbor",
+            })
+            addresses = item["ipv4_addresses"]
+            if address not in addresses:
+                addresses.append(address)
+            item["ip_address"] = address
+            item["device"] = device
+            item["interface"] = interface_by_device.get(device, device)
+        return sorted(devices.values(), key=lambda item: (str(item["interface"]), str(item["mac_address"])))
+
     def discover(self) -> dict[str, object]:
         board = self.call("system", "board")
         interfaces = self.call("network.interface", "dump")
+        hints = self.call("luci-rpc", "getHostHints")
+        neighbors = self.call("openshield", "get_ipv4_neighbors")
         raw_interfaces = interfaces.get("interface", [])
         if not isinstance(raw_interfaces, list):
             raise OpenWrtRPCError("OpenWrt interface discovery response was invalid")
@@ -107,19 +178,17 @@ class OpenWrtRPCClient:
             addresses = item.get("ipv4-address", [])
             if not isinstance(addresses, list):
                 addresses = []
-            normalized_interfaces.append(
-                {
-                    "name": item.get("interface"),
-                    "up": item.get("up"),
-                    "device": item.get("device"),
-                    "proto": item.get("proto"),
-                    "ipv4_address": [
-                        address.get("address")
-                        for address in addresses
-                        if isinstance(address, dict) and isinstance(address.get("address"), str)
-                    ],
-                }
-            )
+            normalized_interfaces.append({
+                "name": item.get("interface"),
+                "up": item.get("up"),
+                "device": item.get("device"),
+                "l3_device": item.get("l3_device"),
+                "proto": item.get("proto"),
+                "ipv4_address": [
+                    address.get("address") for address in addresses
+                    if isinstance(address, dict) and isinstance(address.get("address"), str)
+                ],
+            })
         normalized_board = {
             key: board.get(key)
             for key in ("hostname", "model", "system", "kernel")
@@ -134,11 +203,20 @@ class OpenWrtRPCClient:
             }
         elif isinstance(release, (str, int, float, bool)) or release is None:
             normalized_board["release"] = release
+        host_hints = self._parse_host_hints(hints)
+        devices = self._parse_ipv4_neighbors(
+            neighbors.get("neighbors"), host_hints, normalized_interfaces
+        )
         return {
             "board": normalized_board,
             "interfaces": normalized_interfaces,
+            "devices": devices,
+            "device_discovery": {
+                "source": "ip -4 neigh show",
+                "name_source": "luci-rpc getHostHints",
+                "interface_source": "network.interface dump",
+            },
         }
-
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")
         return {
