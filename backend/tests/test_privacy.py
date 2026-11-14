@@ -507,7 +507,7 @@ def test_pihole_query_log_pagination_uses_fixed_window_and_offset(monkeypatch) -
     ]
     requests = []
 
-    def fake_request(base_url, path):
+    def fake_request(base_url, path, integration=None):
         requests.append(path)
         return responses.pop(0)
 
@@ -833,7 +833,7 @@ def test_pihole_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
     )
     requests = []
 
-    def fake_request(base_url, path):
+    def fake_request(base_url, path, integration=None):
         requests.append(path)
         return {"queries": []}
 
