@@ -300,3 +300,8 @@ Read-only diagnostics currently query:
 - \`GET /api/v2/status/gateways\`
 
 The REST API package must expose these endpoints for the installed version and the API key's user must have corresponding read privileges. Use HTTPS with a trusted certificate. The integration does not create firewall rules, apply configuration, restart services, or install/upgrade the pfSense API package.
+
+
+## Wazuh read-only integration
+
+OpenShield connects to the Wazuh Server API with a dedicated API user and reads manager metadata/status plus up to 500 agent records. Credentials are encrypted at rest. The connector uses POST only for JWT login and GET for diagnostics; it does not modify Wazuh. Use a least-privilege account (the built-in `readonly` role or equivalent) and a TLS certificate trusted by the OpenShield Node. See [Wazuh integration setup](docs/operations/wazuh.md).
