@@ -167,7 +167,7 @@ def _pihole_request(base_url: str, path: str, *, method: str = "GET",
         auth = _request(
             f"{base_url}/api/auth", method="POST",
             headers={"Content-Type": "application/json", "Accept": "application/json"},
-            body=json.dumps({"password": password}).encode(),
+            body=json.dumps({"password": password}).encode(), integration=integration,
         )
         sid = auth.get("session", {}).get("sid") if isinstance(auth, dict) else None
         if not isinstance(sid, str) or not sid:
@@ -182,7 +182,7 @@ def _pihole_request(base_url: str, path: str, *, method: str = "GET",
     finally:
         if sid:
             try:
-                _request(f"{base_url}/api/auth", method="DELETE", headers=headers)
+                _request(f"{base_url}/api/auth", method="DELETE", headers=headers, integration=integration)
             except DnsProviderError:
                 pass
 
@@ -226,7 +226,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
                 method="DELETE", integration=integration,
             )
             removed += 1
-        verified = _pihole_request(base_url, "/api/domains")
+        verified = _pihole_request(base_url, "/api/domains", integration=integration)
         verified_items = verified.get("domains", []) if isinstance(verified, dict) else verified
         verified_keys = {
             (str(item.get("type")), str(item.get("domain")))
@@ -273,7 +273,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             headers={**headers, "Content-Type": "application/json"},
             body=json.dumps({"rules": merged}).encode(), integration=integration,
         )
-        verified = _request(f"{base_url}/control/filtering/status", headers=headers)
+        verified = _request(f"{base_url}/control/filtering/status", headers=headers, integration=integration)
         verified_rules = verified.get("user_rules", []) if isinstance(verified, dict) else []
         if verified_rules != merged:
             raise DnsProviderError("AdGuard list synchronization could not be verified")
