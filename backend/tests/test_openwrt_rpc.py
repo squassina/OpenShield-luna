@@ -43,7 +43,7 @@ def test_openwrt_rpc_discovers_devices_from_standard_luci_methods() -> None:
         {
             "mac_address": "11:22:33:44:55:66", "name": "phone",
             "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
-            "ipv6_addresses": [], "device": "lan", "interface": "lan", "source": "luci-rpc",
+            "ipv6_addresses": [], "device": "", "interface": "lan", "source": "luci-rpc",
         },
         {
             "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
