@@ -469,7 +469,9 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
+            raise HTTPException(
+                status_code=422, detail="Stored Grafana configuration is invalid"
+            ) from exc
         except GrafanaError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
