@@ -18,7 +18,10 @@ class GatewayConnectRequest(BaseModel):
     @field_validator("capabilities")
     @classmethod
     def validate_capabilities(cls, values: list[Capability]) -> list[Capability]:
-        allowed = {Capability.DISCOVER, Capability.HEALTH_CHECK, Capability.READ_EVENTS}
+        allowed = {
+            Capability.DISCOVER, Capability.HEALTH_CHECK, Capability.READ_EVENTS,
+            Capability.EXECUTE_ACTION, Capability.VERIFY_ACTION,
+        }
         if len(values) != len(set(values)) or not set(values).issubset(allowed):
             raise ValueError("Gateway advertised unsupported or duplicate capabilities")
         return values

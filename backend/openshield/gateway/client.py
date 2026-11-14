@@ -57,6 +57,15 @@ class GatewayConnectorClient:
     def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
         return self._post("/api/v1/events", event.model_dump(mode="json"))
 
+    def report_action_result(
+        self, action_id: str, status: str, result: dict[str, object] | None = None,
+        error: str | None = None,
+    ) -> dict[str, object]:
+        return self._post(
+            f"/api/v1/gateway/actions/{action_id}/result",
+            {"gateway_id": self._gateway_id, "status": status, "result": result or {}, "error": error},
+        )
+
     def _post(self, path: str, payload: dict[str, object]) -> dict[str, object]:
         request = Request(
             f"{self._base_url}{path}",

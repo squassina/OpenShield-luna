@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS events (
                     policy_id TEXT NOT NULL,
                     incident_id TEXT NOT NULL REFERENCES incidents(incident_id) ON DELETE CASCADE,
                     status TEXT NOT NULL CHECK (status IN (
-                        'pending_approval', 'approved', 'active', 'already_enforced',
-                        'failed', 'rollback_pending', 'rolled_back', 'rejected',
+                        'pending_approval', 'approved', 'queued', 'active', 'already_enforced',
+                        'failed', 'rollback_pending', 'rollback_queued', 'rolled_back', 'rejected',
                         'cancelled_by_kill_switch', 'blocked_by_kill_switch', 'rollback_conflict'
                     )),
                     payload JSONB NOT NULL,
@@ -609,7 +609,22 @@ CREATE TABLE IF NOT EXISTS events (
     def list_active_response_actions(self) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "SELECT payload FROM response_actions WHERE status IN ('active', 'rollback_pending') ORDER BY created_at"
+                "SELECT payload FROM response_actions WHERE status IN ('active', 'rollback_pending', 'rollback_queued') ORDER BY created_at"
+            )
+            rows = cursor.fetchall()
+        return [row[0] for row in rows]
+
+    def list_gateway_response_actions(self, gateway_id: str, limit: int = 50) -> list[dict[str, object]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT payload FROM response_actions
+                WHERE payload ->> 'provider_integration_id' = %s
+                  AND status IN ('queued', 'rollback_queued')
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+                ORDER BY created_at LIMIT %s
+                """,
+                (gateway_id, limit),
             )
             rows = cursor.fetchall()
         return [row[0] for row in rows]

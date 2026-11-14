@@ -817,6 +817,11 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
         raise HTTPException(status_code=409, detail="Gateway integration kind mismatch")
 
     encrypted_secret = store.get_integration_secret(request.gateway_id)
+    action_capabilities = {Capability.EXECUTE_ACTION, Capability.VERIFY_ACTION}
+    if action_capabilities.intersection(request.capabilities) and (
+        not encrypted_secret or not _gateway_token_valid(http_request)
+    ):
+        raise HTTPException(status_code=403, detail="Authenticated router credentials are required for enforcement capabilities")
     if encrypted_secret and not _gateway_token_valid(http_request):
         raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     connection = gateway_connections.connect(request)
@@ -832,6 +837,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "pending_actions": store.list_gateway_response_actions(connection.gateway_id),
     }
 
 
@@ -853,7 +859,86 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         "gateway_id": connection.gateway_id,
         "last_seen_at": connection.last_seen_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "pending_actions": store.list_gateway_response_actions(connection.gateway_id),
     }
+
+
+class GatewayActionResultRequest(BaseModel):
+    gateway_id: str = Field(min_length=2, max_length=64)
+    status: Literal["active", "already_enforced", "rolled_back", "failed"]
+    result: dict[str, object] = Field(default_factory=dict)
+    error: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/api/v1/gateway/actions/{action_id}/result", tags=["gateway"])
+def report_gateway_action_result(
+    action_id: str, request: GatewayActionResultRequest,
+) -> dict[str, object]:
+    action = store.get_response_action(action_id)
+    if action is None:
+        raise HTTPException(status_code=404, detail="Response action not found")
+    if action.get("provider_integration_id") != request.gateway_id:
+        raise HTTPException(status_code=403, detail="Gateway does not own this response action")
+    if action.get("action_type") != "firewall_block_ip":
+        raise HTTPException(status_code=422, detail="Unsupported gateway action type")
+    current_status = action.get("status")
+    if current_status == "queued":
+        if request.status in {"active", "already_enforced"}:
+            if request.status == "active":
+                expires_at = datetime.now(UTC) + timedelta(seconds=int(action["ttl_seconds"]))
+                updated = store.update_response_action(
+                    action_id,
+                    {
+                        **action, "status": "active",
+                        "executed_at": datetime.now(UTC).isoformat(),
+                        "expires_at_display": expires_at.isoformat(),
+                        "verification": {**request.result, "verified": True},
+                        "error": None,
+                    },
+                    expires_at=expires_at,
+                    next_attempt_at=None,
+                )
+            else:
+                updated = store.update_response_action(
+                    action_id,
+                    {
+                        **action, "status": "already_enforced",
+                        "verification": {**request.result, "verified": True},
+                        "error": None,
+                    },
+                    expires_at=None,
+                    next_attempt_at=None,
+                )
+            return updated or {}
+        if request.status == "failed":
+            attempts = int(action.get("attempts", 0)) + 1
+            retry_at = datetime.now(UTC) + timedelta(seconds=min(300, 5 * (2 ** min(attempts, 6))))
+            return store.update_response_action(
+                action_id,
+                {**action, "status": "queued", "error": request.error or "gateway_action_failed"},
+                expires_at=None, next_attempt_at=retry_at, attempts=attempts,
+            ) or {}
+    elif current_status == "rollback_queued":
+        if request.status == "rolled_back":
+            return store.update_response_action(
+                action_id,
+                {
+                    **action, "status": "rolled_back",
+                    "rollback_at": datetime.now(UTC).isoformat(),
+                    "verification": {**request.result, "verified": True},
+                    "error": None,
+                },
+                expires_at=None, next_attempt_at=None,
+            ) or {}
+        if request.status == "failed":
+            attempts = int(action.get("attempts", 0)) + 1
+            retry_at = datetime.now(UTC) + timedelta(seconds=min(300, 5 * (2 ** min(attempts, 6))))
+            return store.update_response_action(
+                action_id,
+                {**action, "status": "rollback_queued", "error": request.error or "gateway_rollback_failed"},
+                expires_at=None, next_attempt_at=retry_at, attempts=attempts,
+            ) or {}
+    raise HTTPException(status_code=409, detail="Gateway action result does not match the action state")
 
 
 @app.get("/api/v1/gateways", tags=["gateway"])

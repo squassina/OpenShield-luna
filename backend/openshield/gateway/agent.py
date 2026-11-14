@@ -131,6 +131,39 @@ def _openwrt_config_signature(config: object) -> str | None:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _process_response_actions(
+    client: GatewayConnectorClient,
+    openwrt_client: OpenWrtRPCClient | None,
+    actions: object,
+) -> None:
+    if not isinstance(actions, list):
+        return
+    for action in actions:
+        if not isinstance(action, dict) or not isinstance(action.get("action_id"), str):
+            continue
+        action_id = str(action["action_id"])
+        try:
+            if openwrt_client is None:
+                raise OpenWrtRPCError("OpenWrt RPC is not configured")
+            if action.get("action_type") != "firewall_block_ip":
+                raise OpenWrtRPCError("Unsupported gateway response action")
+            ip_value = str(action.get("indicator_value") or "")
+            if action.get("status") == "queued":
+                result = openwrt_client.block_ip(ip_value, int(action.get("ttl_seconds", 0)))
+                status = "already_enforced" if result.get("status") == "already_blocked" else "active"
+            elif action.get("status") == "rollback_queued":
+                result = openwrt_client.unblock_ip(ip_value)
+                status = "rolled_back"
+            else:
+                continue
+            client.report_action_result(action_id, status, result=result)
+        except (OpenWrtRPCError, ValueError, TypeError):
+            logger.warning("Gateway response action failed; Node will retry", extra={"action_id": action_id})
+            client.report_action_result(
+                action_id, "failed", error="openwrt_firewall_action_failed",
+            )
+
+
 def run_agent(
     client: GatewayConnectorClient,
     heartbeat_interval: float = 30.0,
@@ -154,6 +187,7 @@ def run_agent(
                 openwrt_client = _configured_openwrt_client(result["openwrt_config"])
                 if integration_id is None:
                     integration_id = str(result.get("gateway_id") or "")
+            _process_response_actions(client, openwrt_client, result.get("pending_actions"))
             logger.info("Gateway connected", extra={"gateway_id": result.get("gateway_id")})
             retry_delay = 1.0
         except GatewayTransportError as exc:
@@ -206,6 +240,7 @@ def run_agent(
                                 _event(integration_id, "gateway.discovery", discovery),
                                 spool,
                             )
+                _process_response_actions(client, openwrt_client, heartbeat.get("pending_actions"))
                 if spool is not None:
                     _flush_spool(client, spool)
                 if openwrt_client is not None and integration_id is not None:
@@ -260,6 +295,9 @@ def main() -> None:
         )
     openwrt_client = None
     capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
+    gateway_token = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
+    if gateway_token:
+        capabilities.extend([Capability.EXECUTE_ACTION, Capability.VERIFY_ACTION])
     if all(openwrt_values):
         openwrt_client = OpenWrtRPCClient(
             base_url=openwrt_url,
@@ -278,7 +316,7 @@ def main() -> None:
         gateway_id=gateway_id,
         connector_version=os.getenv("OPENSHIELD_GATEWAY_CONNECTOR_VERSION", "0.1.0"),
         capabilities=capabilities,
-        gateway_token=os.getenv("OPENSHIELD_GATEWAY_TOKEN", ""),
+        gateway_token=gateway_token,
     )
     try:
         run_agent(
