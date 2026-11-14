@@ -486,7 +486,6 @@ def test_openwrt_status_includes_recent_discovery_and_rpc_freshness(monkeypatch)
 
 def test_openwrt_status_marks_old_rpc_check_as_stale(monkeypatch) -> None:
     from cryptography.fernet import Fernet
-    from openshield.api import main
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
     register_integration("home-gateway")

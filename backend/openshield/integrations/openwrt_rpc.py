@@ -115,12 +115,22 @@ class OpenWrtRPCClient:
                     ],
                 }
             )
+        normalized_board = {
+            key: board.get(key)
+            for key in ("hostname", "model", "system", "kernel")
+            if isinstance(board.get(key), (str, int, float, bool)) or board.get(key) is None
+        }
+        release = board.get("release")
+        if isinstance(release, dict):
+            normalized_board["release"] = {
+                key: value for key, value in release.items()
+                if key in {"distribution", "version", "revision", "target", "description"}
+                and isinstance(value, (str, int, float, bool))
+            }
+        elif isinstance(release, (str, int, float, bool)) or release is None:
+            normalized_board["release"] = release
         return {
-            "board": {
-                key: board.get(key)
-                for key in ("hostname", "model", "system", "kernel", "release")
-                if isinstance(board.get(key), (str, int, float, bool)) or board.get(key) is None
-            },
+            "board": normalized_board,
             "interfaces": normalized_interfaces,
         }
 
