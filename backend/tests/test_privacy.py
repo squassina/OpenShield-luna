@@ -997,3 +997,27 @@ def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
             pass
         else:
             raise AssertionError("Invalid custom CA configuration must be rejected")
+
+
+def test_dns_integration_validates_custom_ca_bundle_path() -> None:
+    invalid = client.post("/api/v1/integrations", json={
+        "integration_id": "pihole-relative-ca",
+        "kind": "pihole",
+        "display_name": "Pi-hole",
+        "config": {
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "certs/root.pem",
+        },
+    })
+    assert invalid.status_code == 422
+
+    valid = client.post("/api/v1/integrations", json={
+        "integration_id": "pihole-custom-ca",
+        "kind": "pihole",
+        "display_name": "Pi-hole",
+        "config": {
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "/run/openshield/ca/root.pem",
+        },
+    })
+    assert valid.status_code == 201
