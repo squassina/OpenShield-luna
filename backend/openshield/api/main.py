@@ -478,7 +478,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "status": "connected",
             "integration_id": integration_id,
             "provider": "grafana",
-            "dashboards_available": diagnostics["summary"]["dashboards_available"],
+            "dashboards_returned": diagnostics["summary"]["dashboards_returned"],
             "imported": 0,
         }
     if item.kind in {"pihole", "adguard"}:
