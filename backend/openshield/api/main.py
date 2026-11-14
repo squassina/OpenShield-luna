@@ -23,6 +23,7 @@ from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
+from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
@@ -169,6 +170,7 @@ async def authenticate_requests(request: Request, call_next):
     if path.startswith("/api/v1/gateway/") or path.endswith((
         "/openwrt-credentials", "/opnsense-credentials", "/pfsense-credentials",
         "/opnsense-diagnostics", "/pfsense-diagnostics",
+        "/crowdsec-credentials", "/crowdsec-diagnostics",
     )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -210,6 +212,7 @@ adapters = {
     "openwrt": OpenWrtAdapter(),
     "opnsense": OPNsenseAdapter(),
     "pfsense": PfSenseAdapter(),
+    "crowdsec": CrowdSecAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -237,6 +240,13 @@ class OPNsenseCredentials(BaseModel):
 class PfSenseCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     api_key: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class CrowdSecCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    bouncer_api_key: SecretStr = Field(min_length=1, max_length=1024)
+    machine_id: str | None = Field(default=None, max_length=128)
+    machine_password: SecretStr | None = Field(default=None, max_length=1024)
 
 
 class OpenWrtCredentials(BaseModel):
@@ -354,6 +364,32 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         return {
             "status": "connected", "integration_id": integration_id, "provider": "pfsense",
             "system_information_available": bool(system), "imported": 0,
+        }
+    if item.kind == "crowdsec":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+            diagnostics = CrowdSecClient(
+                str(credentials["base_url"]),
+                str(credentials["bouncer_api_key"]),
+                str(credentials.get("machine_id") or "") or None,
+                str(credentials.get("machine_password") or "") or None,
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+        except CrowdSecError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        summary = diagnostics["summary"]
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "crowdsec",
+            "alerts_available": summary["alerts_available"],
+            "decisions_available": summary["decisions_available"],
+            "imported": 0,
         }
     if item.kind in {"pihole", "adguard"}:
         try:
@@ -489,6 +525,96 @@ def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
     except PfSenseError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
+def save_crowdsec_credentials(
+    integration_id: str, credentials: CrowdSecCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    machine_id = credentials.machine_id.strip() if credentials.machine_id else ""
+    machine_password = (
+        credentials.machine_password.get_secret_value()
+        if credentials.machine_password is not None else ""
+    )
+    if bool(machine_id) != bool(machine_password):
+        raise HTTPException(
+            status_code=422,
+            detail="CrowdSec machine ID and password must be supplied together",
+        )
+    try:
+        CrowdSecClient(
+            credentials.base_url,
+            credentials.bouncer_api_key.get_secret_value(),
+            machine_id or None,
+            machine_password or None,
+        )
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "bouncer_api_key": credentials.bouncer_api_key.get_secret_value(),
+            "machine_id": machine_id or None,
+            "machine_password": machine_password or None,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+        "alerts_auth_configured": bool(machine_id),
+    }))
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "secret_storage": "encrypted",
+        "alerts_auth_configured": bool(machine_id),
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
+def delete_crowdsec_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+        "alerts_auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/crowdsec-diagnostics", tags=["integrations"])
+def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "crowdsec":
+        raise HTTPException(status_code=404, detail="CrowdSec integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+        client = CrowdSecClient(
+            str(credentials["base_url"]),
+            str(credentials["bouncer_api_key"]),
+            str(credentials.get("machine_id") or "") or None,
+            str(credentials.get("machine_password") or "") or None,
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+    except CrowdSecError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

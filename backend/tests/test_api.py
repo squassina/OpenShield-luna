@@ -670,3 +670,117 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
         if item["integration_id"] == "pfsense-home"
     )
     assert integration["config"]["auth_configured"] is False
+
+
+
+def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    registered = client.post("/api/v1/integrations", json={
+        "integration_id": "crowdsec-home",
+        "kind": "crowdsec",
+        "display_name": "Home CrowdSec",
+        "config": {"base_url": "https://192.0.2.20:8080"},
+    })
+    assert registered.status_code == 201
+
+    credentials = {
+        "base_url": "https://192.0.2.20:8080",
+        "bouncer_api_key": "sensitive-bouncer-key",
+        "machine_id": "openshield-reader",
+        "machine_password": "sensitive-machine-password",
+    }
+    saved = client.put(
+        "/api/v1/integrations/crowdsec-home/crowdsec-credentials",
+        json=credentials,
+    )
+    assert saved.status_code == 200
+    assert "sensitive-bouncer-key" not in saved.text
+    assert "sensitive-machine-password" not in saved.text
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "crowdsec-home"
+    )
+    assert integration["config"]["auth_configured"] is True
+    assert integration["config"]["alerts_auth_configured"] is True
+    assert "bouncer_api_key" not in str(integration)
+    encrypted = main.store.get_integration_secret("crowdsec-home")
+    assert encrypted
+    assert b"sensitive-bouncer-key" not in encrypted
+    assert b"sensitive-machine-password" not in encrypted
+    assert SecretStore(main.store).get("crowdsec-home") == {
+        "base_url": "https://192.0.2.20:8080",
+        "bouncer_api_key": "sensitive-bouncer-key",
+        "machine_id": "openshield-reader",
+        "machine_password": "sensitive-machine-password",
+    }
+
+    class FakeCrowdSecClient:
+        def __init__(self, base_url, bouncer_api_key, machine_id, machine_password):
+            assert base_url == "https://192.0.2.20:8080"
+            assert bouncer_api_key == "sensitive-bouncer-key"
+            assert machine_id == "openshield-reader"
+            assert machine_password == "sensitive-machine-password"
+
+        def diagnostics(self):
+            return {
+                "alerts": [{"id": 1, "scenario": "ssh-bf"}],
+                "decisions": [{"type": "ban", "value": "192.0.2.10"}],
+                "summary": {
+                    "alerts_available": 1,
+                    "decisions_available": 1,
+                    "alerts_auth_configured": True,
+                },
+            }
+
+    monkeypatch.setattr(main, "CrowdSecClient", FakeCrowdSecClient)
+    diagnostics = client.get(
+        "/api/v1/integrations/crowdsec-home/crowdsec-diagnostics"
+    )
+    assert diagnostics.status_code == 200
+    assert diagnostics.headers["cache-control"] == "no-store"
+    assert diagnostics.json()["summary"]["alerts_available"] == 1
+    assert diagnostics.json()["decisions"][0]["type"] == "ban"
+
+    connection = client.post("/api/v1/integrations/crowdsec-home/test")
+    assert connection.status_code == 200
+    assert connection.json()["provider"] == "crowdsec"
+    assert connection.json()["decisions_available"] == 1
+    assert connection.json()["imported"] == 0
+
+    assert client.delete(
+        "/api/v1/integrations/crowdsec-home/crowdsec-credentials"
+    ).status_code == 204
+    assert client.get(
+        "/api/v1/integrations/crowdsec-home/crowdsec-diagnostics"
+    ).status_code == 409
+    integration = next(
+        item for item in client.get("/api/v1/integrations").json()
+        if item["integration_id"] == "crowdsec-home"
+    )
+    assert integration["config"]["auth_configured"] is False
+    assert integration["config"]["alerts_auth_configured"] is False
+
+
+def test_crowdsec_requires_machine_id_and_password_together(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    client.post("/api/v1/integrations", json={
+        "integration_id": "crowdsec-home",
+        "kind": "crowdsec",
+        "display_name": "Home CrowdSec",
+    })
+    response = client.put(
+        "/api/v1/integrations/crowdsec-home/crowdsec-credentials",
+        json={
+            "base_url": "https://192.0.2.20:8080",
+            "bouncer_api_key": "bouncer-key",
+            "machine_id": "machine-only",
+        },
+    )
+    assert response.status_code == 422

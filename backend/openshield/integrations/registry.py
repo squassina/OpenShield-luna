@@ -7,6 +7,7 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
         models.Capability.READ_CONFIGURATION,
         models.Capability.READ_EVENTS,
     ],
+    "crowdsec": [models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS],
     "pfsense": [
         models.Capability.HEALTH_CHECK,
         models.Capability.READ_CONFIGURATION,

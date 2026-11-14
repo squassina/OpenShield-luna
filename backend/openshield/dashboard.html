@@ -88,6 +88,20 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="pfsense-status" class="notice" role="status" aria-live="polite">No pfSense CE firewall configured.</div>
     <div id="pfsense-details" class="table-wrap"></div>
     <div id="pfsense-actions" class="toolbar"></div>
+    <h3>CrowdSec threat intelligence</h3>
+    <p>Connect to the CrowdSec Local API. A bouncer API key reads decisions. Optional machine credentials enable alert history; OpenShield uses them only to log in and issue read-only GET requests.</p>
+    <form id="crowdsec-form" class="inline">
+      <input id="crowdsec-id" placeholder="Integration ID (e.g. crowdsec-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="CrowdSec integration ID">
+      <input id="crowdsec-name" placeholder="Display name" value="CrowdSec Local API" required maxlength="120" aria-label="CrowdSec display name">
+      <input id="crowdsec-url" type="url" placeholder="http://192.168.1.10:8080" required aria-label="CrowdSec Local API URL">
+      <input id="crowdsec-machine-id" placeholder="Machine ID (optional for alerts)" autocomplete="username" aria-label="CrowdSec machine ID">
+      <input id="crowdsec-machine-password" type="password" placeholder="Machine password (optional)" autocomplete="new-password" aria-label="CrowdSec machine password">
+      <input id="crowdsec-bouncer-key" type="password" placeholder="Bouncer API key (required)" required autocomplete="new-password" aria-label="CrowdSec bouncer API key">
+      <button class="primary" type="submit">Save CrowdSec credentials</button>
+    </form>
+    <div id="crowdsec-status" class="notice" role="status" aria-live="polite">No CrowdSec Local API configured.</div>
+    <div id="crowdsec-details" class="table-wrap"></div>
+    <div id="crowdsec-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -188,6 +202,7 @@ async function load() {
     await loadOpenWrtStatus(integrations);
     await loadOpnsenseStatus(integrations);
     await loadPfsenseStatus(integrations);
+    await loadCrowdSecStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -397,6 +412,76 @@ $("pfsense-form").addEventListener("submit",async event=>{
     $("pfsense-key").value="";
     $("pfsense-status").textContent="pfSense setup failed: "+error.message;
     $("pfsense-status").classList.add("error");showNotice("pfSense setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadCrowdSecStatus(integrations) {
+  const root=$("crowdsec-status"),details=$("crowdsec-details"),actions=$("crowdsec-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="crowdsec");
+  if(!item) { root.textContent="No CrowdSec Local API configured.";root.classList.remove("error");return; }
+  $("crowdsec-id").value=item.integration_id;
+  $("crowdsec-name").value=item.display_name;
+  $("crowdsec-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  const alertsConfigured=item.config?.alerts_auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured
+    ? "Bouncer key configured · "+(alertsConfigured?"alert access configured":"decisions only")
+    : "Bouncer API key required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load alerts and decisions","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/crowdsec-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify(data,null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+
+          fmt(data.summary.decisions_available)+" decisions · "+
+          (data.summary.alerts_available===null?"alerts not configured":fmt(data.summary.alerts_available)+" alerts");
+      } catch(error) { root.textContent="CrowdSec diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted CrowdSec credentials for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/crowdsec-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("CrowdSec credentials removed.");await load();
+      } catch(error) { showNotice("Could not remove CrowdSec credentials: "+error.message,true); }
+    }));
+  }
+}
+$("crowdsec-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("crowdsec-id").value.trim(),base_url=$("crowdsec-url").value.trim();
+  const machine_id=$("crowdsec-machine-id").value.trim();
+  const machine_password=$("crowdsec-machine-password").value;
+  const bouncer_api_key=$("crowdsec-bouncer-key").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    if(Boolean(machine_id)!==Boolean(machine_password)) {
+      throw new Error("Enter both the CrowdSec machine ID and password, or leave both blank.");
+    }
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"crowdsec",display_name:$("crowdsec-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="crowdsec") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("crowdsec-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/crowdsec-credentials",{
+      method:"PUT",body:JSON.stringify({
+        base_url,bouncer_api_key,machine_id:machine_id||null,machine_password:machine_password||null
+      })
+    });
+    $("crowdsec-machine-password").value="";$("crowdsec-bouncer-key").value="";
+    showNotice("CrowdSec credentials saved encrypted. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("crowdsec-machine-password").value="";$("crowdsec-bouncer-key").value="";
+    $("crowdsec-status").textContent="CrowdSec setup failed: "+error.message;
+    $("crowdsec-status").classList.add("error");showNotice("CrowdSec setup failed: "+error.message,true);
   } finally { button.disabled=false; }
 });
 function renderSources(sources, integrations) {
