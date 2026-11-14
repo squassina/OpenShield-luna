@@ -31,14 +31,14 @@ services:
       OPENSHIELD_API_USERNAME: ${OPENSHIELD_API_USERNAME:-}
       OPENSHIELD_API_PASSWORD: ${OPENSHIELD_API_PASSWORD:-}
       OPENSHIELD_GATEWAY_TOKEN: ${OPENSHIELD_GATEWAY_TOKEN:-}
-      OPENSHIELD_RUNTIME_SECRETS_DIR: /run/openshield-secrets
-    volumes:
-      - openshield-runtime-secrets:/run/openshield-secrets
+      OPENSHIELD_CLOUD_AI_ENABLED: ${OPENSHIELD_CLOUD_AI_ENABLED:-false}
+      OPENSHIELD_ENFORCEMENT_ENABLED: ${OPENSHIELD_ENFORCEMENT_ENABLED:-false}
+      OPENSHIELD_MAX_AUTONOMY_LEVEL: ${OPENSHIELD_MAX_AUTONOMY_LEVEL:-0}
     depends_on:
       openshield-db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${OPENSHIELD_PUBLISH_ADDRESS:-127.0.0.1}:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
       interval: 15s

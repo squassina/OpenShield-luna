@@ -284,6 +284,9 @@ Enabled Pi-hole v6 and AdGuard Home integrations are polled automatically at Nod
 
 DNS classifications are descriptive privacy signals, not threat verdicts. OpenShield pins the AdGuard CNAME original-trackers dataset (MIT), and uses it only when the DNS provider supplies an observed CNAME answer; a hostname alone is not enough. It records the upstream commit, source update timestamp, matched target, and confidence with each event. A scheduled workflow checks for feed changes weekly and opens a review PR; it never applies an update automatically. The local suffix/TLD heuristics remain a fallback and carry lower confidence. User overrides (`allow` or `tracker`) take precedence for the matching domain and its subdomains; raw DNS domain, client, timestamp, and response status remain unchanged.
 
+## P3 — Threat intelligence
+
+P3 adds optional CrowdSec CTI and MISP integrations, encrypted provider API keys, bounded on-demand IOC enrichment, a six-hour provider cache, deterministic explainable risk scoring, incident timelines, and audited false-positive/acknowledge/close workflows. See [the threat intelligence runbook](docs/operations/threat-intelligence.md). No P3 finding authorizes network enforcement; P5 owns policy and response.
 
 ## pfSense CE read-only integration
 
@@ -307,3 +310,22 @@ The REST API package must expose these endpoints for the installed version and t
 OpenShield connects to the Wazuh Server API with a dedicated API user and reads manager metadata/status plus up to 500 agent records. Credentials are encrypted at rest. The connector uses POST only for JWT login and GET for diagnostics; it does not modify Wazuh. Use a least-privilege account (the built-in `readonly` role or equivalent) and a TLS certificate trusted by the OpenShield Node. See [Wazuh integration setup](docs/operations/wazuh.md).
 
 Grafana read-only integration setup: [docs/operations/grafana.md](docs/operations/grafana.md).
+
+## P4 — Hybrid AI investigations
+
+P4 adds a local Ollama runtime and an optional OpenAI Responses API adapter. Local inference is the default privacy posture. Cloud use requires both the global `OPENSHIELD_CLOUD_AI_ENABLED=true` switch and an explicit per-integration consent checkbox. Cloud requests contain only aggregate risk factors, event-type/severity counts, and normalized provider reputation categories; they omit indicator values, hostnames, MACs, event IDs, integration IDs, and raw event payloads. AI output is schema-validated, versioned, stored, and audited. Models cannot call tools or execute policy/response actions. See [the AI investigation runbook](docs/operations/ai-investigation.md).
+
+
+## P6 — Enterprise Readiness Baseline
+
+- Multiple gateway IDs are independently tracked by the Node; see `GET /api/v1/gateways`.
+- Bounded operational summary is available at `GET /api/v1/reports/operations`.
+- PostgreSQL custom-format backup and guarded restore scripts are in `scripts/`.
+- Compose publishes the API on loopback by default; set `OPENSHIELD_PUBLISH_ADDRESS` to the Node's trusted-LAN address when remote LAN clients need access.
+- Deployment and recovery guidance: [Enterprise readiness runbook](docs/operations/enterprise-readiness.md).
+
+This baseline does not implement multi-tenancy, RBAC, or a centralized multi-Node control plane. Do not use one Node for mutually untrusted organizations.
+
+## P5 — Policy and bounded response
+
+P5 introduces exact-indicator policies, autonomy levels L0–L3, human approval, an emergency stop, DNS block-list execution, and temporary OpenWrt firewall rules delivered through the authenticated Gateway Connector. Enforcement remains disabled by default; the emergency stop is active and the global autonomy cap is L0 by default. Actions have a maximum 24-hour TTL with automatic rollback and audit. See [the P5 response runbook](docs/operations/policy-response.md). Physical router validation is required before enabling enforcement.

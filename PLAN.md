@@ -365,6 +365,8 @@ Scope:
 - Incident timeline and investigation workflow.
 - Evidence provenance and false-positive handling.
 
+**Implementation status:** P3 software scope is implemented on the chained feature branch. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
+
 ### P4 — Hybrid AI Network Intelligence
 
 **Goal:** provide evidence-grounded investigation and recommendations.
@@ -377,6 +379,8 @@ Scope:
 - Evidence-grounded incident investigation.
 - Explanations, summaries, and recommendations.
 - AI governance, evaluation, and prompt-injection resilience.
+
+**Implementation status:** P4 software scope is implemented on the chained feature branch. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
 
 ### P5 — Autonomous Response
 
@@ -393,9 +397,13 @@ Scope:
 - Emergency stop / kill switch.
 - Complete decision and execution audit.
 
+**Implementation status:** P5 software implementation is underway on the chained branch. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
+
 ### P6 — Enterprise Readiness
 
 **Goal:** support broader operational use where validated by demand.
+
+**Implementation status:** P6 baseline is underway on the chained branch. Current increment adds multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
 
 Scope:
 - Multiple gateways and sites.

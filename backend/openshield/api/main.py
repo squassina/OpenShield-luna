@@ -15,17 +15,27 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr
 
+from openshield.ai.orchestrator import investigate_incident
+from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
+from openshield.execution.service import (
+    ExecutionError,
+    approve_decision,
+    process_gateway_command_result,
+    reject_decision,
+)
+from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
-from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
+from openshield.integrations.ai import AIProviderAdapter
+from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
 from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
-from openshield.integrations.misp import MispAdapter, MispClient, MispError
+from openshield.integrations.misp import MispClient, MispError
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
@@ -33,7 +43,14 @@ from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OP
 from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
 from openshield.integrations.prometheus import PrometheusAdapter, PrometheusClient, PrometheusError
 from openshield.integrations.registry import IntegrationRegistry
+from openshield.integrations.threat_intel import ThreatIntelAdapter
 from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
+from openshield.policy.engine import (
+    create_policy,
+    enforcement_enabled,
+    evaluate_policy,
+    max_autonomy_level,
+)
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
 from openshield.privacy.polling import (
@@ -45,6 +62,12 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.threat_intel.engine import enrich_events
+from openshield.threat_intel.providers import (
+    ThreatIntelProviderError,
+    lookup_crowdsec,
+    lookup_misp,
+)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -61,15 +84,24 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
+    execution_task = asyncio.create_task(run_expiration_loop(store, registry))
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for background_task in (task, execution_task):
+            if background_task is not None:
+                background_task.cancel()
+                try:
+                    await background_task
+                except asyncio.CancelledError:
+                    pass
+        for background_task in (task, execution_task):
+            if background_task is not None:
+                background_task.cancel()
+                try:
+                    await background_task
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(
@@ -222,8 +254,8 @@ adapters = {
     "openwrt": OpenWrtAdapter(),
     "opnsense": OPNsenseAdapter(),
     "pfsense": PfSenseAdapter(),
-    "crowdsec": CrowdSecAdapter(),
-    "misp": MispAdapter(),
+    "crowdsec": ThreatIntelAdapter("crowdsec"),
+    "misp": ThreatIntelAdapter("misp"),
     "wazuh": WazuhAdapter(),
     "prometheus": PrometheusAdapter(),
     "grafana": GrafanaAdapter(),
@@ -231,6 +263,8 @@ adapters = {
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
     "adguard": DnsPrivacyAdapter("adguard"),
+    "ollama": AIProviderAdapter("ollama"),
+    "openai": AIProviderAdapter("openai"),
 }
 
 
@@ -288,6 +322,68 @@ class OpenWrtCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=1, max_length=512)
+
+
+class ThreatIntelCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class ThreatIntelEnrichRequest(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class IncidentStatusRequest(BaseModel):
+    status: Literal["open", "acknowledged", "closed", "false_positive"]
+    reason: str = Field(default="", max_length=500)
+
+
+class AIProviderCredentials(BaseModel):
+    api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class AIInvestigationRequest(BaseModel):
+    provider_id: str = Field(min_length=2, max_length=64)
+
+
+class GatewayCommandResultRequest(BaseModel):
+    status: Literal["completed", "failed"]
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class PolicyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    indicator_type: Literal["ip", "domain"]
+    indicator_value: str = Field(min_length=3, max_length=253)
+    action: Literal["block_ip", "block_domain"]
+    integration_id: str = Field(min_length=2, max_length=64)
+    min_risk_score: int = Field(ge=0, le=100)
+    autonomy_level: int = Field(ge=0, le=3, default=0)
+    ttl_seconds: int = Field(ge=60, le=86400, default=3600)
+    require_approval: bool = True
+    direction: Literal["source", "destination"] = "destination"
+
+
+class PolicyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+    min_risk_score: int | None = Field(default=None, ge=0, le=100)
+    autonomy_level: int | None = Field(default=None, ge=0, le=3)
+    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
+    require_approval: bool | None = None
+    direction: Literal["source", "destination"] | None = None
+
+
+class PolicyEvaluationRequest(BaseModel):
+    policy_id: str = Field(min_length=2, max_length=64)
+
+
+class PolicyDecisionRejectionRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class EmergencyStopRequest(BaseModel):
+    active: bool
 
 
 DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard.html"
@@ -357,7 +453,12 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     item = registry.get(integration_id)
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
-    return adapters[item.kind].probe(item)
+    result = adapters[item.kind].probe(item)
+    if item.kind in {"crowdsec", "misp"}:
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    if item.kind == "openai":
+        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
+    return result
 
 
 
@@ -399,32 +500,6 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         return {
             "status": "connected", "integration_id": integration_id, "provider": "pfsense",
             "system_information_available": bool(system), "imported": 0,
-        }
-    if item.kind == "crowdsec":
-        try:
-            credentials = SecretStore(store).get(integration_id)
-            if credentials is None:
-                raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
-            diagnostics = CrowdSecClient(
-                str(credentials["base_url"]),
-                str(credentials["bouncer_api_key"]),
-                str(credentials.get("machine_id") or "") or None,
-                str(credentials.get("machine_password") or "") or None,
-            ).diagnostics()
-        except SecretConfigurationError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
-        except CrowdSecError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        summary = diagnostics["summary"]
-        return {
-            "status": "connected",
-            "integration_id": integration_id,
-            "provider": "crowdsec",
-            "alerts_available": summary["alerts_available"],
-            "decisions_available": summary["decisions_available"],
-            "imported": 0,
         }
     if item.kind == "wazuh":
         try:
@@ -502,6 +577,101 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             "provider": item.kind,
             "records_available": len(records),
             "imported": 0,
+        }
+    if item.kind == "crowdsec":
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if not secret:
+            raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
+        if isinstance(secret.get("bouncer_api_key"), str):
+            try:
+                diagnostics = CrowdSecClient(
+                    str(secret["base_url"]),
+                    secret["bouncer_api_key"],
+                    str(secret.get("machine_id") or "") or None,
+                    str(secret.get("machine_password") or "") or None,
+                ).diagnostics()
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+            except CrowdSecError as exc:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            summary = diagnostics["summary"]
+            return {
+                "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
+                "alerts_available": summary["alerts_available"],
+                "decisions_available": summary["decisions_available"], "imported": 0,
+            }
+        api_key = secret.get("api_key")
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="CrowdSec API key is not configured")
+        try:
+            result = lookup_crowdsec("8.8.8.8", api_key)
+        except ThreatIntelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
+            "matches": int(bool(result.get("matched"))),
+            "message": "Provider authentication and API request succeeded.",
+        }
+    if item.kind == "misp":
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        api_key = secret.get("api_key") if secret else None
+        base_url = item.config.get("base_url")
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="MISP API key is not configured")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="MISP base URL is not configured")
+        try:
+            result = lookup_misp(base_url, api_key, "ip", "192.0.2.1")
+        except ThreatIntelProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected", "integration_id": integration_id, "provider": "misp",
+            "matches": len(result.get("attributes", [])),
+            "message": "Provider authentication and API request succeeded.",
+        }
+    if item.kind == "ollama":
+        base_url = item.config.get("base_url", "http://localhost:11434")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
+        try:
+            models = test_ollama(base_url)
+        except (AIProviderError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured Ollama model is not installed")
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "ollama", "models": models, "model_available": True,
+        }
+    if item.kind == "openai":
+        if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+            raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
+        if item.config.get("cloud_enabled") is not True:
+            raise HTTPException(status_code=409, detail="Cloud AI is not explicitly enabled for this integration")
+        try:
+            secret = SecretStore(store).get(integration_id)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        api_key = secret.get("api_key") if secret else None
+        if not isinstance(api_key, str) or not api_key:
+            raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
+        try:
+            models = test_openai(api_key)
+        except AIProviderError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        configured_model = item.config.get("model")
+        if not isinstance(configured_model, str) or configured_model not in models:
+            raise HTTPException(status_code=409, detail="Configured OpenAI model is not available to this API key")
+        return {
+            "status": "connected", "integration_id": integration_id,
+            "provider": "openai", "models_available": len(models), "model_available": True,
         }
     if item.kind in {"suricata", "zeek"}:
         return {
@@ -1081,6 +1251,236 @@ def grafana_diagnostics(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
     except GrafanaError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+@app.put("/api/v1/integrations/{integration_id}/ai-credentials", tags=["integrations"])
+def save_ai_credentials(
+    integration_id: str, credentials: AIProviderCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openai":
+        raise HTTPException(status_code=404, detail="OpenAI integration not found")
+    if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
+        raise HTTPException(status_code=409, detail="Cloud AI is globally disabled")
+    if not os.getenv("OPENSHIELD_SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="OPENSHIELD_SECRET_KEY is required for provider credentials")
+    if integration.config.get("cloud_enabled") is not True:
+        raise HTTPException(status_code=409, detail="Explicitly enable cloud use for this integration before storing its API key")
+    try:
+        SecretStore(store).set(
+            integration_id, {"api_key": credentials.api_key.get_secret_value()},
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "saved", "integration_id": integration_id,
+        "credentials_configured": True, "secret_storage": "encrypted",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/ai-credentials", status_code=204, tags=["integrations"])
+def delete_ai_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "openai":
+        raise HTTPException(status_code=404, detail="OpenAI integration not found")
+    store.delete_integration_secret(integration_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/incidents/{incident_id}/investigate", tags=["ai"])
+def investigate_incident_route(
+    incident_id: str, request: AIInvestigationRequest
+) -> dict[str, object]:
+    try:
+        return investigate_incident(store, registry, incident_id, request.provider_id)
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/incidents/{incident_id}/investigations", tags=["ai"])
+def list_incident_investigations(incident_id: str) -> list[dict[str, object]]:
+    if store.get_incident(incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return store.list_incident_investigations(incident_id, limit=20)
+
+
+@app.put("/api/v1/integrations/{integration_id}/threat-intel-credentials", tags=["integrations"])
+def save_threat_intel_credentials(
+    integration_id: str, credentials: ThreatIntelCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"crowdsec", "misp"}:
+        raise HTTPException(status_code=404, detail="Threat intelligence integration not found")
+    if not os.getenv("OPENSHIELD_SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="OPENSHIELD_SECRET_KEY is required for provider credentials")
+    if integration.kind == "misp":
+        base_url = integration.config.get("base_url")
+        if not isinstance(base_url, str):
+            raise HTTPException(status_code=422, detail="MISP integration requires config.base_url")
+        parsed = urlsplit(base_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+        ):
+            raise HTTPException(status_code=422, detail="MISP base URL must be an absolute HTTP(S) URL without credentials")
+    try:
+        SecretStore(store).set(
+            integration_id, {"api_key": credentials.api_key.get_secret_value()},
+        )
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "status": "saved", "integration_id": integration_id,
+        "credentials_configured": True, "secret_storage": "encrypted",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/threat-intel-credentials", status_code=204, tags=["integrations"])
+def delete_threat_intel_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"crowdsec", "misp"}:
+        raise HTTPException(status_code=404, detail="Threat intelligence integration not found")
+    store.delete_integration_secret(integration_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/threat-intel/enrich", tags=["threat-intelligence"])
+def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, object]:
+    try:
+        return enrich_events(store, registry, list(dict.fromkeys(request.event_ids)))
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/incidents", tags=["incidents"])
+def list_incidents(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    status: str | None = None,
+) -> list[dict[str, object]]:
+    if status is not None and status not in {"open", "acknowledged", "closed", "false_positive"}:
+        raise HTTPException(status_code=422, detail="Invalid incident status")
+    return store.list_incidents(limit=limit, status=status)
+
+
+@app.get("/api/v1/incidents/{incident_id}", tags=["incidents"])
+def get_incident(incident_id: str) -> dict[str, object]:
+    incident = store.get_incident(incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {
+        **incident,
+        "timeline": [event.model_dump(mode="json") for event in store.get_incident_events(incident_id)],
+    }
+
+
+@app.patch("/api/v1/incidents/{incident_id}", tags=["incidents"])
+def update_incident_status(
+    incident_id: str, request: IncidentStatusRequest
+) -> dict[str, object]:
+    incident = store.update_incident_status(incident_id, request.status, request.reason)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
+
+@app.get("/api/v1/policies", tags=["policy"])
+def list_policies() -> dict[str, object]:
+    return {
+        "items": store.list_policies(),
+        "max_autonomy_level": max_autonomy_level(),
+        "enforcement_enabled": enforcement_enabled(),
+        "emergency_stop_active": store.get_emergency_stop(),
+    }
+
+
+@app.post("/api/v1/policies", status_code=201, tags=["policy"])
+def register_policy(request: PolicyCreateRequest) -> dict[str, object]:
+    try:
+        return create_policy(store, registry, request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.patch("/api/v1/policies/{policy_id}", tags=["policy"])
+def patch_policy(policy_id: str, request: PolicyUpdateRequest) -> dict[str, object]:
+    if store.get_policy(policy_id) is None:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    result = store.update_policy(policy_id, request.model_dump(exclude_unset=True, exclude_none=True))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return result
+
+
+@app.get("/api/v1/policy-decisions", tags=["policy"])
+def list_policy_decisions(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[dict[str, object]]:
+    return store.list_policy_decisions(limit)
+
+
+@app.get("/api/v1/executions", tags=["execution"])
+def list_response_executions(
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[dict[str, object]]:
+    return store.list_response_executions(limit)
+
+
+@app.get("/api/v1/control/emergency-stop", tags=["execution"])
+def get_emergency_stop() -> dict[str, object]:
+    return {
+        "active": store.get_emergency_stop(),
+        "enforcement_enabled": enforcement_enabled(),
+        "max_autonomy_level": max_autonomy_level(),
+    }
+
+
+@app.post("/api/v1/control/emergency-stop", tags=["execution"])
+def set_emergency_stop(request: EmergencyStopRequest) -> dict[str, object]:
+    if not request.active and not enforcement_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="Releasing emergency stop requires enforcement enablement and authenticated administration",
+        )
+    store.set_emergency_stop(request.active)
+    return {"active": store.get_emergency_stop()}
+
+
+@app.post("/api/v1/incidents/{incident_id}/evaluate", tags=["policy"])
+def evaluate_incident_policy(
+    incident_id: str, request: PolicyEvaluationRequest
+) -> dict[str, object]:
+    try:
+        return evaluate_policy(
+            store, registry, incident_id, request.policy_id, gateway_connections,
+        )
+    except ExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/policy-decisions/{decision_id}/approve", tags=["policy"])
+def approve_policy_decision(decision_id: str) -> dict[str, object]:
+    try:
+        return approve_decision(store, registry, gateway_connections, decision_id)
+    except ExecutionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/policy-decisions/{decision_id}/reject", tags=["policy"])
+def reject_policy_decision(
+    decision_id: str, request: PolicyDecisionRejectionRequest
+) -> dict[str, object]:
+    try:
+        return reject_decision(store, decision_id, request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
@@ -1248,6 +1648,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
     }
 
 
@@ -1269,7 +1670,26 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         "gateway_id": connection.gateway_id,
         "last_seen_at": connection.last_seen_at.isoformat(),
         "openwrt_config": openwrt_config,
+        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
     }
+
+
+@app.post("/api/v1/gateway/commands/{gateway_id}/{command_id}/result", tags=["gateway"])
+def report_gateway_command_result(
+    gateway_id: str, command_id: str, request: GatewayCommandResultRequest,
+    http_request: Request,
+) -> dict[str, object]:
+    command = store.get_gateway_command(command_id)
+    if command is None or command["gateway_id"] != gateway_id:
+        raise HTTPException(status_code=404, detail="Gateway command not found")
+    if store.get_integration_secret(gateway_id) and not _gateway_token_valid(http_request):
+        raise HTTPException(status_code=401, detail="Gateway authentication required")
+    try:
+        return process_gateway_command_result(
+            store, command_id, request.status, request.result,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/gateways", tags=["gateway"])
@@ -1938,6 +2358,50 @@ def remove_privacy_list_entry(list_type: str, domain: str) -> Response:
     if not store.delete_privacy_list_item("openshield-local", list_type, normalized):
         raise HTTPException(status_code=404, detail="Privacy list entry not found")
     return Response(status_code=204)
+
+
+@app.get("/api/v1/reports/operations", tags=["reports"])
+def operations_report(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+) -> dict[str, object]:
+    """Bounded operational snapshot across gateways, integrations, incidents and response."""
+    gateways = gateway_connections.list_status()
+    integrations = registry.list_all()
+    incidents = store.list_incidents(limit=limit)
+    decisions = store.list_policy_decisions(limit=limit)
+    executions = store.list_response_executions(limit=limit)
+    audit = store.list_audit(limit)
+
+    def count_by(items: list[dict[str, object]], key: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in items:
+            value = item.get(key)
+            label = str(value) if value is not None else "unknown"
+            counts[label] = counts.get(label, 0) + 1
+        return counts
+
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "sample_limit": limit,
+        "gateways": {"total": len(gateways), "by_status": count_by(gateways, "status"), "items": gateways},
+        "integrations": {
+            "total": len(integrations),
+            "enabled": sum(1 for item in integrations if item.enabled),
+            "disabled": sum(1 for item in integrations if not item.enabled),
+        },
+        "incidents": {
+            "sampled": len(incidents),
+            "by_status": count_by(incidents, "status"),
+            "open": sum(1 for item in incidents if item.get("status") == "open"),
+        },
+        "policy_decisions": {
+            "sampled": len(decisions),
+            "by_status": count_by(decisions, "status"),
+            "pending_approval": sum(1 for item in decisions if item.get("status") == "pending_approval"),
+        },
+        "executions": {"sampled": len(executions), "by_status": count_by(executions, "status")},
+        "audit": {"recent_records": len(audit), "limit": limit},
+    }
 
 
 @app.get("/api/v1/audit", tags=["audit"])

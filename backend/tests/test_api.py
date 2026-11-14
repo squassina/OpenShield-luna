@@ -998,3 +998,26 @@ def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
     event["payload"] = {"domain": "sub.evil.example"}
     assert client.post("/api/v1/events", json=event).status_code == 202
     assert client.get("/api/v1/threat-intel/matches").json()["count"] == 0
+
+def test_operations_report_summarizes_multiple_gateways_and_bounded_state() -> None:
+    first = client.post("/api/v1/gateway/connect", json=gateway_payload("home-router"))
+    second = client.post("/api/v1/gateway/connect", json=gateway_payload("lab-router"))
+    assert first.status_code == second.status_code == 201
+
+    response = client.get("/api/v1/reports/operations?limit=25")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["sample_limit"] == 25
+    assert report["gateways"]["total"] == 2
+    assert report["gateways"]["by_status"] == {"connected": 2}
+    assert report["integrations"]["total"] == 2
+    assert report["incidents"]["open"] == 0
+    assert report["policy_decisions"]["sampled"] == 0
+    assert report["executions"]["sampled"] == 0
+    assert report["audit"]["recent_records"] <= 25
+    assert report["generated_at"]
+
+
+def test_operations_report_rejects_unbounded_limit() -> None:
+    assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
+

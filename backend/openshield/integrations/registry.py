@@ -39,6 +39,8 @@ CAPABILITIES_BY_KIND: dict[str, list[models.Capability]] = {
         models.Capability.HEALTH_CHECK, models.Capability.READ_EVENTS,
         models.Capability.READ_CONFIGURATION, models.Capability.WRITE_CONFIGURATION,
     ],
+    "ollama": [models.Capability.HEALTH_CHECK],
+    "openai": [models.Capability.HEALTH_CHECK],
 }
 
 
