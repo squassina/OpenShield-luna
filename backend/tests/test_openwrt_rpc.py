@@ -42,13 +42,13 @@ def test_openwrt_rpc_authenticates_and_discovers_read_only_data() -> None:
     assert result["interfaces"][0]["ipv4_address"] == ["192.0.2.1"]
     assert result["devices"] == [
         {
-            "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
-            "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
+            "mac_address": "11:22:33:44:55:66", "name": "phone",
+            "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
             "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
         },
         {
-            "mac_address": "11:22:33:44:55:66", "name": "phone",
-            "ip_address": "192.0.2.11", "ipv4_addresses": ["192.0.2.11"],
+            "mac_address": "aa:bb:cc:dd:ee:ff", "name": "workstation",
+            "ip_address": "192.0.2.10", "ipv4_addresses": ["192.0.2.10"],
             "device": "br-lan", "interface": "lan", "source": "ipv4_neighbor",
         },
     ]
