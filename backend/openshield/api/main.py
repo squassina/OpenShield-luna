@@ -654,6 +654,35 @@ def _classify_ip(value: object) -> tuple[str, str] | None:
     return str(address), scope
 
 
+@app.get("/api/v1/inventory/router-devices", tags=["inventory"])
+def list_router_devices(
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> dict[str, object]:
+    now = datetime.now(UTC)
+    snapshots = store.list_gateway_discovery_snapshots()
+    devices = []
+    for item in store.list_gateway_devices(limit=limit):
+        last_seen = item["last_seen_at"]
+        devices.append({
+            **item["payload"],
+            "gateway_id": item["gateway_id"],
+            "mac_address": item["mac_address"],
+            "first_seen": item["first_seen_at"].isoformat(),
+            "last_seen": last_seen.isoformat(),
+            "status": "online" if now - last_seen <= timedelta(seconds=90) else "offline",
+        })
+    return {
+        "gateways": [
+            {
+                "gateway_id": item["gateway_id"],
+                "observed_at": item["observed_at"].isoformat(),
+                **item["payload"],
+            }
+            for item in snapshots
+        ],
+        "devices": devices,
+    }
+
 @app.get("/api/v1/inventory/devices", tags=["inventory"])
 def list_network_devices(
     limit: Annotated[int, Query(ge=1, le=2000)] = 500,
