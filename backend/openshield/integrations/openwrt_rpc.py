@@ -160,10 +160,21 @@ class OpenWrtRPCClient:
             raise OpenWrtRPCError("OpenWrt firewall plugin returned an invalid unblock result")
         return result
 
+    def firewall_health_check(self) -> dict[str, object]:
+        result = self.call("openshield-firewall", "status")
+        if result.get("status") != "ready" or result.get("set") != "oshield_v4":
+            raise OpenWrtRPCError("OpenWrt firewall plugin readiness response was invalid")
+        return result
+
     def health_check(self) -> dict[str, object]:
         board = self.call("system", "board")
+        try:
+            firewall = self.firewall_health_check()
+        except OpenWrtRPCError:
+            firewall = {"status": "unavailable", "reason": "plugin_unavailable"}
         return {
             "status": "reachable",
             "hostname": board.get("hostname"),
             "model": board.get("model"),
+            "firewall_enforcement": firewall,
         }

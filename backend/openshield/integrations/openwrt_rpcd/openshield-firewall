@@ -34,7 +34,7 @@ valid_public_ipv4() {
 
 case "${1:-}" in
     list)
-        printf '{"block_ip":{"ip":"string","ttl_seconds":1},"unblock_ip":{"ip":"string"}}\n'
+        printf '{"status":{},"block_ip":{"ip":"string","ttl_seconds":1},"unblock_ip":{"ip":"string"}}\n'
         exit 0
         ;;
     call)
@@ -42,9 +42,15 @@ case "${1:-}" in
         . /usr/share/libubox/jshn.sh
         IFS= read -r input || fail "missing request"
         json_load "$input" || fail "invalid request"
-        json_get_var ip ip
-        valid_public_ipv4 "$ip" || fail "public IPv4 address required"
         case "$method" in
+            status)
+                nft list set inet fw4 oshield_v4 >/dev/null 2>&1 || fail "OpenShield nftables set is unavailable"
+                printf '{"status":"ready","set":"oshield_v4"}\n'
+                ;;
+            block_ip|unblock_ip)
+                json_get_var ip ip
+                valid_public_ipv4 "$ip" || fail "public IPv4 address required"
+                case "$method" in
             block_ip)
                 json_get_var ttl_seconds ttl_seconds
                 case "$ttl_seconds" in ''|*[!0-9]*) fail "invalid TTL";; esac
@@ -62,6 +68,8 @@ case "${1:-}" in
                     fail "nftables element remains after rollback"
                 fi
                 printf '{"status":"unblocked","ip":"%s"}\n' "$ip"
+                ;;
+                esac
                 ;;
             *)
                 fail "unsupported method"

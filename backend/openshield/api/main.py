@@ -564,12 +564,28 @@ def create_response_policy(request: ResponsePolicyRequest) -> dict[str, object]:
     if request.action_type == "firewall_block_ip":
         gateway = gateway_connections.get_status(request.provider_integration_id)
         capabilities = set(gateway.get("capabilities", [])) if gateway else set()
+        health_events = store.list_events(request.provider_integration_id, "gateway.health", limit=1)
+        latest_health = health_events[0] if health_events else None
+        health_age = (
+            max(0, (datetime.now(UTC) - latest_health.observed_at).total_seconds())
+            if latest_health else float("inf")
+        )
+        firewall_status = latest_health.payload.get("firewall_enforcement") if latest_health else None
+        firewall_ready = (
+            latest_health is not None
+            and latest_health.payload.get("status") == "reachable"
+            and isinstance(firewall_status, dict)
+            and firewall_status.get("status") == "ready"
+            and health_age <= 90
+        )
         if (
             provider.kind != "openwrt"
             or not provider.config.get("rpc_configured")
             or not store.get_integration_secret(request.provider_integration_id)
             or not os.getenv("OPENSHIELD_GATEWAY_TOKEN")
             or not {"execute_action", "verify_action"}.issubset(capabilities)
+            or not gateway or gateway.get("status") != "connected"
+            or not firewall_ready
         ):
             raise HTTPException(
                 status_code=409,

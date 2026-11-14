@@ -8,6 +8,9 @@
         ],
         "network.interface": [
           "dump"
+        ],
+        "openshield-firewall": [
+          "status"
         ]
       }
     },
