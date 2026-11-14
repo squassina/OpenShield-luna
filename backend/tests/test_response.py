@@ -34,11 +34,12 @@ def _create_incident(
 ) -> str:
     from openshield.api import main
 
-    main.registry.register(IntegrationRegistration(
-        integration_id="sensor-suricata",
-        kind="suricata",
-        display_name="Suricata",
-    ))
+    if main.registry.get("sensor-suricata") is None:
+        main.registry.register(IntegrationRegistration(
+            integration_id="sensor-suricata",
+            kind="suricata",
+            display_name="Suricata",
+        ))
     now = datetime.now(UTC)
     event = EventEnvelope(
         schema_version="openshield.event.v1",
