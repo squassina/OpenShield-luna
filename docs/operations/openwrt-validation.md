@@ -156,8 +156,8 @@ P5 firewall enforcement is optional and must be installed explicitly. Follow [th
 On the router, verify:
 ```sh
 ubus -v list openshield-firewall
-nft list set inet fw4 openshield_blocked_v4
-nft list chain inet fw4 openshield_forward
+nft list set inet fw4 oshield_v4
+nft list chain inet fw4 oshield_fwd
 ```
 
 From the dashboard:

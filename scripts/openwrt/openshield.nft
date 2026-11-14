@@ -1,18 +1,18 @@
 # Loaded inside table inet fw4 by fw4's /etc/nftables.d/*.nft include.
-set openshield_blocked_v4 {
+set oshield_v4 {
     type ipv4_addr
     flags timeout
     timeout 1h
 }
 
-chain openshield_input {
+chain oshield_input {
     type filter hook input priority -10; policy accept;
-    ip saddr @openshield_blocked_v4 drop
-    ip daddr @openshield_blocked_v4 drop
+    ip saddr @oshield_v4 drop
+    ip daddr @oshield_v4 drop
 }
 
-chain openshield_forward {
+chain oshield_fwd {
     type filter hook forward priority -10; policy accept;
-    ip saddr @openshield_blocked_v4 drop
-    ip daddr @openshield_blocked_v4 drop
+    ip saddr @oshield_v4 drop
+    ip daddr @oshield_v4 drop
 }

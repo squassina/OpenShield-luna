@@ -49,16 +49,16 @@ case "${1:-}" in
                 json_get_var ttl_seconds ttl_seconds
                 case "$ttl_seconds" in ''|*[!0-9]*) fail "invalid TTL";; esac
                 [ "$ttl_seconds" -ge 60 ] && [ "$ttl_seconds" -le 604800 ] || fail "TTL out of range"
-                if nft get element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1; then
+                if nft get element inet fw4 oshield_v4 "{ $ip }" >/dev/null 2>&1; then
                     printf '{"status":"already_blocked","ip":"%s","ttl_seconds":%s}\n' "$ip" "$ttl_seconds"
                     exit 0
                 fi
-                nft add element inet fw4 openshield_blocked_v4 "{ $ip timeout ${ttl_seconds}s }" >/dev/null 2>&1 || fail "nftables block failed"
+                nft add element inet fw4 oshield_v4 "{ $ip timeout ${ttl_seconds}s }" >/dev/null 2>&1 || fail "nftables block failed"
                 printf '{"status":"blocked","ip":"%s","ttl_seconds":%s}\n' "$ip" "$ttl_seconds"
                 ;;
             unblock_ip)
-                nft delete element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1 || true
-                if nft get element inet fw4 openshield_blocked_v4 "{ $ip }" >/dev/null 2>&1; then
+                nft delete element inet fw4 oshield_v4 "{ $ip }" >/dev/null 2>&1 || true
+                if nft get element inet fw4 oshield_v4 "{ $ip }" >/dev/null 2>&1; then
                     fail "nftables element remains after rollback"
                 fi
                 printf '{"status":"unblocked","ip":"%s"}\n' "$ip"
