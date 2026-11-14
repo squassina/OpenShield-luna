@@ -502,6 +502,53 @@ CREATE TABLE IF NOT EXISTS events (
             )
         return payload
 
+    def create_policy(self, policy: dict[str, object]) -> dict[str, object]:
+        created_at = datetime.now(UTC)
+        payload = {**policy, "created_at": created_at.isoformat(), "updated_at": created_at.isoformat()}
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO policies
+                    (policy_id, name, enabled, indicator_type, indicator_value, action,
+                     integration_id, min_risk_score, autonomy_level, ttl_seconds,
+                     require_approval, direction)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    policy["policy_id"], policy["name"], policy.get("enabled", True),
+                    policy["indicator_type"], policy["indicator_value"], policy["action"],
+                    policy["integration_id"], policy["min_risk_score"], policy["autonomy_level"],
+                    policy["ttl_seconds"], policy.get("require_approval", True),
+                    policy.get("direction", "destination"),
+                ),
+            )
+            self._insert_audit(
+                cursor, "policy.created", None, str(policy["policy_id"]),
+                {"action": policy["action"], "integration_id": policy["integration_id"],
+                 "autonomy_level": policy["autonomy_level"], "ttl_seconds": policy["ttl_seconds"]},
+            )
+        return payload
+
+    def list_policies(self, enabled_only: bool = False) -> list[dict[str, object]]:
+        where = "WHERE enabled = TRUE" if enabled_only else ""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT policy_id, name, enabled, indicator_type, indicator_value, action, "
+                f"integration_id, min_risk_score, autonomy_level, ttl_seconds, require_approval, "
+                f"direction, created_at, updated_at FROM policies {where} ORDER BY name"
+            )
+            rows = cursor.fetchall()
+        return [
+            {
+                "policy_id": row[0], "name": row[1], "enabled": row[2],
+                "indicator_type": row[3], "indicator_value": row[4], "action": row[5],
+                "integration_id": row[6], "min_risk_score": row[7], "autonomy_level": row[8],
+                "ttl_seconds": row[9], "require_approval": row[10], "direction": row[11],
+                "created_at": row[12].isoformat(), "updated_at": row[13].isoformat(),
+            }
+            for row in rows
+        ]
+
     def get_policy(self, policy_id: str) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
