@@ -296,4 +296,4 @@ P4 adds a local Ollama runtime and an optional OpenAI Responses API adapter. Loc
 
 ## P5 response engine
 
-OpenShield supports deterministic DNS-domain and OpenWrt public-IPv4 response policies, human approval for all firewall actions and critical incidents, provider/gateway verification, TTL-based rollback and a global emergency stop. OpenWrt firewall actions require the separately installed least-privilege rpcd plugin. See [the response engine runbook](docs/operations/response-engine.md); physical router validation remains mandatory.
+OpenShield automatically evaluates deterministic DNS-domain and OpenWrt public-IPv4 response policies after threat-intelligence enrichment, requires human approval for all firewall actions and critical incidents, verifies provider/gateway results, applies TTL-based rollback and provides a global emergency stop. OpenWrt firewall actions require the separately installed least-privilege rpcd plugin. See [the response engine runbook](docs/operations/response-engine.md); physical router validation remains mandatory.

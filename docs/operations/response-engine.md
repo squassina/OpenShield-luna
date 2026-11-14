@@ -7,7 +7,7 @@ P5 separates deterministic policy evaluation from execution. Two allowlisted act
 - `dns_block_domain`: block a domain through one configured Pi-hole v6 or AdGuard Home integration.
 - `firewall_block_ip`: block a public IPv4 address through the authenticated OpenWrt connector and the dedicated nftables RPC plugin.
 
-Policies define a minimum incident risk score, provider/gateway, action, TTL (60 seconds to 7 days), and approval requirement. No policy is created by default. Only domain indicators match DNS policies; only globally routable IPv4 indicators match firewall policies. IPv6 and arbitrary commands are not supported.
+Policies define a minimum incident risk score, provider/gateway, action, TTL (60 seconds to 7 days), and approval requirement. After threat-intelligence enrichment, OpenShield automatically evaluates all enabled policies against the resulting incidents; the dashboard also supports explicit re-evaluation. No policy is created by default. Only domain indicators match DNS policies; only globally routable IPv4 indicators match firewall policies. IPv6 and arbitrary commands are not supported.
 
 ## Safety behavior
 
