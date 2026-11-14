@@ -26,7 +26,7 @@ def _read_or_create(path: Path, value: str | None, *, create: bool) -> str:
     return generated
 
 
-def load_runtime_secrets(*, create: bool) -> None:
+def load_runtime_secrets(*, create: bool, include_encryption: bool = True) -> None:
     """Load persistent Fernet and gateway keys shared by Node and its local connector.
 
     The Node creates missing keys in the persistent Docker volume. The connector
@@ -43,10 +43,9 @@ def load_runtime_secrets(*, create: bool) -> None:
     elif not root.is_dir():
         raise RuntimeError("OpenShield runtime secrets volume is not mounted")
 
-    values = {
-        "OPENSHIELD_SECRET_KEY": root / "fernet.key",
-        "OPENSHIELD_GATEWAY_TOKEN": root / "gateway.token",
-    }
+    values = {"OPENSHIELD_GATEWAY_TOKEN": root / "gateway.token"}
+    if include_encryption:
+        values["OPENSHIELD_SECRET_KEY"] = root / "fernet.key"
     for variable, path in values.items():
         value = _read_or_create(path, os.getenv(variable), create=create)
         if variable == "OPENSHIELD_SECRET_KEY":
