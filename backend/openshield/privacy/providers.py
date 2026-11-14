@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import ssl
 import time
 from datetime import datetime
 from urllib.error import HTTPError, URLError
@@ -30,11 +31,31 @@ def _base_url(integration: Integration) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
+def _ssl_context(integration: Integration | None, url: str) -> ssl.SSLContext | None:
+    if integration is None:
+        return None
+    ca_bundle_path = integration.config.get("ca_bundle_path")
+    if ca_bundle_path in (None, ""):
+        return None
+    if not isinstance(ca_bundle_path, str) or not os.path.isabs(ca_bundle_path):
+        raise DnsProviderError("DNS provider ca_bundle_path must be an absolute PEM file path")
+    if urlsplit(url).scheme != "https":
+        raise DnsProviderError("DNS provider ca_bundle_path requires an HTTPS base_url")
+    try:
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=ca_bundle_path)
+    except (OSError, ssl.SSLError) as exc:
+        raise DnsProviderError("DNS provider CA bundle could not be loaded") from exc
+    return context
+
+
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None,
-             body: bytes | None = None) -> dict | list:
+             body: bytes | None = None, integration: Integration | None = None) -> dict | list:
     request = Request(url, data=body, headers=headers or {}, method=method)
     try:
-        with urlopen(request, timeout=5) as response:
+        context = _ssl_context(integration, url)
+        opener = urlopen(request, timeout=5, context=context) if context else urlopen(request, timeout=5)
+        with opener as response:
             payload = response.read(MAX_RESPONSE_BYTES + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
         raise DnsProviderError(f"DNS provider request failed: {type(exc).__name__}") from exc
@@ -49,7 +70,7 @@ def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = 
     return decoded
 
 
-def _pihole_records(base_url: str) -> list[dict]:
+def _pihole_records(base_url: str, integration: Integration) -> list[dict]:
     password = os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
     headers = {"Accept": "application/json"}
     sid = None
@@ -57,18 +78,18 @@ def _pihole_records(base_url: str) -> list[dict]:
         auth = _request(
             f"{base_url}/api/auth", method="POST",
             headers={"Content-Type": "application/json", "Accept": "application/json"},
-            body=json.dumps({"password": password}).encode(),
+            body=json.dumps({"password": password}).encode(), integration=integration,
         )
         sid = auth.get("session", {}).get("sid") if isinstance(auth, dict) else None
         if not isinstance(sid, str) or not sid:
             raise DnsProviderError("Pi-hole authentication did not return a session")
         headers["X-FTL-SID"] = sid
     try:
-        result = _request(f"{base_url}/api/queries?{urlencode({'length': 500})}", headers=headers)
+        result = _request(f"{base_url}/api/queries?{urlencode({'length': 500})}", headers=headers, integration=integration)
     finally:
         if sid:
             try:
-                _request(f"{base_url}/api/auth", method="DELETE", headers=headers)
+                _request(f"{base_url}/api/auth", method="DELETE", headers=headers, integration=integration)
             except DnsProviderError:
                 pass
     records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
@@ -92,7 +113,7 @@ def _pihole_records(base_url: str) -> list[dict]:
     return normalized
 
 
-def _adguard_records(base_url: str) -> list[dict]:
+def _adguard_records(base_url: str, integration: Integration) -> list[dict]:
     headers = {"Accept": "application/json"}
     username = os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
     password = os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
@@ -101,7 +122,7 @@ def _adguard_records(base_url: str) -> list[dict]:
     if username:
         token = base64.b64encode(f"{username}:{password}".encode()).decode()
         headers["Authorization"] = f"Basic {token}"
-    result = _request(f"{base_url}/control/querylog?{urlencode({'limit': 500})}", headers=headers)
+    result = _request(f"{base_url}/control/querylog?{urlencode({'limit': 500})}", headers=headers, integration=integration)
     records = result.get("data", []) if isinstance(result, dict) else result
     if not isinstance(records, list):
         raise DnsProviderError("AdGuard query-log response has no data list")
@@ -130,15 +151,15 @@ def _adguard_records(base_url: str) -> list[dict]:
 def fetch_dns_records(integration: Integration) -> list[dict]:
     base_url = _base_url(integration)
     if integration.kind == "pihole":
-        return _pihole_records(base_url)
+        return _pihole_records(base_url, integration)
     if integration.kind == "adguard":
-        return _adguard_records(base_url)
+        return _adguard_records(base_url, integration)
     raise DnsProviderError("Unsupported DNS provider")
 
 
 
 def _pihole_request(base_url: str, path: str, *, method: str = "GET",
-                   body: dict | None = None) -> dict | list:
+                   body: dict | None = None, integration: Integration | None = None) -> dict | list:
     password = os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
     headers = {"Accept": "application/json"}
     sid = None
@@ -156,7 +177,7 @@ def _pihole_request(base_url: str, path: str, *, method: str = "GET",
         return _request(
             f"{base_url}{path}", method=method,
             headers={**headers, **({"Content-Type": "application/json"} if body is not None else {})},
-            body=json.dumps(body).encode() if body is not None else None,
+            body=json.dumps(body).encode() if body is not None else None, integration=integration,
         )
     finally:
         if sid:
@@ -173,7 +194,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
     }
     if integration.kind == "pihole":
         base_url = _base_url(integration)
-        response = _pihole_request(base_url, "/api/domains")
+        response = _pihole_request(base_url, "/api/domains", integration=integration)
         existing = response.get("domains", []) if isinstance(response, dict) else response
         if not isinstance(existing, list):
             raise DnsProviderError("Pi-hole domain-list response has no domains list")
@@ -192,7 +213,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             if key not in all_domains:
                 _pihole_request(
                     base_url, f"/api/domains/{key[0]}/exact", method="POST",
-                    body={"domain": domain, "comment": "OpenShield managed"},
+                    body={"domain": domain, "comment": "OpenShield managed"}, integration=integration,
                 )
                 added += 1
         stale = set(managed) - {
@@ -202,7 +223,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         for list_type, domain in sorted(stale):
             _pihole_request(
                 base_url, f"/api/domains/{list_type}/exact/{quote(domain, safe='')}",
-                method="DELETE",
+                method="DELETE", integration=integration,
             )
             removed += 1
         verified = _pihole_request(base_url, "/api/domains")
@@ -226,7 +247,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         if username:
             token = base64.b64encode(f"{username}:{password}".encode()).decode()
             headers["Authorization"] = f"Basic {token}"
-        current = _request(f"{base_url}/control/filtering/status", headers=headers)
+        current = _request(f"{base_url}/control/filtering/status", headers=headers, integration=integration)
         rules = current.get("user_rules", []) if isinstance(current, dict) else []
         if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
             raise DnsProviderError("AdGuard filtering status has an invalid user_rules list")
@@ -250,7 +271,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         _request(
             f"{base_url}/control/filtering/set_rules", method="POST",
             headers={**headers, "Content-Type": "application/json"},
-            body=json.dumps({"rules": merged}).encode(),
+            body=json.dumps({"rules": merged}).encode(), integration=integration,
         )
         verified = _request(f"{base_url}/control/filtering/status", headers=headers)
         verified_rules = verified.get("user_rules", []) if isinstance(verified, dict) else []
@@ -340,7 +361,7 @@ def fetch_dns_records_page(
             "from": state["window_from"], "until": state["window_until"],
             "length": page_size, "start": int(state.get("start", 0)),
         }
-        result = _pihole_request(base_url, f"/api/queries?{urlencode(params)}")
+        result = _pihole_request(base_url, f"/api/queries?{urlencode(params)}", integration=integration)
         records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
         if not isinstance(records, list):
             raise DnsProviderError("Pi-hole query-log response has no query list")
@@ -374,7 +395,7 @@ def fetch_dns_records_page(
         if username:
             token = base64.b64encode(f"{username}:{password}".encode()).decode()
             headers["Authorization"] = f"Basic {token}"
-        result = _request(f"{base_url}/control/querylog?{urlencode(params)}", headers=headers)
+        result = _request(f"{base_url}/control/querylog?{urlencode(params)}", headers=headers, integration=integration)
         records = result.get("data", []) if isinstance(result, dict) else []
         if not isinstance(records, list):
             raise DnsProviderError("AdGuard query-log response has no data list")
