@@ -366,7 +366,10 @@ CREATE TABLE IF NOT EXISTS events (
                 INSERT INTO gateway_discovery_snapshots (gateway_id, payload, observed_at)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (gateway_id) DO UPDATE
-                SET payload = EXCLUDED.payload, observed_at = EXCLUDED.observed_at
+                SET payload = CASE
+                        WHEN EXCLUDED.observed_at >= gateway_discovery_snapshots.observed_at
+                        THEN EXCLUDED.payload ELSE gateway_discovery_snapshots.payload END,
+                    observed_at = GREATEST(gateway_discovery_snapshots.observed_at, EXCLUDED.observed_at)
                 """,
                 (gateway_id, Jsonb(snapshot), observed_at),
             )
@@ -387,7 +390,10 @@ CREATE TABLE IF NOT EXISTS events (
                         gateway_id, mac_address, payload, first_seen_at, last_seen_at
                     ) VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (gateway_id, mac_address) DO UPDATE
-                    SET payload = EXCLUDED.payload, last_seen_at = EXCLUDED.last_seen_at
+                    SET payload = CASE
+                            WHEN EXCLUDED.last_seen_at >= network_devices.last_seen_at
+                            THEN EXCLUDED.payload ELSE network_devices.payload END,
+                        last_seen_at = GREATEST(network_devices.last_seen_at, EXCLUDED.last_seen_at)
                     """,
                     (gateway_id, normalized_mac, Jsonb(device), observed_at, observed_at),
                 )
