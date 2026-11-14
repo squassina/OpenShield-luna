@@ -706,9 +706,15 @@ def test_adguard_initial_bootstrap_handles_short_provider_retention(monkeypatch)
         def read(self, size):
             return self.payload
 
+    # Keep the 24-hour bootstrap watermark deterministic. These records are
+    # just inside the provider's retention window and therefore require the
+    # follow-up page even when the CI job runs much later.
+    fixed_now = datetime.fromisoformat("2026-11-14T12:00:30+00:00").timestamp()
+    monkeypatch.setattr(providers.time, "time", lambda: fixed_now)
+
     responses = [
-        {"oldest": "2026-11-13T11:59:00Z", "data": [
-            {"question": {"host": "recent.example"}, "time": "2026-11-13T12:00:00Z"},
+        {"oldest": "2026-11-13T12:01:00Z", "data": [
+            {"question": {"host": "recent.example"}, "time": "2026-11-13T12:02:00Z"},
         ]},
         {"oldest": "", "data": []},
     ]
