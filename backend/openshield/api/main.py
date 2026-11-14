@@ -1339,7 +1339,7 @@ def operations_report(
 ) -> dict[str, object]:
     """Bounded operational snapshot across gateways, integrations, incidents and response."""
     gateways = gateway_connections.list_status()
-    integrations = registry.list()
+    integrations = registry.list_all()
     incidents = store.list_incidents(limit=limit)
     decisions = store.list_policy_decisions(limit=limit)
     executions = store.list_response_executions(limit=limit)
