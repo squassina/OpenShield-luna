@@ -5,6 +5,7 @@ import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from typing import ClassVar
 
 from openshield.integrations.models import Capability, Integration
 
@@ -74,7 +75,7 @@ class OPNsenseClient:
 
 class OPNsenseAdapter:
     kind = "opnsense"
-    capabilities = [
+    capabilities: ClassVar[list[Capability]] = [
         Capability.HEALTH_CHECK,
         Capability.READ_CONFIGURATION,
         Capability.READ_EVENTS,
