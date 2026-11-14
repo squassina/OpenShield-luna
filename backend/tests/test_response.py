@@ -368,3 +368,22 @@ def test_kill_switch_reconciles_gateway_action_already_in_flight(monkeypatch) ->
     )
     assert in_flight.status_code==200
     assert in_flight.json()["status"]=="rollback_queued"
+
+
+def test_threat_intel_enrichment_automatically_evaluates_response_policies(monkeypatch) -> None:
+    from openshield.api import main
+
+    _register_provider()
+    incident_id = _create_incident("incident-auto-eval", "auto-eval.example", 90)
+    _create_policy(approval_required=False)
+    monkeypatch.setattr(
+        main, "enrich_events",
+        lambda store, registry, event_ids: {
+            "incidents":[store.get_incident(incident_id)],"lookups":1,"errors":[],
+        },
+    )
+    response = client.post("/api/v1/threat-intel/enrich",json={"event_ids":["event-incident-auto-eval"]})
+    assert response.status_code == 200
+    actions = response.json()["response_evaluations"][0]["actions"]
+    assert actions[0]["status"] == "pending_approval"
+    assert main.store.get_response_action(actions[0]["action_id"])["status"] == "pending_approval"

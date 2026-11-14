@@ -542,7 +542,13 @@ def delete_threat_intel_credentials(integration_id: str) -> Response:
 @app.post("/api/v1/threat-intel/enrich", tags=["threat-intelligence"])
 def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, object]:
     try:
-        return enrich_events(store, registry, list(dict.fromkeys(request.event_ids)))
+        result = enrich_events(store, registry, list(dict.fromkeys(request.event_ids)))
+        evaluations = []
+        for incident in result.get("incidents", []):
+            incident_id = incident.get("incident_id") if isinstance(incident, dict) else None
+            if incident_id:
+                evaluations.append(evaluate_incident(store, registry, str(incident_id)))
+        return {**result, "response_evaluations": evaluations}
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
