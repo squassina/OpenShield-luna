@@ -1,5 +1,8 @@
+name: openshield-luna
+
 services:
   openshield-db:
+    container_name: openshield-luna-db
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: openshield
@@ -15,6 +18,7 @@ services:
     restart: unless-stopped
 
   openshield-node:
+    container_name: openshield-luna-node
     build:
       context: .
       dockerfile: Dockerfile
@@ -41,6 +45,7 @@ services:
     restart: unless-stopped
 
   openshield-test:
+    container_name: openshield-luna-test
     image: openshield-dev
     build:
       context: .
@@ -55,6 +60,7 @@ services:
     command: ["pytest", "-v", "tests"]
 
   openshield-lint:
+    container_name: openshield-luna-lint
     image: openshield-dev
     build:
       context: .
@@ -64,6 +70,7 @@ services:
     command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
 
   openshield-gateway-connector:
+    container_name: openshield-luna-gateway-connector
     build:
       context: .
       dockerfile: Dockerfile
