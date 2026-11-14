@@ -15,7 +15,6 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, SecretStr
 
-from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
@@ -32,9 +31,10 @@ from openshield.execution.service import (
 from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
-from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
+from openshield.integrations.ai import AIProviderAdapter
+from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
 from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
-from openshield.integrations.misp import MispAdapter, MispClient, MispError
+from openshield.integrations.misp import MispClient, MispError
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
@@ -42,8 +42,8 @@ from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OP
 from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
 from openshield.integrations.prometheus import PrometheusAdapter, PrometheusClient, PrometheusError
 from openshield.integrations.registry import IntegrationRegistry
-from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.integrations.threat_intel import ThreatIntelAdapter
+from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
 from openshield.policy.engine import (
     create_policy,
     enforcement_enabled,
@@ -69,7 +69,6 @@ from openshield.threat_intel.providers import (
 )
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
-
 load_runtime_secrets(create=True)
 configure_logging()
 
@@ -253,8 +252,8 @@ adapters = {
     "openwrt": OpenWrtAdapter(),
     "opnsense": OPNsenseAdapter(),
     "pfsense": PfSenseAdapter(),
-    "crowdsec": CrowdSecAdapter(),
-    "misp": MispAdapter(),
+    "crowdsec": ThreatIntelAdapter("crowdsec"),
+    "misp": ThreatIntelAdapter("misp"),
     "wazuh": WazuhAdapter(),
     "prometheus": PrometheusAdapter(),
     "grafana": GrafanaAdapter(),
@@ -262,12 +261,6 @@ adapters = {
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
     "adguard": DnsPrivacyAdapter("adguard"),
-    "crowdsec": ThreatIntelAdapter("crowdsec"),
-    "misp": ThreatIntelAdapter("misp"),
-    "ollama": AIProviderAdapter("ollama"),
-    "openai": AIProviderAdapter("openai"),
-    "crowdsec": ThreatIntelAdapter("crowdsec"),
-    "misp": ThreatIntelAdapter("misp"),
     "ollama": AIProviderAdapter("ollama"),
     "openai": AIProviderAdapter("openai"),
 }
@@ -327,68 +320,6 @@ class OpenWrtCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     username: str = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=1, max_length=512)
-
-
-class ThreatIntelCredentials(BaseModel):
-    api_key: SecretStr = Field(min_length=8, max_length=2048)
-
-
-class ThreatIntelEnrichRequest(BaseModel):
-    event_ids: list[str] = Field(min_length=1, max_length=100)
-
-
-class IncidentStatusRequest(BaseModel):
-    status: Literal["open", "acknowledged", "closed", "false_positive"]
-    reason: str = Field(default="", max_length=500)
-
-
-class AIProviderCredentials(BaseModel):
-    api_key: SecretStr = Field(min_length=8, max_length=2048)
-
-
-class AIInvestigationRequest(BaseModel):
-    provider_id: str = Field(min_length=2, max_length=64)
-
-
-class GatewayCommandResultRequest(BaseModel):
-    status: Literal["completed", "failed"]
-    result: dict[str, Any] = Field(default_factory=dict)
-
-
-class PolicyCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    enabled: bool = True
-    indicator_type: Literal["ip", "domain"]
-    indicator_value: str = Field(min_length=3, max_length=253)
-    action: Literal["block_ip", "block_domain"]
-    integration_id: str = Field(min_length=2, max_length=64)
-    min_risk_score: int = Field(ge=0, le=100)
-    autonomy_level: int = Field(ge=0, le=3, default=0)
-    ttl_seconds: int = Field(ge=60, le=86400, default=3600)
-    require_approval: bool = True
-    direction: Literal["source", "destination"] = "destination"
-
-
-class PolicyUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=120)
-    enabled: bool | None = None
-    min_risk_score: int | None = Field(default=None, ge=0, le=100)
-    autonomy_level: int | None = Field(default=None, ge=0, le=3)
-    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
-    require_approval: bool | None = None
-    direction: Literal["source", "destination"] | None = None
-
-
-class PolicyEvaluationRequest(BaseModel):
-    policy_id: str = Field(min_length=2, max_length=64)
-
-
-class PolicyDecisionRejectionRequest(BaseModel):
-    reason: str = Field(default="", max_length=500)
-
-
-class EmergencyStopRequest(BaseModel):
-    active: bool
 
 
 class ThreatIntelCredentials(BaseModel):
