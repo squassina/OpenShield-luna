@@ -15,7 +15,7 @@ def test_opnsense_client_uses_basic_auth_and_get_only():
     with patch("openshield.integrations.opnsense.urlopen", return_value=response) as request:
         assert client.get("/api/diagnostics/system/system_information") == {"status": "ok"}
     sent = request.call_args.args[0]
-    assert sent.method == "GET"
+    assert sent.get_method() == "GET"
     assert sent.get_header("Authorization").startswith("Basic ")
 
 
