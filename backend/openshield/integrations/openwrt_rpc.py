@@ -117,15 +117,19 @@ class OpenWrtRPCClient:
     ) -> list[dict[str, object]]:
         if not isinstance(output, str):
             raise OpenWrtRPCError("OpenWrt IPv4 neighbor response was invalid")
+        interface_by_l3_device: dict[str, str] = {}
         interface_by_device: dict[str, str] = {}
         for item in interfaces:
             name = item.get("name")
             if not isinstance(name, str) or not name:
                 continue
-            for key in ("l3_device", "device"):
-                device = item.get(key)
-                if isinstance(device, str) and device:
-                    interface_by_device.setdefault(device, name)
+            l3_device = item.get("l3_device")
+            device = item.get("device")
+            if isinstance(l3_device, str) and l3_device:
+                interface_by_l3_device.setdefault(l3_device, name)
+            if isinstance(device, str) and device:
+                interface_by_device.setdefault(device, name)
+        interface_by_device = {**interface_by_device, **interface_by_l3_device}
 
         devices: dict[str, dict[str, object]] = {}
         for line in output.splitlines():
