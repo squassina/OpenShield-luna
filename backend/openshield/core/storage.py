@@ -834,11 +834,8 @@ CREATE TABLE IF NOT EXISTS events (
             rows = cursor.fetchall()
         return [
             {
-                "investigation_id": row[0], "incident_id": row[1],
-                "provider_integration_id": row[2], "provider_kind": row[3],
-                "model": row[4], "prompt_version": row[5],
-                "context_scope": row[6], "result": row[7],
-                "created_at": row[8].isoformat(),
+                "command_id": row[0], "execution_id": row[1],
+                "action": row[2], "payload": row[3], "created_at": row[4].isoformat(),
             }
             for row in rows
         ]
