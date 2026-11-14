@@ -709,3 +709,35 @@ Business and SaaS authentication must be implemented and reviewed before those d
 **Network visibility software scope:** implemented as an API-first vertical slice. OpenShield accepts bounded Suricata EVE and Zeek JSON batches, normalizes supported records into the versioned event envelope, persists them idempotently, queries event filters and limits in PostgreSQL, and aggregates observed IP inventory and inferred topology in the database. Inventory validates IP addresses and labels IP version/scope. Sensor freshness is based on Node-side observation time.
 
 **Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. The interactive web dashboard remains P2. No traffic enforcement is introduced. Live sensor validation, identity enrichment, retention/scale, Business authentication, and richer topology remain tracked in [docs/technical-debt.md](docs/technical-debt.md).
+
+
+## OpenWrt device inventory and logical topology — implementation checkpoint
+
+**Software implementation:** merged into `main` by PR #26 (`87c867b0b9e586f1c5d62ad33c09a59afd7ae61f`). CI passed build, lint, and tests.
+
+Implemented:
+- Gateway Connector queries `network.interface dump`, `luci-rpc getHostHints`, and the restricted `openshield.get_ipv4_neighbors` rpcd method.
+- The custom rpcd helper exposes only the fixed `ip -4 neigh show` command. It accepts no caller-controlled command or arguments; generic `file.exec` permission is not required.
+- IPv4 neighbor rows are validated and normalized. Devices are keyed by MAC, with multiple IPv4 addresses aggregated and kernel devices mapped to logical interfaces (preferring `l3_device`).
+- The latest gateway/interface snapshot and device inventory are persisted in PostgreSQL. First-seen and last-seen timestamps survive disappearance from the current neighbor table.
+- Discovery refreshes on each connector heartbeat (default 30 seconds). The API exposes the router inventory and marks devices online when last seen within 90 seconds; otherwise they remain visible as offline.
+- The dashboard displays devices grouped by gateway and logical interface, including an Unmapped group for devices without a resolved interface.
+- Installation and acceptance steps are documented in `docs/operations/openwrt-validation.md`, section 10.
+
+Not yet validated on physical hardware:
+1. Install the helper and ACL on the Dynalink DL-WRX36.
+2. Assign the ACL to the dedicated rpcd account and verify every RPC method through authenticated remote calls.
+3. Compare discovered MAC, host hint, IPv4, and logical interface against known wired/wireless clients.
+4. Verify address changes retain MAC identity; verify disappearance, the 90-second offline transition, and later rediscovery.
+5. Run connector restart and Node outage/recovery checks; confirm inventory and outbox recovery.
+6. Confirm no firewall, routing, wireless, or forwarding changes occur.
+
+Known limitations / follow-up:
+- IPv6 neighbor discovery (NDP) is not implemented.
+- Discovery depends on IPv4 neighbor-cache entries; a device that has not generated a neighbor entry will not be newly discovered. Sleeping clients may be marked offline.
+- Friendly names depend on OpenWrt host hints; missing names remain `(sem-nome)`.
+- Wi-Fi association data, full DHCP lease data, VLAN/bridge membership, switch-port mapping, and physical Layer-2 links are not included.
+- MAC identity is scoped to one gateway. Cross-source identity reconciliation with Suricata/Zeek, randomized-MAC handling, spoofing detection, and confidence scoring remain open.
+- The 90-second presence threshold is an initial heuristic and must be reviewed against real router behavior.
+
+Track physical gateway acceptance under [Issue #2](https://github.com/squassina/OpenShield/issues/2), broader identity enrichment under [Issue #5](https://github.com/squassina/OpenShield/issues/5), and richer topology semantics under [Issue #8](https://github.com/squassina/OpenShield/issues/8). The consolidated register is `docs/technical-debt.md`.
