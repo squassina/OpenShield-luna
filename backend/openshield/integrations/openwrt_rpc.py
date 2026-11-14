@@ -1,13 +1,29 @@
+import json
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-import ipaddress
-import json
-import re
+
+def _valid_mac(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    parts = value.split(":")
+    return len(parts) == 6 and all(
+        len(part) == 2 and all(character in "0123456789abcdefABCDEF" for character in part)
+        for part in parts
+    )
 
 
-_MAC_PATTERN = re.compile(r"^(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
+def _valid_ipv4(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    parts = value.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        return all(0 <= int(part) <= 255 and str(int(part)) == part for part in parts)
+    except ValueError:
+        return False
 
 
 class OpenWrtRPCError(RuntimeError):
@@ -101,7 +117,7 @@ class OpenWrtRPCClient:
             raise OpenWrtRPCError("OpenWrt host hints response was invalid")
         result = {}
         for mac, hint in value.items():
-            if not isinstance(mac, str) or not _MAC_PATTERN.fullmatch(mac):
+            if not isinstance(mac, str) or not _valid_mac(mac):
                 continue
             if not isinstance(hint, dict):
                 continue
@@ -137,10 +153,9 @@ class OpenWrtRPCClient:
             fields = line.split()
             if not fields:
                 continue
-            try:
-                address = str(ipaddress.IPv4Address(fields[0]))
-            except ipaddress.AddressValueError:
+            if not _valid_ipv4(fields[0]):
                 continue
+            address = fields[0]
             device = ""
             mac = ""
             for index, field in enumerate(fields[:-1]):
@@ -148,7 +163,7 @@ class OpenWrtRPCClient:
                     device = fields[index + 1]
                 elif field == "lladdr":
                     mac = fields[index + 1]
-            if not device or not _MAC_PATTERN.fullmatch(mac):
+            if not device or not _valid_mac(mac):
                 continue
             mac = mac.lower()
             item = devices.setdefault(mac, {
