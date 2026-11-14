@@ -38,6 +38,8 @@ def test_opnsense_rejects_invalid_json():
         "__exit__": lambda self, *args: None,
         "read": lambda self, size: b"not-json",
     })()
-    with patch("openshield.integrations.opnsense.urlopen", return_value=response):
-        with pytest.raises(OPNsenseError, match="invalid JSON"):
-            client.get("/api/diagnostics/system/system_information")
+    with (
+        patch("openshield.integrations.opnsense.urlopen", return_value=response),
+        pytest.raises(OPNsenseError, match="invalid JSON"),
+    ):
+        client.get("/api/diagnostics/system/system_information")
