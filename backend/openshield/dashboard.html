@@ -102,6 +102,19 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="crowdsec-status" class="notice" role="status" aria-live="polite">No CrowdSec Local API configured.</div>
     <div id="crowdsec-details" class="table-wrap"></div>
     <div id="crowdsec-actions" class="toolbar"></div>
+    <h3>Wazuh security monitoring</h3>
+    <p>Connect to the Wazuh Server API. OpenShield authenticates with a dedicated API user, then reads manager status, version, and up to 500 agent records. Credentials are encrypted at rest; no agent or manager changes are performed.</p>
+    <form id="wazuh-form" class="inline">
+      <input id="wazuh-id" placeholder="Integration ID (e.g. wazuh-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="Wazuh integration ID">
+      <input id="wazuh-name" placeholder="Display name" value="Wazuh Server API" required maxlength="120" aria-label="Wazuh display name">
+      <input id="wazuh-url" type="url" placeholder="https://192.168.1.20:55000" required aria-label="Wazuh Server API URL">
+      <input id="wazuh-username" placeholder="Read-only API username" required maxlength="256" autocomplete="username" aria-label="Wazuh API username">
+      <input id="wazuh-password" type="password" placeholder="API password" required maxlength="1024" autocomplete="new-password" aria-label="Wazuh API password">
+      <button class="primary" type="submit">Save Wazuh credentials</button>
+    </form>
+    <div id="wazuh-status" class="notice" role="status" aria-live="polite">No Wazuh Server API configured.</div>
+    <div id="wazuh-details" class="table-wrap"></div>
+    <div id="wazuh-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -203,6 +216,7 @@ async function load() {
     await loadOpnsenseStatus(integrations);
     await loadPfsenseStatus(integrations);
     await loadCrowdSecStatus(integrations);
+    await loadWazuhStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -482,6 +496,72 @@ $("crowdsec-form").addEventListener("submit",async event=>{
     $("crowdsec-machine-password").value="";$("crowdsec-bouncer-key").value="";
     $("crowdsec-status").textContent="CrowdSec setup failed: "+error.message;
     $("crowdsec-status").classList.add("error");showNotice("CrowdSec setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadWazuhStatus(integrations) {
+  const root=$("wazuh-status"),details=$("wazuh-details"),actions=$("wazuh-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="wazuh");
+  if(!item) { root.textContent="No Wazuh Server API configured.";root.classList.remove("error");return; }
+  $("wazuh-id").value=item.integration_id;
+  $("wazuh-name").value=item.display_name;
+  $("wazuh-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"API credentials configured":"API username and password required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load manager and agent diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/wazuh-diagnostics");
+        const agentItems=data.agents?.data?.affected_items;
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({
+          api:data.api?.data,
+          manager_info:data.manager_info?.data,
+          manager_status:data.manager_status?.data,
+          summary:data.summary,
+          agents:Array.isArray(agentItems)?agentItems.slice(0,25):[]
+        },null,2);
+        details.replaceChildren(pre);
+        root.textContent=item.display_name+" · Connected · "+fmt(data.summary.agents_available)+
+          " agents · showing "+fmt(data.summary.agents_returned);
+      } catch(error) { root.textContent="Wazuh diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove credentials","danger",async()=>{
+      if(!confirm("Remove encrypted Wazuh API credentials for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/wazuh-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("Wazuh credentials removed.");await load();
+      } catch(error) { showNotice("Could not remove Wazuh credentials: "+error.message,true); }
+    }));
+  }
+}
+$("wazuh-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("wazuh-id").value.trim(),base_url=$("wazuh-url").value.trim();
+  const username=$("wazuh-username").value.trim(),password=$("wazuh-password").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"wazuh",display_name:$("wazuh-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="wazuh") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("wazuh-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/wazuh-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,username,password})
+    });
+    $("wazuh-username").value="";$("wazuh-password").value="";
+    showNotice("Wazuh credentials saved encrypted. Load diagnostics to verify access.");await load();
+  } catch(error) {
+    $("wazuh-username").value="";$("wazuh-password").value="";
+    $("wazuh-status").textContent="Wazuh setup failed: "+error.message;
+    $("wazuh-status").classList.add("error");showNotice("Wazuh setup failed: "+error.message,true);
   } finally { button.disabled=false; }
 });
 function renderSources(sources, integrations) {
