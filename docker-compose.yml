@@ -35,7 +35,7 @@ services:
       openshield-db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${OPENSHIELD_PUBLISH_ADDRESS:-127.0.0.1}:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
       interval: 15s
