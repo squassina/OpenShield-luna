@@ -31,9 +31,9 @@ services:
       OPENSHIELD_API_USERNAME: ${OPENSHIELD_API_USERNAME:-}
       OPENSHIELD_API_PASSWORD: ${OPENSHIELD_API_PASSWORD:-}
       OPENSHIELD_GATEWAY_TOKEN: ${OPENSHIELD_GATEWAY_TOKEN:-}
-      OPENSHIELD_RUNTIME_SECRETS_DIR: /var/lib/openshield/secrets
+      OPENSHIELD_RUNTIME_SECRETS_DIR: /run/openshield-secrets
     volumes:
-      - openshield-runtime-secrets:/var/lib/openshield/secrets
+      - openshield-runtime-secrets:/run/openshield-secrets
     depends_on:
       openshield-db:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
       OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}
       OPENSHIELD_GATEWAY_ID: ${OPENSHIELD_GATEWAY_ID:-}
       OPENSHIELD_GATEWAY_TOKEN: ${OPENSHIELD_GATEWAY_TOKEN:-}
-      OPENSHIELD_RUNTIME_SECRETS_DIR: /var/lib/openshield/secrets
+      OPENSHIELD_RUNTIME_SECRETS_DIR: /run/openshield-secrets
       OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL: ${OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL:-30}
       OPENSHIELD_OPENWRT_URL: ${OPENSHIELD_OPENWRT_URL:-}
       OPENSHIELD_OPENWRT_USERNAME: ${OPENSHIELD_OPENWRT_USERNAME:-}
@@ -90,7 +90,7 @@ services:
       OPENSHIELD_GATEWAY_SPOOL_PATH: ${OPENSHIELD_GATEWAY_SPOOL_PATH:-/var/lib/openshield/gateway-spool.sqlite3}
     volumes:
       - openshield-gateway-spool:/var/lib/openshield
-      - openshield-runtime-secrets:/var/lib/openshield/secrets:ro
+      - openshield-runtime-secrets:/run/openshield-secrets:ro
     depends_on:
       openshield-node:
         condition: service_healthy
