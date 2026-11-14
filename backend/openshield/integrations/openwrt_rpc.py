@@ -258,8 +258,14 @@ class OpenWrtRPCClient:
             normalized_interfaces.append({
                 "name": item.get("interface"), "up": item.get("up"),
                 "device": item.get("device"), "l3_device": item.get("l3_device"),
-                "proto": item.get("proto"), "subnets": subnets,
-                "gateway_addresses": sorted(set(gateway_addresses)), "vlan_id": vlan_id,
+                "proto": item.get("proto"),
+                "ipv4_address": [
+                    subnet["address"] for subnet in subnets
+                    if subnet["ip_version"] == 4
+                ],
+                "subnets": subnets,
+                "gateway_addresses": sorted(set(gateway_addresses)),
+                "vlan_id": vlan_id,
                 "metadata_source": "network.interface.dump",
             })
         normalized_board = {
