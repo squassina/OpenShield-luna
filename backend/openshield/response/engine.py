@@ -138,9 +138,9 @@ def rollback_action(
             error="block entry ownership changed; manual review required",
         )
 
-    provider = _provider(registry, str(action.get("provider_integration_id", "")))
     store.delete_privacy_list_item(RESPONSE_LIST_ID, "block", domain)
     try:
+        provider = _provider(registry, str(action.get("provider_integration_id", "")))
         result = sync_provider_lists(provider, store.list_privacy_lists(RESPONSE_LIST_ID))
     except (DnsProviderError, ValueError, TypeError):
         # Restore the local managed entry so the desired state remains explicit.
@@ -267,9 +267,13 @@ def set_kill_switch(
         cancelled += 1
     rolled_back = pending = 0
     for action in store.list_active_response_actions():
-        result = rollback_action(
-            store, registry, str(action["action_id"]), reason="global_kill_switch",
-        )
+        try:
+            result = rollback_action(
+                store, registry, str(action["action_id"]), reason="global_kill_switch",
+            )
+        except (DnsProviderError, ValueError, TypeError):
+            pending += 1
+            continue
         if result.get("status") == "rollback_pending":
             pending += 1
         elif result.get("status") == "rolled_back":

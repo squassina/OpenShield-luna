@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS events (
                     status TEXT NOT NULL CHECK (status IN (
                         'pending_approval', 'approved', 'active', 'already_enforced',
                         'failed', 'rollback_pending', 'rolled_back', 'rejected',
-                        'cancelled_by_kill_switch', 'blocked_by_kill_switch'
+                        'cancelled_by_kill_switch', 'blocked_by_kill_switch', 'rollback_conflict'
                     )),
                     payload JSONB NOT NULL,
                     expires_at TIMESTAMPTZ,

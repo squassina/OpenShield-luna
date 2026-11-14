@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
@@ -41,6 +42,19 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
+from openshield.response.engine import (
+    approve_action,
+    evaluate_incident,
+    reject_action,
+    rollback_action,
+    set_kill_switch,
+)
+from openshield.response.models import (
+    KillSwitchRequest,
+    ResponsePolicyRequest,
+    ResponsePolicyUpdate,
+)
+from openshield.response.worker import run_response_expiry_loop
 from openshield.threat_intel.engine import enrich_events
 from openshield.threat_intel.providers import (
     ThreatIntelProviderError,
@@ -62,15 +76,27 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
+    response_interval_raw = os.getenv("OPENSHIELD_RESPONSE_WORKER_INTERVAL_SECONDS", "5")
+    try:
+        response_interval = int(response_interval_raw)
+    except ValueError as exc:
+        raise RuntimeError("OPENSHIELD_RESPONSE_WORKER_INTERVAL_SECONDS must be an integer") from exc
+    if response_interval < 0 or response_interval > 3600:
+        raise RuntimeError("OPENSHIELD_RESPONSE_WORKER_INTERVAL_SECONDS must be between 0 and 3600")
+    response_task = (
+        asyncio.create_task(run_response_expiry_loop(store, registry, response_interval))
+        if response_interval else None
+    )
     try:
         yield
     finally:
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        for worker in (task, response_task):
+            if worker is not None:
+                worker.cancel()
+                try:
+                    await worker
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(
@@ -521,6 +547,111 @@ def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, obj
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/response/policies", tags=["response"])
+def list_response_policies() -> list[dict[str, object]]:
+    return store.list_response_policies()
+
+
+@app.post("/api/v1/response/policies", status_code=201, tags=["response"])
+def create_response_policy(request: ResponsePolicyRequest) -> dict[str, object]:
+    provider = registry.get(request.provider_integration_id)
+    if provider is None or provider.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=422, detail="Response policy requires a Pi-hole or AdGuard integration")
+    if not provider.enabled:
+        raise HTTPException(status_code=409, detail="Response policy DNS provider is disabled")
+    policy = {
+        "policy_id": "policy-" + uuid4().hex,
+        **request.model_dump(),
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    try:
+        store.create_response_policy(policy)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return policy
+
+
+@app.patch("/api/v1/response/policies/{policy_id}", tags=["response"])
+def update_response_policy(policy_id: str, request: ResponsePolicyUpdate) -> dict[str, object]:
+    current = store.get_response_policy(policy_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Response policy not found")
+    changes = request.model_dump(exclude_unset=True, exclude_none=True)
+    updated = {**current, **changes, "updated_at": datetime.now(UTC).isoformat()}
+    result = store.update_response_policy(updated)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Response policy not found")
+    return result
+
+
+@app.delete("/api/v1/response/policies/{policy_id}", status_code=204, tags=["response"])
+def delete_response_policy(policy_id: str) -> Response:
+    if not store.delete_response_policy(policy_id):
+        raise HTTPException(status_code=404, detail="Response policy not found")
+    return Response(status_code=204)
+
+
+@app.post("/api/v1/incidents/{incident_id}/response/evaluate", tags=["response"])
+def evaluate_incident_response(incident_id: str) -> dict[str, object]:
+    try:
+        return evaluate_incident(store, registry, incident_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/response/actions", tags=["response"])
+def list_response_actions(
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    status: str | None = None,
+) -> list[dict[str, object]]:
+    allowed = {
+        "pending_approval", "approved", "active", "already_enforced", "failed",
+        "rollback_pending", "rolled_back", "rejected", "cancelled_by_kill_switch",
+        "blocked_by_kill_switch", "rollback_conflict",
+    }
+    if status is not None and status not in allowed:
+        raise HTTPException(status_code=422, detail="Invalid response action status")
+    return store.list_response_actions(limit, status)
+
+
+@app.post("/api/v1/response/actions/{action_id}/approve", tags=["response"])
+def approve_response_action(action_id: str) -> dict[str, object]:
+    try:
+        return approve_action(store, registry, action_id, os.getenv("OPENSHIELD_API_USERNAME") or "local-admin")
+    except ValueError as exc:
+        status = 409 if "kill switch" in str(exc) or "awaiting approval" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/response/actions/{action_id}/reject", tags=["response"])
+def reject_response_action(action_id: str) -> dict[str, object]:
+    try:
+        return reject_action(store, action_id, os.getenv("OPENSHIELD_API_USERNAME") or "local-admin")
+    except ValueError as exc:
+        status = 409 if "awaiting approval" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/response/actions/{action_id}/rollback", tags=["response"])
+def rollback_response_action(action_id: str) -> dict[str, object]:
+    try:
+        return rollback_action(store, registry, action_id)
+    except ValueError as exc:
+        status = 409 if "Only active" in str(exc) else 404
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/response/control", tags=["response"])
+def get_response_control() -> dict[str, object]:
+    return store.get_response_control()
+
+
+@app.put("/api/v1/response/control", tags=["response"])
+def update_response_control(request: KillSwitchRequest) -> dict[str, object]:
+    return set_kill_switch(store, registry, request.enabled, request.reason)
 
 
 @app.get("/api/v1/incidents", tags=["incidents"])
