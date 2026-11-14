@@ -384,7 +384,7 @@ function renderRouterTopology(data) {
         const meta=document.createElement("small");
         meta.textContent=[item.ip_address,(item.ipv4_addresses||[]).join(", "),(item.ipv6_addresses||[]).join(", "),item.mac_address].filter(Boolean).join(" · ");
         const detail=document.createElement("small");
-        detail.textContent="L2: "+(item.device||"—")+" · Visto: "+new Date(item.last_seen).toLocaleString();
+        detail.textContent="Interface: "+(item.interface||"Unmapped")+" · Visto: "+new Date(item.last_seen).toLocaleString();
         card.append(name,state,meta,detail);group.append(card);
       });
       panel.append(group);
