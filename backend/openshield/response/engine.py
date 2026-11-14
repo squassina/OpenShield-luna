@@ -118,14 +118,15 @@ def execute_dns_block(
         None,
     )
     marker = RESPONSE_COMMENT_PREFIX + str(action["action_id"])
-    if existing is not None:
+    if existing is not None and existing.get("comment") != marker:
         return _update(
             store, action, "already_enforced",
             verification={"provider": provider.kind, "already_blocked": True},
             expires_at=None,
         )
 
-    store.upsert_privacy_list(RESPONSE_LIST_ID, "block", domain, marker)
+    if existing is None:
+        store.upsert_privacy_list(RESPONSE_LIST_ID, "block", domain, marker)
     try:
         result = sync_provider_lists(
             provider, store.list_privacy_lists(RESPONSE_LIST_ID),
