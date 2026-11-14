@@ -76,6 +76,18 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <div id="opnsense-status" class="notice" role="status" aria-live="polite">No OPNsense firewall configured.</div>
     <div id="opnsense-details" class="table-wrap"></div>
     <div id="opnsense-actions" class="toolbar"></div>
+    <h3>pfSense CE firewall</h3>
+    <p>Requires the community pfSense REST API v2 package to be installed and configured manually. OpenShield uses its read-only endpoints; it never installs the package or changes firewall settings. The API key is encrypted at rest.</p>
+    <form id="pfsense-form" class="inline">
+      <input id="pfsense-id" placeholder="Integration ID (e.g. pfsense-home)" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,63}" aria-label="pfSense integration ID">
+      <input id="pfsense-name" placeholder="Display name" value="pfSense CE firewall" required maxlength="120" aria-label="pfSense display name">
+      <input id="pfsense-url" type="url" placeholder="https://192.168.1.1" required aria-label="pfSense URL">
+      <input id="pfsense-key" type="password" placeholder="REST API key" required autocomplete="new-password" aria-label="pfSense REST API key">
+      <button class="primary" type="submit">Save pfSense API key</button>
+    </form>
+    <div id="pfsense-status" class="notice" role="status" aria-live="polite">No pfSense CE firewall configured.</div>
+    <div id="pfsense-details" class="table-wrap"></div>
+    <div id="pfsense-actions" class="toolbar"></div>
   </section>
 
   <dialog id="integration-dialog" aria-labelledby="integration-dialog-title">
@@ -175,6 +187,7 @@ async function load() {
     renderRouterTopology(inventoryTopology);
     await loadOpenWrtStatus(integrations);
     await loadOpnsenseStatus(integrations);
+    await loadPfsenseStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -324,6 +337,66 @@ $("opnsense-form").addEventListener("submit",async event=>{
     $("opnsense-key").value="";$("opnsense-secret").value="";
     $("opnsense-status").textContent="OPNsense setup failed: "+error.message;
     $("opnsense-status").classList.add("error");showNotice("OPNsense setup failed: "+error.message,true);
+  } finally { button.disabled=false; }
+});
+async function loadPfsenseStatus(integrations) {
+  const root=$("pfsense-status"),details=$("pfsense-details"),actions=$("pfsense-actions");
+  details.replaceChildren();actions.replaceChildren();
+  const item=integrations.find(value=>value.kind==="pfsense");
+  if(!item) { root.textContent="No pfSense CE firewall configured.";root.classList.remove("error");return; }
+  $("pfsense-id").value=item.integration_id;
+  $("pfsense-name").value=item.display_name;
+  $("pfsense-url").value=item.config?.base_url||"";
+  const configured=item.config?.auth_configured===true;
+  root.textContent=item.display_name+" · "+(configured?"API key configured":"API key required");
+  root.classList.remove("error");
+  if(configured) {
+    actions.append(actionButton("Load diagnostics","",async()=>{
+      const button=actions.querySelector("button");button.disabled=true;
+      try {
+        const data=await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/pfsense-diagnostics");
+        const pre=document.createElement("pre");pre.className="notice";pre.style.whiteSpace="pre-wrap";
+        pre.textContent=JSON.stringify({
+          system:data.system,interfaces:data.interfaces,arp:data.arp,
+          dhcp_leases:data.dhcp_leases,gateways:data.gateways
+        },null,2);
+        details.replaceChildren(pre);root.textContent=item.display_name+" · Connected · Read-only diagnostics loaded";
+      } catch(error) { root.textContent="pfSense diagnostics failed: "+error.message;root.classList.add("error"); }
+      finally { button.disabled=false; }
+    }));
+    actions.append(actionButton("Remove API key","danger",async()=>{
+      if(!confirm("Remove encrypted pfSense API key for "+item.integration_id+"?"))return;
+      try {
+        await api("/api/v1/integrations/"+encodeURIComponent(item.integration_id)+"/pfsense-credentials",{method:"DELETE"});
+        details.replaceChildren();showNotice("pfSense API key removed.");await load();
+      } catch(error) { showNotice("Could not remove pfSense API key: "+error.message,true); }
+    }));
+  }
+}
+$("pfsense-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const id=$("pfsense-id").value.trim(),base_url=$("pfsense-url").value.trim();
+  const api_key=$("pfsense-key").value;
+  const button=event.submitter;button.disabled=true;
+  try {
+    const integrations=await api("/api/v1/integrations");
+    const existing=integrations.find(item=>item.integration_id===id);
+    if(!existing) await api("/api/v1/integrations",{method:"POST",body:JSON.stringify({
+      integration_id:id,kind:"pfsense",display_name:$("pfsense-name").value.trim(),config:{base_url}
+    })});
+    else if(existing.kind!=="pfsense") throw new Error("This ID is already used by another integration kind.");
+    else await api("/api/v1/integrations/"+encodeURIComponent(id),{method:"PATCH",body:JSON.stringify({
+      display_name:$("pfsense-name").value.trim(),config:{...existing.config,base_url}
+    })});
+    await api("/api/v1/integrations/"+encodeURIComponent(id)+"/pfsense-credentials",{
+      method:"PUT",body:JSON.stringify({base_url,api_key})
+    });
+    $("pfsense-key").value="";
+    showNotice("pfSense API key saved encrypted. Run diagnostics to verify access.");await load();
+  } catch(error) {
+    $("pfsense-key").value="";
+    $("pfsense-status").textContent="pfSense setup failed: "+error.message;
+    $("pfsense-status").classList.add("error");showNotice("pfSense setup failed: "+error.message,true);
   } finally { button.disabled=false; }
 });
 function renderSources(sources, integrations) {
