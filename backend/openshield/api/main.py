@@ -23,6 +23,7 @@ from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.crowdsec import CrowdSecAdapter, CrowdSecClient, CrowdSecError
+from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
 from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
@@ -175,6 +176,7 @@ async def authenticate_requests(request: Request, call_next):
         "/crowdsec-credentials", "/crowdsec-diagnostics",
         "/wazuh-credentials", "/wazuh-diagnostics",
         "/prometheus-credentials", "/prometheus-diagnostics",
+        "/grafana-credentials", "/grafana-diagnostics",
     )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -219,6 +221,7 @@ adapters = {
     "crowdsec": CrowdSecAdapter(),
     "wazuh": WazuhAdapter(),
     "prometheus": PrometheusAdapter(),
+    "grafana": GrafanaAdapter(),
     "suricata": NetworkSensorAdapter("suricata"),
     "zeek": NetworkSensorAdapter("zeek"),
     "pihole": DnsPrivacyAdapter("pihole"),
@@ -262,6 +265,11 @@ class WazuhCredentials(BaseModel):
 
 
 class PrometheusCredentials(BaseModel):
+    base_url: str = Field(min_length=8, max_length=500)
+    bearer_token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class GrafanaCredentials(BaseModel):
     base_url: str = Field(min_length=8, max_length=500)
     bearer_token: SecretStr | None = Field(default=None, min_length=1, max_length=4096)
 
@@ -449,6 +457,28 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"status": "connected", "integration_id": integration_id, "provider": "prometheus",
                 "targets_available": diagnostics["summary"]["targets_available"], "imported": 0}
+    if item.kind == "grafana":
+        try:
+            credentials = SecretStore(store).get(integration_id)
+            if credentials is None:
+                raise HTTPException(status_code=409, detail="Grafana configuration is not saved")
+            diagnostics = GrafanaClient(
+                str(credentials["base_url"]),
+                str(credentials.get("bearer_token") or "") or None,
+            ).diagnostics()
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
+        except GrafanaError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            "provider": "grafana",
+            "dashboards_available": diagnostics["summary"]["dashboards_available"],
+            "imported": 0,
+        }
     if item.kind in {"pihole", "adguard"}:
         try:
             records = fetch_dns_records(item)
@@ -798,6 +828,76 @@ def prometheus_diagnostics(integration_id: str) -> dict[str, object]:
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail="Stored Prometheus configuration is invalid") from exc
     except PrometheusError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.put("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
+def save_grafana_credentials(
+    integration_id: str, credentials: GrafanaCredentials
+) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    token = credentials.bearer_token.get_secret_value() if credentials.bearer_token else None
+    try:
+        GrafanaClient(credentials.base_url, token)
+        SecretStore(store).set(integration_id, {
+            "base_url": credentials.base_url.rstrip("/"),
+            "bearer_token": token,
+        })
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "base_url": credentials.base_url.rstrip("/"),
+        "auth_configured": True,
+    }))
+    return {
+        "status": "saved",
+        "integration_id": integration_id,
+        "secret_storage": "encrypted",
+        "authentication": "bearer" if token else "none",
+    }
+
+
+@app.delete("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
+def delete_grafana_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    SecretStore(store).delete(integration_id)
+    registry.update(integration_id, IntegrationUpdate(config={
+        **integration.config,
+        "auth_configured": False,
+    }))
+    return Response(status_code=204)
+
+
+@app.get("/api/v1/integrations/{integration_id}/grafana-diagnostics", tags=["integrations"])
+def grafana_diagnostics(integration_id: str) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind != "grafana":
+        raise HTTPException(status_code=404, detail="Grafana integration not found")
+    try:
+        credentials = SecretStore(store).get(integration_id)
+        if credentials is None:
+            raise HTTPException(status_code=409, detail="Grafana configuration is not saved")
+        client = GrafanaClient(
+            str(credentials["base_url"]),
+            str(credentials.get("bearer_token") or "") or None,
+        )
+        return {
+            "status": "connected",
+            "integration_id": integration_id,
+            **client.diagnostics(),
+        }
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="Stored Grafana configuration is invalid") from exc
+    except GrafanaError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
