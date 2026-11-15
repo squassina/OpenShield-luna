@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
+from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.privacy.dns import normalize_dns_batch
 from openshield.privacy.providers import (
     DnsProviderCursorExpired,
@@ -64,11 +65,15 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             continue
         _record_poll_attempt(integration.integration_id)
         try:
+            try:
+                credentials = SecretStore(store).get(integration.integration_id)
+            except SecretConfigurationError as exc:
+                raise DnsProviderError("DNS provider credentials could not be loaded") from exc
             cursor = store.get_integration_poll_cursor(integration.integration_id)
             accepted = duplicates = received = pages = 0
             complete = False
             while pages < 10 and not complete:
-                records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
+                records, next_cursor, complete = fetch_dns_records_page(integration, cursor, credentials=credentials)
                 events = normalize_dns_batch(
                     integration.kind, integration.integration_id, records,
                     store.list_privacy_classification_overrides(),
