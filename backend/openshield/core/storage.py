@@ -455,6 +455,12 @@ CREATE TABLE IF NOT EXISTS events (
                 cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
                 row = cursor.fetchone()
                 current_version = int(row[0]) if row else 0
+                latest_version = migrations[-1][0] if migrations else 0
+                if current_version > latest_version:
+                    raise StorageConfigurationError(
+                        f"Database schema version {current_version} is newer than "
+                        f"this application supports ({latest_version})"
+                    )
                 for version, name, migration_statements in migrations:
                     if version <= current_version:
                         continue
