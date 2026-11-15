@@ -192,13 +192,10 @@ async def authenticate_requests(request: Request, call_next):
     path = request.url.path
     if path.startswith("/health/") or path == "/metrics":
         return await call_next(request)
-    is_gateway = path.startswith("/api/v1/gateway/") or path == "/api/v1/events"
+    is_gateway = path.startswith("/api/v1/gateway/")
     if is_gateway:
-        expected = os.getenv("OPENSHIELD_GATEWAY_TOKEN", "")
-        if expected and not _gateway_token_valid(request):
+        if not _gateway_token_valid(request):
             return JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
-        if _api_auth_enabled() and not expected:
-            return JSONResponse({"detail": "OPENSHIELD_GATEWAY_TOKEN is required when API authentication is enabled"}, status_code=503)
         response = await call_next(request)
     else:
         denied = _check_admin_auth(request)
@@ -1709,7 +1706,6 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
 def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
     if (
         event.source.kind == "openwrt"
-        and store.get_integration_secret(event.source.integration_id)
         and not _gateway_token_valid(request)
     ):
         raise HTTPException(status_code=401, detail="Gateway authentication required")
