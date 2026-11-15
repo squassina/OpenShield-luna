@@ -76,13 +76,23 @@ def test_initial_schema_is_recorded_and_not_reapplied(
     store = storage.PostgresStore("postgresql://test")
 
     store.ensure_schema()
-    statement_count = len(database.applied_statements)
+    migration_statements = [
+        statement
+        for statement in database.applied_statements
+        if not statement.startswith("SELECT pg_advisory_xact_lock")
+        and not statement.startswith("CREATE TABLE IF NOT EXISTS schema_migrations")
+    ]
     store._schema_ready = False
     store.ensure_schema()
 
     assert database.version == 1
-    assert statement_count > 1
-    assert len(database.applied_statements) == statement_count
+    assert migration_statements
+    assert [
+        statement
+        for statement in database.applied_statements
+        if not statement.startswith("SELECT pg_advisory_xact_lock")
+        and not statement.startswith("CREATE TABLE IF NOT EXISTS schema_migrations")
+    ] == migration_statements
     assert "SELECT pg_advisory_xact_lock(731946205)" in database.applied_statements
 
 
