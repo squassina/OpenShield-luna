@@ -118,3 +118,17 @@ def test_legacy_database_without_migration_history_runs_baseline(
     assert database.version == 1
     assert any("CREATE TABLE IF NOT EXISTS integrations" in item
                for item in database.applied_statements)
+
+
+def test_database_newer_than_application_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 2
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    with pytest.raises(storage.StorageConfigurationError, match="newer than this application"):
+        store.ensure_schema()
+
+    assert store._schema_ready is False
