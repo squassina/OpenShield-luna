@@ -282,8 +282,9 @@ def expire_due_executions(
                 processed += 1
                 continue
             integration = registry.get(integration_id)
+            deleted = False
             try:
-                store.delete_privacy_list_item(
+                deleted = store.delete_privacy_list_item(
                     integration_id, "block", str(execution["indicator_value"]),
                     expected_comment=(
                         f"OpenShield managed execution {execution['execution_id']}"
@@ -298,10 +299,11 @@ def expire_due_executions(
                     rolled_back_at=datetime.now(UTC),
                 )
             except (DnsProviderError, ValueError, ExecutionError):
-                store.upsert_privacy_list(
-                    integration_id, "block", str(execution["indicator_value"]),
-                    f"OpenShield managed execution {execution['execution_id']}",
-                )
+                if deleted:
+                    store.upsert_privacy_list(
+                        integration_id, "block", str(execution["indicator_value"]),
+                        f"OpenShield managed execution {execution['execution_id']}",
+                    )
                 store.update_response_execution(
                     str(execution["execution_id"]), "rollback_failed",
                     {"rollback": "dns_provider_unavailable"},
