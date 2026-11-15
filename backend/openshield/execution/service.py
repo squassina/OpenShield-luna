@@ -86,7 +86,10 @@ def execute_decision(
             # Reconcile the provider against the authoritative local list. Remove
             # only the entry created by this execution; preserve manual entries.
             if not existing:
-                store.delete_privacy_list_item(integration_id, "block", indicator_value)
+                store.delete_privacy_list_item(
+                    integration_id, "block", indicator_value,
+                    expected_comment=f"OpenShield managed execution {execution_id}",
+                )
             try:
                 compensation_result = sync_provider_lists(
                     integration, store.list_privacy_lists(integration_id),
@@ -227,6 +230,9 @@ def expire_due_executions(
                 if execution["adapter_result"].get("created_by_execution"):
                     store.delete_privacy_list_item(
                         integration_id, "block", str(execution["indicator_value"]),
+                        expected_comment=(
+                            f"OpenShield managed execution {execution['execution_id']}"
+                        ),
                     )
                 result = sync_provider_lists(
                     integration, store.list_privacy_lists(integration_id),
@@ -279,6 +285,9 @@ def expire_due_executions(
             try:
                 store.delete_privacy_list_item(
                     integration_id, "block", str(execution["indicator_value"]),
+                    expected_comment=(
+                        f"OpenShield managed execution {execution['execution_id']}"
+                    ),
                 )
                 if integration is None:
                     raise ExecutionError("DNS integration no longer exists")
