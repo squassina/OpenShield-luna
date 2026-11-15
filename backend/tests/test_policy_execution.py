@@ -429,7 +429,7 @@ def test_policy_api_and_emergency_stop_fail_closed(monkeypatch) -> None:
     assert main.store.get_emergency_stop() is True
 
 
-@pytest.mark.parametrize("failure_mode", ["before_mutation", "lost_response", "verification_failed"])
+@pytest.mark.parametrize("failure_mode", ["before_mutation", "partial_mutation", "lost_response", "verification_failed"])
 def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
     monkeypatch, failure_mode: str,
 ) -> None:
@@ -437,9 +437,14 @@ def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
 
     _register("pihole", "pihole-home")
     incident = _incident()
+    from openshield.api import main
+
+    main.store.upsert_privacy_list(
+        "pihole-home", "block", "manual.example", "Manual admin entry",
+    )
     policy = _policy()
     _enable_enforcement(monkeypatch, 1)
-    provider_domains: set[str] = set()
+    provider_domains: set[str] = {"manual.example"}
     sync_calls = 0
 
     def sync(integration, entries):
@@ -447,7 +452,10 @@ def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
         sync_calls += 1
         desired = {str(item["domain"]) for item in entries if item["list_type"] == "block"}
         if sync_calls == 1:
-            if failure_mode != "before_mutation":
+            if failure_mode == "partial_mutation":
+                provider_domains.clear()
+                provider_domains.add("malicious.example")
+            elif failure_mode != "before_mutation":
                 provider_domains.clear()
                 provider_domains.update(desired)
             raise execution_service.DnsProviderError(failure_mode)
@@ -468,8 +476,10 @@ def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
     execution = main.store.list_response_executions()[0]
     assert execution["status"] == "failed"
     assert execution["adapter_result"]["compensation_status"] == "completed"
-    assert main.store.list_privacy_lists("pihole-home") == []
-    assert provider_domains == set()
+    entries = main.store.list_privacy_lists("pihole-home")
+    assert len(entries) == 1
+    assert entries[0]["domain"] == "manual.example"
+    assert provider_domains == {"manual.example"}
     assert sync_calls == 2
 
 
