@@ -234,6 +234,7 @@ def expire_due_executions(
                 store.update_response_execution(
                     str(execution["execution_id"]), "failed",
                     {
+                        **execution["adapter_result"],
                         "compensation_status": "completed",
                         "compensation_result": result,
                     },
@@ -246,6 +247,7 @@ def expire_due_executions(
                 store.update_response_execution(
                     str(execution["execution_id"]), "rollback_failed",
                     {
+                        **execution["adapter_result"],
                         "compensation_status": "pending",
                         "compensation_error": type(exc).__name__,
                     },
