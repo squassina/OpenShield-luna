@@ -74,7 +74,10 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             accepted = duplicates = received = pages = 0
             complete = False
             while pages < 10 and not complete:
-                records, next_cursor, complete = fetch_dns_records_page(integration, cursor, credentials=credentials)
+                if credentials is None:
+                    records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
+                else:
+                    records, next_cursor, complete = fetch_dns_records_page(integration, cursor, credentials=credentials)
                 events = normalize_dns_batch(
                     integration.kind, integration.integration_id, records,
                     store.list_privacy_classification_overrides(),
