@@ -188,6 +188,18 @@ def _pihole_request(base_url: str, path: str, *, method: str = "GET",
                 pass
 
 
+def _pihole_request_with_credentials(
+    base_url: str, path: str, *, method: str = "GET", body: dict | None = None,
+    integration: Integration, credentials: dict[str, str] | None,
+) -> dict | list:
+    if credentials is None:
+        return _pihole_request(base_url, path, method=method, body=body, integration=integration)
+    return _pihole_request(
+        base_url, path, method=method, body=body, integration=integration,
+        credentials=credentials,
+    )
+
+
 def sync_provider_lists(integration: Integration, entries: list[dict[str, object]], credentials: dict[str, str] | None = None) -> dict[str, int | str]:
     desired = {
         (str(item["list_type"]), str(item["domain"])): str(item.get("comment") or "")
@@ -195,7 +207,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
     }
     if integration.kind == "pihole":
         base_url = _base_url(integration)
-        response = _pihole_request(base_url, "/api/domains", integration=integration, credentials=credentials)
+        response = _pihole_request_with_credentials(base_url, "/api/domains", integration=integration, credentials=credentials)
         existing = response.get("domains", []) if isinstance(response, dict) else response
         if not isinstance(existing, list):
             raise DnsProviderError("Pi-hole domain-list response has no domains list")
@@ -212,7 +224,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         for list_type, domain in sorted(desired):
             key = ("allow" if list_type == "allow" else "deny", domain)
             if key not in all_domains:
-                _pihole_request(
+                _pihole_request_with_credentials(
                     base_url, f"/api/domains/{key[0]}/exact", method="POST",
                     body={"domain": domain, "comment": "OpenShield managed"}, integration=integration,
                     credentials=credentials,
@@ -223,12 +235,12 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             for kind, domain in desired
         }
         for list_type, domain in sorted(stale):
-            _pihole_request(
+            _pihole_request_with_credentials(
                 base_url, f"/api/domains/{list_type}/exact/{quote(domain, safe='')}",
                 method="DELETE", integration=integration, credentials=credentials,
             )
             removed += 1
-        verified = _pihole_request(base_url, "/api/domains", integration=integration, credentials=credentials)
+        verified = _pihole_request_with_credentials(base_url, "/api/domains", integration=integration, credentials=credentials)
         verified_items = verified.get("domains", []) if isinstance(verified, dict) else verified
         verified_keys = {
             (str(item.get("type")), str(item.get("domain")))
@@ -364,7 +376,7 @@ def fetch_dns_records_page(
             "from": state["window_from"], "until": state["window_until"],
             "length": page_size, "start": int(state.get("start", 0)),
         }
-        result = _pihole_request(base_url, f"/api/queries?{urlencode(params)}", integration=integration, credentials=credentials)
+        result = _pihole_request_with_credentials(base_url, f"/api/queries?{urlencode(params)}", integration=integration, credentials=credentials)
         records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
         if not isinstance(records, list):
             raise DnsProviderError("Pi-hole query-log response has no query list")
