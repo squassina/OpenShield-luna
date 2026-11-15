@@ -1024,9 +1024,10 @@ def test_dns_integration_validates_custom_ca_bundle_path() -> None:
 
 
 def test_dns_provider_credentials_are_encrypted_per_integration_and_never_returned(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
     from openshield.api import main
     from openshield.core.secrets import SecretStore
-    from cryptography.fernet import Fernet
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     register_dns("pihole-a", "pihole")
