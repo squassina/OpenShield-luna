@@ -66,7 +66,8 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
         _record_poll_attempt(integration.integration_id)
         try:
             try:
-                credentials = SecretStore(store).get(integration.integration_id)
+                encrypted = store.get_integration_secret(integration.integration_id)
+                credentials = SecretStore(store).get(integration.integration_id) if encrypted else None
             except SecretConfigurationError as exc:
                 raise DnsProviderError("DNS provider credentials could not be loaded") from exc
             cursor = store.get_integration_poll_cursor(integration.integration_id)
