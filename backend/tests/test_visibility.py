@@ -11,10 +11,12 @@ from openshield.visibility.normalizers import (
     normalize_zeek,
 )
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer connector-test-token"})
 
 
 def setup_function() -> None:
+    import os
+    os.environ["OPENSHIELD_GATEWAY_TOKEN"] = "connector-test-token"
     from openshield.api import main
     main.store.reset()
 
