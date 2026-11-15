@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
@@ -19,7 +19,7 @@ class FakeCursor:
         self.database = database
         self.row: tuple[int] | None = None
 
-    def __enter__(self) -> FakeCursor:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -48,7 +48,7 @@ class FakeConnection:
         self.version_before = database.version
         self.statements_before = len(database.applied_statements)
 
-    def __enter__(self) -> FakeConnection:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, *_: object) -> None:
@@ -116,8 +116,10 @@ def test_legacy_database_without_migration_history_runs_baseline(
     store.ensure_schema()
 
     assert database.version == 1
-    assert any("CREATE TABLE IF NOT EXISTS integrations" in item
-               for item in database.applied_statements)
+    assert any(
+        "CREATE TABLE IF NOT EXISTS integrations" in item
+        for item in database.applied_statements
+    )
 
 
 def test_database_newer_than_application_is_rejected(
@@ -128,7 +130,10 @@ def test_database_newer_than_application_is_rejected(
     install_fake_database(monkeypatch, database)
     store = storage.PostgresStore("postgresql://test")
 
-    with pytest.raises(storage.StorageConfigurationError, match="newer than this application"):
+    with pytest.raises(
+        storage.StorageConfigurationError,
+        match="newer than this application",
+    ):
         store.ensure_schema()
 
     assert store._schema_ready is False
