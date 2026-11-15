@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
