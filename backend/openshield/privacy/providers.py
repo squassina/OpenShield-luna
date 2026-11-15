@@ -228,7 +228,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
                 method="DELETE", integration=integration, credentials=credentials,
             )
             removed += 1
-        verified = _pihole_request(base_url, "/api/domains", integration=integration)
+        verified = _pihole_request(base_url, "/api/domains", integration=integration, credentials=credentials)
         verified_items = verified.get("domains", []) if isinstance(verified, dict) else verified
         verified_keys = {
             (str(item.get("type")), str(item.get("domain")))
