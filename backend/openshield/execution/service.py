@@ -216,6 +216,43 @@ def expire_due_executions(
     processed = 0
     for execution in due:
         integration_id = str(execution["integration_id"])
+        if (
+            execution["action"] == "block_domain"
+            and execution["adapter_result"].get("compensation_status") == "pending"
+        ):
+            integration = registry.get(integration_id)
+            try:
+                if integration is None:
+                    raise ExecutionError("DNS integration no longer exists")
+                if execution["adapter_result"].get("created_by_execution"):
+                    store.delete_privacy_list_item(
+                        integration_id, "block", str(execution["indicator_value"]),
+                    )
+                result = sync_provider_lists(
+                    integration, store.list_privacy_lists(integration_id),
+                )
+                store.update_response_execution(
+                    str(execution["execution_id"]), "failed",
+                    {
+                        "compensation_status": "completed",
+                        "compensation_result": result,
+                    },
+                )
+            except (DnsProviderError, ValueError, ExecutionError) as exc:
+                logger.error(
+                    "DNS enforcement compensation still pending execution_id=%s integration_id=%s error=%s",
+                    execution["execution_id"], integration_id, type(exc).__name__,
+                )
+                store.update_response_execution(
+                    str(execution["execution_id"]), "rollback_failed",
+                    {
+                        "compensation_status": "pending",
+                        "compensation_error": type(exc).__name__,
+                    },
+                    expires_at=datetime.now(UTC),
+                )
+            processed += 1
+            continue
         if store.has_active_response_execution(
             str(execution["indicator_type"]), str(execution["indicator_value"]),
             integration_id, str(execution["execution_id"]),
@@ -228,40 +265,6 @@ def expire_due_executions(
             processed += 1
             continue
         if execution["action"] == "block_domain":
-            if execution["adapter_result"].get("compensation_status") == "pending":
-                integration = registry.get(integration_id)
-                try:
-                    if integration is None:
-                        raise ExecutionError("DNS integration no longer exists")
-                    if execution["adapter_result"].get("created_by_execution"):
-                        store.delete_privacy_list_item(
-                            integration_id, "block", str(execution["indicator_value"]),
-                        )
-                    result = sync_provider_lists(
-                        integration, store.list_privacy_lists(integration_id),
-                    )
-                    store.update_response_execution(
-                        str(execution["execution_id"]), "failed",
-                        {
-                            "compensation_status": "completed",
-                            "compensation_result": result,
-                        },
-                    )
-                except (DnsProviderError, ValueError, ExecutionError) as exc:
-                    logger.error(
-                        "DNS enforcement compensation still pending execution_id=%s integration_id=%s error=%s",
-                        execution["execution_id"], integration_id, type(exc).__name__,
-                    )
-                    store.update_response_execution(
-                        str(execution["execution_id"]), "rollback_failed",
-                        {
-                            "compensation_status": "pending",
-                            "compensation_error": type(exc).__name__,
-                        },
-                        expires_at=datetime.now(UTC),
-                    )
-                processed += 1
-                continue
             if not execution["adapter_result"].get("created_by_execution"):
                 store.update_response_execution(
                     str(execution["execution_id"]), "rolled_back",
