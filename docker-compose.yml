@@ -26,6 +26,7 @@ services:
     environment:
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
       OPENSHIELD_DNS_POLL_INTERVAL_SECONDS: ${OPENSHIELD_DNS_POLL_INTERVAL_SECONDS:-60}
+      OPENSHIELD_RUNTIME_SECRETS_DIR: /run/openshield-secrets
       OPENSHIELD_SECRET_KEY: ${OPENSHIELD_SECRET_KEY:-}
       OPENSHIELD_API_AUTH_ENABLED: ${OPENSHIELD_API_AUTH_ENABLED:-false}
       OPENSHIELD_API_USERNAME: ${OPENSHIELD_API_USERNAME:-}
@@ -36,6 +37,7 @@ services:
       OPENSHIELD_MAX_AUTONOMY_LEVEL: ${OPENSHIELD_MAX_AUTONOMY_LEVEL:-0}
     volumes:
       - ./certs:/run/openshield/ca:ro
+      - openshield-runtime-secrets:/run/openshield-secrets
     depends_on:
       openshield-db:
         condition: service_healthy
