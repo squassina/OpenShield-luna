@@ -193,6 +193,8 @@ def _pihole_request_with_credentials(
     integration: Integration, credentials: dict[str, str] | None,
 ) -> dict | list:
     if credentials is None:
+        if method == "GET" and body is None:
+            return _pihole_request(base_url, path, integration=integration)
         return _pihole_request(base_url, path, method=method, body=body, integration=integration)
     return _pihole_request(
         base_url, path, method=method, body=body, integration=integration,
