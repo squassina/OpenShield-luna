@@ -429,7 +429,10 @@ def test_policy_api_and_emergency_stop_fail_closed(monkeypatch) -> None:
     assert main.store.get_emergency_stop() is True
 
 
-@pytest.mark.parametrize("failure_mode", ["before_mutation", "partial_mutation", "lost_response", "verification_failed"])
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["before_mutation", "partial_mutation", "lost_response", "verification_failed"],
+)
 def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
     monkeypatch, failure_mode: str,
 ) -> None:
@@ -437,8 +440,6 @@ def test_failed_dns_block_is_compensated_without_leaving_a_provider_rule(
 
     _register("pihole", "pihole-home")
     incident = _incident()
-    from openshield.api import main
-
     main.store.upsert_privacy_list(
         "pihole-home", "block", "manual.example", "Manual admin entry",
     )
