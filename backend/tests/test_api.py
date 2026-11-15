@@ -8,7 +8,7 @@ from openshield.core.storage import PostgresStore
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.registry import IntegrationRegistry
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer connector-test-token"})
 
 
 def setup_function() -> None:
@@ -407,7 +407,7 @@ def test_api_basic_auth_and_csrf_protection(monkeypatch) -> None:
 def test_gateway_token_is_required_even_when_admin_auth_is_disabled(monkeypatch) -> None:
     monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
     monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
-    assert client.post("/api/v1/gateway/connect", json=gateway_payload()).status_code == 401
+    assert client.post("/api/v1/gateway/connect", json=gateway_payload(), headers={"Authorization": ""}).status_code == 401
 
     monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
     assert client.post(
@@ -427,7 +427,7 @@ def test_openwrt_event_ingestion_requires_gateway_token(monkeypatch) -> None:
     register_integration("home-gateway")
     event = sample_event("gateway-auth-required", "home-gateway")
     event["source"] = {"integration_id": "home-gateway", "kind": "openwrt"}
-    assert client.post("/api/v1/events", json=event).status_code == 401
+    assert client.post("/api/v1/events", json=event, headers={"Authorization": ""}).status_code == 401
 
     monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
     assert client.post(
