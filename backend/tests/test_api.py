@@ -404,14 +404,36 @@ def test_api_basic_auth_and_csrf_protection(monkeypatch) -> None:
     monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
 
 
-def test_gateway_token_is_required_when_configured(monkeypatch) -> None:
-    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+def test_gateway_token_is_required_even_when_admin_auth_is_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
+    monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
     assert client.post("/api/v1/gateway/connect", json=gateway_payload()).status_code == 401
+
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    assert client.post(
+        "/api/v1/gateway/connect", json=gateway_payload(),
+        headers={"Authorization": "Bearer wrong-token"},
+    ).status_code == 401
     response = client.post(
         "/api/v1/gateway/connect", json=gateway_payload(),
         headers={"Authorization": "Bearer connector-test-token"},
     )
     assert response.status_code == 201
+
+
+def test_openwrt_event_ingestion_requires_gateway_token(monkeypatch) -> None:
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
+    monkeypatch.delenv("OPENSHIELD_GATEWAY_TOKEN", raising=False)
+    register_integration("home-gateway")
+    event = sample_event("gateway-auth-required", "home-gateway")
+    event["source"] = {"integration_id": "home-gateway", "kind": "openwrt"}
+    assert client.post("/api/v1/events", json=event).status_code == 401
+
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    assert client.post(
+        "/api/v1/events", json=event,
+        headers={"Authorization": "Bearer connector-test-token"},
+    ).status_code == 202
 
 
 def test_openwrt_secret_rotation_reencrypts_with_active_key(monkeypatch) -> None:
