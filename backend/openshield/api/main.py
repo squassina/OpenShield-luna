@@ -278,10 +278,12 @@ class ClassificationOverrideRequest(BaseModel):
 
 
 class PiHoleCredentials(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     password: SecretStr = Field(min_length=1, max_length=1024)
 
 
 class AdGuardCredentials(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     username: SecretStr = Field(min_length=1, max_length=256)
     password: SecretStr = Field(min_length=1, max_length=1024)
 
@@ -428,7 +430,13 @@ def register_integration(registration: IntegrationRegistration) -> dict[str, obj
 
 @app.get("/api/v1/integrations", tags=["integrations"])
 def list_integrations() -> list[dict[str, object]]:
-    return [item.model_dump(mode="json") for item in registry.list_all()]
+    result = []
+    for item in registry.list_all():
+        payload = item.model_dump(mode="json")
+        if item.kind in {"pihole", "adguard"}:
+            payload["config"]["auth_configured"] = store.get_integration_secret(item.integration_id) is not None
+        result.append(payload)
+    return result
 
 
 @app.patch("/api/v1/integrations/{integration_id}", tags=["integrations"])
@@ -575,7 +583,8 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         }
     if item.kind in {"pihole", "adguard"}:
         try:
-            credentials = SecretStore(store).get(integration_id)
+            encrypted = store.get_integration_secret(integration_id)
+            credentials = SecretStore(store).get(integration_id) if encrypted else None
             records = fetch_dns_records(item, credentials)
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -2169,7 +2178,8 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=409, detail="DNS privacy integration is disabled")
     _record_poll_attempt(integration_id)
     try:
-        credentials = SecretStore(store).get(integration_id)
+        encrypted = store.get_integration_secret(integration_id)
+        credentials = SecretStore(store).get(integration_id) if encrypted else None
         records = fetch_dns_records(integration, credentials)
         events = normalize_dns_batch(
             integration.kind, integration_id, records,
@@ -2377,7 +2387,8 @@ def sync_privacy_lists(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
     entries = store.list_privacy_lists("openshield-local")
     try:
-        credentials = SecretStore(store).get(integration_id)
+        encrypted = store.get_integration_secret(integration_id)
+        credentials = SecretStore(store).get(integration_id) if encrypted else None
         result = sync_provider_lists(integration, entries, credentials)
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
