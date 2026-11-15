@@ -12,6 +12,7 @@ client = TestClient(app, headers={"Authorization": "Bearer connector-test-token"
 
 
 def setup_function() -> None:
+    os.environ["OPENSHIELD_GATEWAY_TOKEN"] = "connector-test-token"
     from openshield.api import main
     main.store.reset()
 
@@ -357,7 +358,7 @@ def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(monkeypa
     )
     assert config.status_code == 200
     assert config.json()["openwrt_config"]["password"] == "router-secret-value"
-    assert client.get("/api/v1/gateway/config/home-gateway").status_code == 401
+    assert client.get("/api/v1/gateway/config/home-gateway", headers={"Authorization": ""}).status_code == 401
 
 
 def test_openwrt_credentials_require_secret_key_and_validate_url(monkeypatch) -> None:
