@@ -155,6 +155,9 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <label>Display name<input id="edit-display-name" required maxlength="120"></label>
       <label id="edit-url-label">Service URL<input id="edit-base-url" type="url"></label>
       <label id="edit-ca-bundle-label" hidden>Custom CA bundle path (inside Node container)<input id="edit-ca-bundle-path" placeholder="/run/openshield/ca/pihole-ca.pem" autocomplete="off"></label>
+      <label id="edit-dns-username-label" hidden>AdGuard username<input id="edit-dns-username" autocomplete="username"></label>
+      <label id="edit-dns-password-label" hidden>Provider password<input id="edit-dns-password" type="password" autocomplete="new-password"></label>
+      <p id="edit-dns-credentials-status" class="notice" hidden></p>
       <div class="toolbar">
         <button type="button" id="cancel-integration-edit">Cancel</button>
         <button class="primary" type="submit">Save changes</button>
@@ -330,6 +333,12 @@ function editIntegration(item) {
   $("edit-base-url").value=(item.config&&item.config.base_url)||"";
   $("edit-ca-bundle-label").hidden=!hasUrl;
   $("edit-ca-bundle-path").value=(item.config&&item.config.ca_bundle_path)||"";
+  const isDns=["pihole","adguard"].includes(item.kind);
+  $("edit-dns-username-label").hidden=item.kind!=="adguard";
+  $("edit-dns-password-label").hidden=!isDns;
+  $("edit-dns-username").value=""; $("edit-dns-password").value="";
+  $("edit-dns-credentials-status").hidden=!isDns;
+  $("edit-dns-credentials-status").textContent=isDns ? (item.config&&item.config.auth_configured ? "Credentials configured. Leave blank to keep; enter new values to replace." : "Credentials optional. Saved values are encrypted and never returned.") : "";
   $("integration-dialog").showModal();
 }
 async function deleteIntegration(item) {
@@ -818,6 +827,13 @@ $("integration-edit-form").addEventListener("submit",async event=>{
   const button=event.submitter;button.disabled=true;
   try {
     await api("/api/v1/integrations/"+encodeURIComponent(editingIntegrationId),{method:"PATCH",body:JSON.stringify(payload)});
+    if(["pihole","adguard"].includes(item.kind)) {
+      const password=$("edit-dns-password").value, username=$("edit-dns-username").value.trim();
+      if(password) await api("/api/v1/integrations/"+encodeURIComponent(editingIntegrationId)+"/dns-provider-credentials",{
+        method:"PUT",body:JSON.stringify(item.kind==="pihole" ? {password} : {username,password})
+      });
+      else if(username) throw new Error("Enter an AdGuard password with the username.");
+    }
     $("integration-dialog").close();editingIntegrationId=null;
     showNotice("Integration updated.");await load();
   } catch(error) { showNotice("Could not update integration: "+error.message,true); }
