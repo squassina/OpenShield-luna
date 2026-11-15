@@ -437,12 +437,33 @@ CREATE TABLE IF NOT EXISTS events (
                 ON audit_records (occurred_at DESC)
                 """,
             ]
+            migrations = ((1, "initial schema", statements),)
             with (
                 psycopg.connect(self._dsn, connect_timeout=5) as connection,
                 connection.cursor() as cursor,
             ):
-                for statement in statements:
-                    cursor.execute(statement)
+                # Serialize schema upgrades across Node processes. The transaction-scoped
+                # lock is released automatically on commit or rollback.
+                cursor.execute("SELECT pg_advisory_xact_lock(731946205)")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
+                row = cursor.fetchone()
+                current_version = int(row[0]) if row else 0
+                for version, name, migration_statements in migrations:
+                    if version <= current_version:
+                        continue
+                    for statement in migration_statements:
+                        cursor.execute(statement)
+                    cursor.execute(
+                        "INSERT INTO schema_migrations (version, name) VALUES (%s, %s)",
+                        (version, name),
+                    )
             self._schema_ready = True
 
     def is_ready(self) -> bool:
