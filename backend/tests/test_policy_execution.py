@@ -559,3 +559,42 @@ def test_failed_dns_compensation_is_retried_until_provider_is_reconciled(monkeyp
     assert retried["adapter_result"]["compensation_status"] == "completed"
     assert sync_calls == 3
     assert main.store.list_privacy_lists("pihole-home") == []
+
+
+def test_dns_ttl_rollback_preserves_entry_taken_over_by_manual_admin(monkeypatch) -> None:
+    from openshield.api import main
+
+    _register("pihole", "pihole-home")
+    incident = _incident()
+    policy = _policy()
+    _enable_enforcement(monkeypatch, 1)
+    synced_entries = []
+    monkeypatch.setattr(
+        execution_service,
+        "sync_provider_lists",
+        lambda _integration, entries: (
+            synced_entries.append([dict(item) for item in entries]) or {"status": "synced"}
+        ),
+    )
+    decision = evaluate_policy(
+        main.store, main.registry, incident["incident_id"], policy["policy_id"],
+        main.gateway_connections,
+    )
+    execution = execution_service.approve_decision(
+        main.store, main.registry, main.gateway_connections, decision["decision_id"],
+    )
+    main.store.upsert_privacy_list(
+        "pihole-home", "block", "malicious.example", "Manual admin takeover",
+    )
+    main.store.update_response_execution(
+        execution["execution_id"], "active",
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    assert execution_service.expire_due_executions(main.store, main.registry) == 1
+    rolled_back = main.store.get_response_execution(execution["execution_id"])
+    assert rolled_back["status"] == "rolled_back"
+    entries = main.store.list_privacy_lists("pihole-home")
+    assert len(entries) == 1
+    assert entries[0]["comment"] == "Manual admin takeover"
+    assert synced_entries[-1][0]["comment"] == "Manual admin takeover"
