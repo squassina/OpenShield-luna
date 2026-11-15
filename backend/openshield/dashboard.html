@@ -154,6 +154,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <p id="integration-dialog-kind"></p>
       <label>Display name<input id="edit-display-name" required maxlength="120"></label>
       <label id="edit-url-label">Service URL<input id="edit-base-url" type="url"></label>
+      <label id="edit-ca-bundle-label" hidden>Custom CA bundle path (inside Node container)<input id="edit-ca-bundle-path" placeholder="/run/openshield/ca/pihole-ca.pem" autocomplete="off"></label>
       <div class="toolbar">
         <button type="button" id="cancel-integration-edit">Cancel</button>
         <button class="primary" type="submit">Save changes</button>
@@ -330,6 +331,8 @@ function editIntegration(item) {
   $("edit-url-label").hidden=!hasUrl;
   $("edit-base-url").required=hasUrl;
   $("edit-base-url").value=(item.config&&item.config.base_url)||"";
+  $("edit-ca-bundle-label").hidden=!hasUrl;
+  $("edit-ca-bundle-path").value=(item.config&&item.config.ca_bundle_path)||"";
   $("integration-dialog").showModal();
 }
 async function deleteIntegration(item) {
@@ -809,7 +812,12 @@ $("integration-edit-form").addEventListener("submit",async event=>{
   const item=(await api("/api/v1/integrations")).find(x=>x.integration_id===editingIntegrationId);
   if(!item){showNotice("Integration no longer exists.",true);$("integration-dialog").close();return;}
   const payload={display_name:$("edit-display-name").value.trim()};
-  if(["pihole","adguard"].includes(item.kind)) payload.config={...item.config,base_url:$("edit-base-url").value.trim()};
+  if(["pihole","adguard"].includes(item.kind)) {
+    payload.config={...item.config,base_url:$("edit-base-url").value.trim()};
+    const caBundlePath=$("edit-ca-bundle-path").value.trim();
+    if(caBundlePath) payload.config.ca_bundle_path=caBundlePath;
+    else delete payload.config.ca_bundle_path;
+  }
   const button=event.submitter;button.disabled=true;
   try {
     await api("/api/v1/integrations/"+encodeURIComponent(editingIntegrationId),{method:"PATCH",body:JSON.stringify(payload)});

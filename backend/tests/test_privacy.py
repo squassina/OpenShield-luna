@@ -507,7 +507,7 @@ def test_pihole_query_log_pagination_uses_fixed_window_and_offset(monkeypatch) -
     ]
     requests = []
 
-    def fake_request(base_url, path):
+    def fake_request(base_url, path, integration=None):
         requests.append(path)
         return responses.pop(0)
 
@@ -833,7 +833,7 @@ def test_pihole_future_watermark_is_clamped_for_clock_skew(monkeypatch) -> None:
     )
     requests = []
 
-    def fake_request(base_url, path):
+    def fake_request(base_url, path, integration=None):
         requests.append(path)
         return {"queries": []}
 
@@ -906,3 +906,118 @@ def test_dns_provider_auth_failures_are_sanitized(monkeypatch) -> None:
             assert "Unauthorized" not in str(exc)
         else:
             raise AssertionError("Provider authentication failure must be reported")
+
+
+def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(monkeypatch) -> None:
+    from openshield.privacy import providers
+
+    class FakeSSLContext:
+        def __init__(self):
+            self.loaded_ca = None
+
+        def load_verify_locations(self, *, cafile):
+            self.loaded_ca = cafile
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.payload
+
+    monkeypatch.delenv("OPENSHIELD_PIHOLE_PASSWORD", raising=False)
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_USERNAME", raising=False)
+    monkeypatch.delenv("OPENSHIELD_ADGUARD_PASSWORD", raising=False)
+
+    for kind, base_url, payload in (
+        ("pihole", "https://pihole.example", b'{"queries":[]}'),
+        ("adguard", "https://adguard.example", b'{"data":[]}'),
+    ):
+        context = FakeSSLContext()
+        seen = {}
+
+        monkeypatch.setattr(
+            providers.ssl, "create_default_context",
+            lambda expected_context=context: expected_context,
+        )
+
+        def make_urlopen(expected_payload, captured):
+            def fake_urlopen(request, timeout, **kwargs):
+                captured["request"] = request
+                captured["context"] = kwargs.get("context")
+                return FakeResponse(expected_payload)
+            return fake_urlopen
+
+        monkeypatch.setattr(providers, "urlopen", make_urlopen(payload, seen))
+        integration = Integration(
+            integration_id=f"{kind}-tls", kind=kind, display_name=kind.title(),
+            capabilities=[], config={
+                "base_url": base_url,
+                "ca_bundle_path": f"/run/openshield/ca/{kind}.pem",
+            },
+        )
+
+        assert fetch_dns_records(integration) == []
+        assert seen["context"] is context
+        assert context.loaded_ca == f"/run/openshield/ca/{kind}.pem"
+        assert seen["request"].full_url.startswith("https://")
+
+
+def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
+    from openshield.privacy.providers import DnsProviderError, _ssl_context
+
+    http_integration = Integration(
+        integration_id="pihole-http", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={
+            "base_url": "http://192.0.2.53",
+            "ca_bundle_path": "/run/openshield/ca/root.pem",
+        },
+    )
+    relative_integration = Integration(
+        integration_id="pihole-relative", kind="pihole", display_name="Pi-hole",
+        capabilities=[], config={
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "certs/root.pem",
+        },
+    )
+
+    for integration, url in (
+        (http_integration, "http://192.0.2.53/api/queries"),
+        (relative_integration, "https://pihole.example/api/queries"),
+    ):
+        try:
+            _ssl_context(integration, url)
+        except DnsProviderError:
+            pass
+        else:
+            raise AssertionError("Invalid custom CA configuration must be rejected")
+
+
+def test_dns_integration_validates_custom_ca_bundle_path() -> None:
+    invalid = client.post("/api/v1/integrations", json={
+        "integration_id": "pihole-relative-ca",
+        "kind": "pihole",
+        "display_name": "Pi-hole",
+        "config": {
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "certs/root.pem",
+        },
+    })
+    assert invalid.status_code == 422
+
+    valid = client.post("/api/v1/integrations", json={
+        "integration_id": "pihole-custom-ca",
+        "kind": "pihole",
+        "display_name": "Pi-hole",
+        "config": {
+            "base_url": "https://pihole.example",
+            "ca_bundle_path": "/run/openshield/ca/root.pem",
+        },
+    })
+    assert valid.status_code == 201

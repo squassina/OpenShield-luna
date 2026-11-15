@@ -254,7 +254,7 @@ curl -X POST http://localhost:8000/api/v1/privacy/sources/pihole-home/sync
 curl -X POST http://localhost:8000/api/v1/privacy/sources/adguard-home/sync
 ~~~
 
-Each sync fetches up to 500 latest provider records. Event IDs make overlapping polls idempotent. Pi-hole without an API password needs no credential. Otherwise set `OPENSHIELD_PIHOLE_PASSWORD`. For AdGuard Home set both `OPENSHIELD_ADGUARD_USERNAME` and `OPENSHIELD_ADGUARD_PASSWORD`. Use HTTPS where available. Do not put credentials in integration config or commit them.
+Each sync fetches up to 500 latest provider records. Event IDs make overlapping polls idempotent. Pi-hole without an API password needs no credential. Otherwise set `OPENSHIELD_PIHOLE_PASSWORD`. For AdGuard Home set both `OPENSHIELD_ADGUARD_USERNAME` and `OPENSHIELD_ADGUARD_PASSWORD`. Use HTTPS where available. Do not put credentials in integration config or commit them. For private PKI, mount CA PEM bundles in `./certs` and set `ca_bundle_path` on each DNS integration (for example, `/run/openshield/ca/pihole-ca.pem`). This adds that CA to the system trust roots for that integration only; certificate-chain and hostname verification stay enabled. See the [DNS provider TLS runbook](docs/operations/dns-provider-tls.md).
 
 For provider exporters, records can also be pushed to `POST /api/v1/dns/{integration_id}/queries` in batches of up to 500 records and 5 MiB.
 

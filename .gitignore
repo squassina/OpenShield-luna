@@ -12,3 +12,7 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Local DNS provider CA certificates (never commit private PKI material)
+certs/*
+!certs/.gitkeep
