@@ -210,6 +210,7 @@ async def authenticate_requests(request: Request, call_next):
         "/wazuh-credentials", "/wazuh-diagnostics",
         "/prometheus-credentials", "/prometheus-diagnostics",
         "/grafana-credentials", "/grafana-diagnostics",
+        "/dns-provider-credentials",
     )):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -274,6 +275,15 @@ class PrivacyListEntry(BaseModel):
 class ClassificationOverrideRequest(BaseModel):
     action: Literal["allow", "tracker"]
     reason: str = Field(default="", max_length=500)
+
+
+class PiHoleCredentials(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
+class AdGuardCredentials(BaseModel):
+    username: SecretStr = Field(min_length=1, max_length=256)
+    password: SecretStr = Field(min_length=1, max_length=1024)
 
 
 class OPNsenseCredentials(BaseModel):
@@ -451,7 +461,7 @@ def probe_integration(integration_id: str) -> dict[str, object]:
     if item is None:
         raise HTTPException(status_code=404, detail="Integration not found")
     result = adapters[item.kind].probe(item)
-    if item.kind in {"crowdsec", "misp"}:
+    if item.kind in {"crowdsec", "misp", "pihole", "adguard"}:
         result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
     if item.kind == "openai":
         result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
@@ -565,7 +575,10 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         }
     if item.kind in {"pihole", "adguard"}:
         try:
-            records = fetch_dns_records(item)
+            credentials = SecretStore(store).get(integration_id)
+            records = fetch_dns_records(item, credentials)
+        except SecretConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except DnsProviderError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
@@ -2156,11 +2169,15 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=409, detail="DNS privacy integration is disabled")
     _record_poll_attempt(integration_id)
     try:
-        records = fetch_dns_records(integration)
+        credentials = SecretStore(store).get(integration_id)
+        records = fetch_dns_records(integration, credentials)
         events = normalize_dns_batch(
             integration.kind, integration_id, records,
             store.list_privacy_classification_overrides(),
         ) if records else []
+    except SecretConfigurationError as exc:
+        _record_poll_failure(integration_id)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (DnsProviderError, ValueError, TypeError, OverflowError) as exc:
         _record_poll_failure(integration_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2326,6 +2343,33 @@ def add_privacy_list_entry(entry: PrivacyListEntry) -> dict[str, object]:
     }
 
 
+@app.put("/api/v1/integrations/{integration_id}/dns-provider-credentials", tags=["integrations"])
+def save_dns_provider_credentials(integration_id: str, credentials: PiHoleCredentials | AdGuardCredentials) -> dict[str, object]:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS provider integration not found")
+    if integration.kind == "pihole" and not isinstance(credentials, PiHoleCredentials):
+        raise HTTPException(status_code=422, detail="Pi-hole requires a password")
+    if integration.kind == "adguard" and not isinstance(credentials, AdGuardCredentials):
+        raise HTTPException(status_code=422, detail="AdGuard requires a username and password")
+    values = ({"password": credentials.password.get_secret_value()} if isinstance(credentials, PiHoleCredentials)
+              else {"username": credentials.username.get_secret_value(), "password": credentials.password.get_secret_value()})
+    try:
+        SecretStore(store).set(integration_id, values)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"status": "saved", "integration_id": integration_id, "credentials_configured": True, "secret_storage": "encrypted"}
+
+
+@app.delete("/api/v1/integrations/{integration_id}/dns-provider-credentials", status_code=204, tags=["integrations"])
+def delete_dns_provider_credentials(integration_id: str) -> Response:
+    integration = registry.get(integration_id)
+    if integration is None or integration.kind not in {"pihole", "adguard"}:
+        raise HTTPException(status_code=404, detail="DNS provider integration not found")
+    store.delete_integration_secret(integration_id)
+    return Response(status_code=204)
+
+
 @app.post("/api/v1/privacy/lists/{integration_id}/sync", status_code=200, tags=["privacy"])
 def sync_privacy_lists(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
@@ -2333,7 +2377,10 @@ def sync_privacy_lists(integration_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
     entries = store.list_privacy_lists("openshield-local")
     try:
-        result = sync_provider_lists(integration, entries)
+        credentials = SecretStore(store).get(integration_id)
+        result = sync_provider_lists(integration, entries, credentials)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except DnsProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     store.write_audit(
