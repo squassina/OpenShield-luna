@@ -1021,3 +1021,28 @@ def test_dns_integration_validates_custom_ca_bundle_path() -> None:
         },
     })
     assert valid.status_code == 201
+
+
+def test_dns_provider_credentials_are_encrypted_per_integration_and_never_returned(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+    from openshield.core.secrets import SecretStore
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    register_dns("pihole-a", "pihole")
+    register_dns("pihole-b", "pihole")
+    register_dns("adguard-a", "adguard")
+    first = client.put("/api/v1/integrations/pihole-a/dns-provider-credentials", json={"password": "pihole-password-a"})
+    second = client.put("/api/v1/integrations/pihole-b/dns-provider-credentials", json={"password": "pihole-password-b"})
+    adguard = client.put("/api/v1/integrations/adguard-a/dns-provider-credentials", json={"username": "adguard-user", "password": "adguard-password"})
+    assert first.status_code == second.status_code == adguard.status_code == 200
+    assert "pihole-password" not in first.text and "adguard-password" not in adguard.text
+    assert SecretStore(main.store).get("pihole-a") == {"password": "pihole-password-a"}
+    assert SecretStore(main.store).get("pihole-b") == {"password": "pihole-password-b"}
+    assert SecretStore(main.store).get("adguard-a") == {"username": "adguard-user", "password": "adguard-password"}
+    encrypted = main.store.get_integration_secret("pihole-a")
+    assert encrypted and b"pihole-password-a" not in encrypted
+    assert "pihole-password-a" not in client.get("/api/v1/integrations").text
+    assert client.delete("/api/v1/integrations/pihole-a/dns-provider-credentials").status_code == 204
+    assert SecretStore(main.store).get("pihole-a") is None

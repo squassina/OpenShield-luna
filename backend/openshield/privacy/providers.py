@@ -70,8 +70,8 @@ def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = 
     return decoded
 
 
-def _pihole_records(base_url: str, integration: Integration) -> list[dict]:
-    password = os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
+def _pihole_records(base_url: str, integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
+    password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
     headers = {"Accept": "application/json"}
     sid = None
     if password:
@@ -113,10 +113,10 @@ def _pihole_records(base_url: str, integration: Integration) -> list[dict]:
     return normalized
 
 
-def _adguard_records(base_url: str, integration: Integration) -> list[dict]:
+def _adguard_records(base_url: str, integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
     headers = {"Accept": "application/json"}
-    username = os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
-    password = os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
+    username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
+    password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
     if bool(username) != bool(password):
         raise DnsProviderError("AdGuard username and password must be configured together")
     if username:
@@ -148,19 +148,20 @@ def _adguard_records(base_url: str, integration: Integration) -> list[dict]:
     return normalized
 
 
-def fetch_dns_records(integration: Integration) -> list[dict]:
+def fetch_dns_records(integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
     base_url = _base_url(integration)
     if integration.kind == "pihole":
-        return _pihole_records(base_url, integration)
+        return _pihole_records(base_url, integration, credentials)
     if integration.kind == "adguard":
-        return _adguard_records(base_url, integration)
+        return _adguard_records(base_url, integration, credentials)
     raise DnsProviderError("Unsupported DNS provider")
 
 
 
 def _pihole_request(base_url: str, path: str, *, method: str = "GET",
-                   body: dict | None = None, integration: Integration | None = None) -> dict | list:
-    password = os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
+                   body: dict | None = None, integration: Integration | None = None,
+                   credentials: dict[str, str] | None = None) -> dict | list:
+    password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
     headers = {"Accept": "application/json"}
     sid = None
     if password:
@@ -187,14 +188,28 @@ def _pihole_request(base_url: str, path: str, *, method: str = "GET",
                 pass
 
 
-def sync_provider_lists(integration: Integration, entries: list[dict[str, object]]) -> dict[str, int | str]:
+def _pihole_request_with_credentials(
+    base_url: str, path: str, *, method: str = "GET", body: dict | None = None,
+    integration: Integration, credentials: dict[str, str] | None,
+) -> dict | list:
+    if credentials is None:
+        if method == "GET" and body is None:
+            return _pihole_request(base_url, path, integration=integration)
+        return _pihole_request(base_url, path, method=method, body=body, integration=integration)
+    return _pihole_request(
+        base_url, path, method=method, body=body, integration=integration,
+        credentials=credentials,
+    )
+
+
+def sync_provider_lists(integration: Integration, entries: list[dict[str, object]], credentials: dict[str, str] | None = None) -> dict[str, int | str]:
     desired = {
         (str(item["list_type"]), str(item["domain"])): str(item.get("comment") or "")
         for item in entries
     }
     if integration.kind == "pihole":
         base_url = _base_url(integration)
-        response = _pihole_request(base_url, "/api/domains", integration=integration)
+        response = _pihole_request_with_credentials(base_url, "/api/domains", integration=integration, credentials=credentials)
         existing = response.get("domains", []) if isinstance(response, dict) else response
         if not isinstance(existing, list):
             raise DnsProviderError("Pi-hole domain-list response has no domains list")
@@ -211,9 +226,10 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
         for list_type, domain in sorted(desired):
             key = ("allow" if list_type == "allow" else "deny", domain)
             if key not in all_domains:
-                _pihole_request(
+                _pihole_request_with_credentials(
                     base_url, f"/api/domains/{key[0]}/exact", method="POST",
                     body={"domain": domain, "comment": "OpenShield managed"}, integration=integration,
+                    credentials=credentials,
                 )
                 added += 1
         stale = set(managed) - {
@@ -221,12 +237,12 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
             for kind, domain in desired
         }
         for list_type, domain in sorted(stale):
-            _pihole_request(
+            _pihole_request_with_credentials(
                 base_url, f"/api/domains/{list_type}/exact/{quote(domain, safe='')}",
-                method="DELETE", integration=integration,
+                method="DELETE", integration=integration, credentials=credentials,
             )
             removed += 1
-        verified = _pihole_request(base_url, "/api/domains", integration=integration)
+        verified = _pihole_request_with_credentials(base_url, "/api/domains", integration=integration, credentials=credentials)
         verified_items = verified.get("domains", []) if isinstance(verified, dict) else verified
         verified_keys = {
             (str(item.get("type")), str(item.get("domain")))
@@ -240,8 +256,8 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
     if integration.kind == "adguard":
         base_url = _base_url(integration)
         headers = {"Accept": "application/json"}
-        username = os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
-        password = os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
+        username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
+        password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
         if bool(username) != bool(password):
             raise DnsProviderError("AdGuard username and password must be configured together")
         if username:
@@ -338,7 +354,8 @@ def _time_value(value: object) -> float | None:
 
 
 def fetch_dns_records_page(
-    integration: Integration, cursor: dict[str, object] | None = None, page_size: int = 500
+    integration: Integration, cursor: dict[str, object] | None = None, page_size: int = 500,
+    credentials: dict[str, str] | None = None,
 ) -> tuple[list[dict], dict[str, object], bool]:
     """Fetch one bounded provider page and return its resumable cursor and completion flag."""
     if not 1 <= page_size <= 1000:
@@ -361,7 +378,7 @@ def fetch_dns_records_page(
             "from": state["window_from"], "until": state["window_until"],
             "length": page_size, "start": int(state.get("start", 0)),
         }
-        result = _pihole_request(base_url, f"/api/queries?{urlencode(params)}", integration=integration)
+        result = _pihole_request_with_credentials(base_url, f"/api/queries?{urlencode(params)}", integration=integration, credentials=credentials)
         records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
         if not isinstance(records, list):
             raise DnsProviderError("Pi-hole query-log response has no query list")
@@ -388,8 +405,8 @@ def fetch_dns_records_page(
         if state.get("older_than"):
             params["older_than"] = state["older_than"]
         headers = {"Accept": "application/json"}
-        username = os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
-        password = os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
+        username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
+        password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
         if bool(username) != bool(password):
             raise DnsProviderError("AdGuard username and password must be configured together")
         if username:
