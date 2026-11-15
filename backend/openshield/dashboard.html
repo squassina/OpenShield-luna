@@ -177,11 +177,10 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     <article class="panel"><h2>Top clients / devices</h2><div id="devices" class="table-wrap"></div></article>
   </section>
   <section class="panel">
-<<<<<<< HEAD
     <h2>OpenWrt device topology</h2>
     <p class="muted">Devices are identified by MAC and grouped by logical router interface. Offline devices remain in inventory.</p>
     <div id="router-topology" class="topology-grid" aria-live="polite"></div>
-=======
+  </section>
     <h2>Threat intelligence incidents</h2>
     <p>Enrich recent network and DNS observations against configured CrowdSec and MISP sources. Matches retain source evidence and can be acknowledged or marked false positive.</p>
     <div class="toolbar"><button id="enrich-events" class="primary" type="button">Enrich recent events</button></div>
@@ -255,26 +254,26 @@ const table = (target, headers, rows) => {
 };
 let providerIds=[];
 async function load() {
-  $("refresh").disabled=true; showNotice("Refreshing dashboard…");
+  $("refresh").disabled=true;
+  showNotice("Refreshing dashboard…");
   try {
     const days=$("period").value;
-<<<<<<< HEAD
-    const [report,sources,sensors,devices,integrations,lists,inventory,inventoryTopology]=await Promise.all([
-      api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
-      api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
-      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/inventory/router-devices?limit=500")
-=======
-    const [report,sources,sensors,devices,integrations,lists,inventory,incidents]=await Promise.all([
-      api("/api/v1/privacy/report?days="+days),api("/api/v1/privacy/sources"),
-      api("/api/v1/sensors"),api("/api/v1/privacy/analytics/devices?days="+days),
-      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/incidents?limit=50"),api("/api/v1/policies"),
-      api("/api/v1/policy-decisions?limit=50"),api("/api/v1/executions?limit=50"),
-      api("/api/v1/control/emergency-stop")
-      api("/api/v1/integrations"),api("/api/v1/privacy/lists"),api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/incidents?limit=50"),api("/api/v1/policies"),
-      api("/api/v1/policy-decisions?limit=50"),api("/api/v1/executions?limit=50"),
+    const [
+      report,sources,sensors,devices,integrations,lists,inventory,inventoryTopology,
+      incidents,policyState,decisions,executions,control
+    ] = await Promise.all([
+      api("/api/v1/privacy/report?days="+days),
+      api("/api/v1/privacy/sources"),
+      api("/api/v1/sensors"),
+      api("/api/v1/privacy/analytics/devices?days="+days),
+      api("/api/v1/integrations"),
+      api("/api/v1/privacy/lists"),
+      api("/api/v1/inventory/devices?limit=20"),
+      api("/api/v1/inventory/router-devices?limit=500"),
+      api("/api/v1/incidents?limit=50"),
+      api("/api/v1/policies"),
+      api("/api/v1/policy-decisions?limit=50"),
+      api("/api/v1/executions?limit=50"),
       api("/api/v1/control/emergency-stop")
     ]);
     $("queries").textContent=fmt(report.totals.queries);
@@ -283,13 +282,9 @@ async function load() {
     $("block-rate").textContent=report.totals.block_rate_percent+"%";
     table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
     table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
-    renderSources(sources,integrations)
-    renderPolicyPanel(policyState,decisions,executions,control,integrations)
-    renderIncidents(incidents)
-    renderAIProviders(integrations);
-    renderSources(sources,integrations)
-    renderPolicyPanel(policyState,decisions,executions,control,integrations)
-    renderIncidents(incidents)
+    renderSources(sources,integrations);
+    renderPolicyPanel(policyState,decisions,executions,control,integrations);
+    renderIncidents(incidents);
     renderAIProviders(integrations);
     renderIntegrations(integrations);
     renderRouterTopology(inventoryTopology);
@@ -299,7 +294,7 @@ async function load() {
     await loadCrowdSecStatus(integrations);
     await loadWazuhStatus(integrations);
     await loadPrometheusStatus(integrations);
-      await loadGrafanaStatus(integrations);
+    await loadGrafanaStatus(integrations);
     table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
     table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
     renderTrend(report.daily_trends);
@@ -307,13 +302,14 @@ async function load() {
     providerIds=integrations.filter(x=>["pihole","adguard"].includes(x.kind));
     renderSyncButtons();
     showNotice("Dashboard updated.");
-  } catch(error) { showNotice("Dashboard refresh failed: "+error.message,true); }
-  finally { $("refresh").disabled=false; }
+  } catch(error) {
+    showNotice("Dashboard refresh failed: "+error.message,true);
+  } finally {
+    $("refresh").disabled=false;
+  }
 }
 
 let editingIntegrationId=null;
-let currentPolicies=[];
-let currentIntegrations=[];
 let currentPolicies=[];
 let currentIntegrations=[];
 function actionButton(label, className, handler) {
@@ -900,7 +896,6 @@ $("service-form").addEventListener("submit",async event=>{
   finally { button.disabled=false; }
 });
 
-<<<<<<< HEAD
 function renderRouterTopology(data) {
   const root=$("router-topology");root.replaceChildren();
   const gateways=Array.isArray(data.gateways)?data.gateways:[];
@@ -944,7 +939,7 @@ function renderRouterTopology(data) {
     if(unmapped.length)renderInterface({name:"Unmapped"},unmapped);
     root.append(panel);
   });
-=======
+}
 function renderPolicyPanel(policyState,decisions,executions,control,integrations) {
   currentPolicies=policyState.items||[];currentIntegrations=integrations||[];
   const status=$("policy-runtime-status");
@@ -1001,7 +996,7 @@ function renderIncidents(items) {
     wrap.append(evidence,investigate);actions.append(wrap);row.append(actions);body.append(row);
   });
   table.append(body);root.append(table);
->>>>>>> 90181c6 (feat(p3): expose IOC enrichment and incident workflow)
+
 }
 function renderTrend(rows) {
   const root=$("trend");root.replaceChildren();
@@ -1022,19 +1017,6 @@ function renderSyncButtons() {
   providerIds.forEach(item=>{const button=document.createElement("button");button.textContent="Sync lists → "+item.display_name;button.addEventListener("click",async()=>{if(!confirm("Apply the current OpenShield allow/block lists to "+item.display_name+"? This changes DNS filtering."))return;button.disabled=true;try{const result=await api("/api/v1/privacy/lists/"+encodeURIComponent(item.integration_id)+"/sync",{method:"POST"});showNotice("Provider sync verified: "+fmt(result.added)+" added, "+fmt(result.removed)+" removed.");}catch(e){showNotice("Provider sync failed: "+e.message,true);}finally{button.disabled=false;}});root.append(button);});
 }
 $("list-form").addEventListener("submit",async event=>{event.preventDefault();try{await api("/api/v1/privacy/lists",{method:"POST",body:JSON.stringify({list_type:$("list-type").value,domain:$("list-domain").value,comment:$("list-comment").value})});$("list-domain").value="";$("list-comment").value="";await load();}catch(e){showNotice("Could not save list entry: "+e.message,true);}});
-$("enrich-events").addEventListener("click",async event=>{
-  const button=event.currentTarget;button.disabled=true;
-  try {
-    const recent=await api("/api/v1/events?limit=100");
-    if(!recent.items.length){showNotice("No events are available for enrichment.");return;}
-    const result=await api("/api/v1/threat-intel/enrich",{
-      method:"POST",body:JSON.stringify({event_ids:recent.items.map(item=>item.event_id)})
-    });
-    showNotice("Enrichment complete: "+result.lookups+" provider lookups, "+result.incidents.length+" incident indicators, "+result.errors.length+" provider errors.");
-    await load();
-  } catch(error) { showNotice("Threat intelligence enrichment failed: "+error.message,true); }
-  finally { button.disabled=false; }
-});
 $("enrich-events").addEventListener("click",async event=>{
   const button=event.currentTarget;button.disabled=true;
   try {
