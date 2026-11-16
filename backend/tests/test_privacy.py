@@ -815,10 +815,13 @@ def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypat
     metrics = Metrics()
     first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
     second = polling.poll_dns_sources_once(main.registry, main.store, metrics)
-    assert first[0]["accepted"] == 3
-    assert first[0]["pages"] == 2 and first[0]["complete"] is True
-    assert second[0]["accepted"] == 0
-    assert second[0]["duplicates"] == 1
+    third = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert first[0]["accepted"] == 2
+    assert first[0]["pages"] == 1 and first[0]["complete"] is False
+    assert second[0]["accepted"] == 1
+    assert second[0]["pages"] == 1 and second[0]["complete"] is True
+    assert third[0]["accepted"] == 0
+    assert third[0]["duplicates"] == 1
     assert metrics.count == 3
     events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert {event["payload"]["domain"] for event in events} == {
