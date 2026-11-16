@@ -454,7 +454,10 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
 
     agent._process_gateway_commands(node, router, [command], spool)
     assert router.calls == 1
-    assert spool.pending_command_results()[0]["status"] == "completed"
+    persisted = spool.get_command_result("command-1")
+    assert persisted["status"] == "completed"
+    assert persisted["acknowledged"] is False
+    assert spool.pending_command_results() == []  # Deferred by the durable retry backoff.
 
     # Simulate process restart and make the persisted retry immediately due.
     restarted = GatewayEventSpool(str(path))
