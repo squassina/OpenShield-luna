@@ -207,9 +207,7 @@ def test_incident_api_supports_evidence_timeline_and_false_positive_audit(monkey
     )
 
 
-def test_threat_intel_credentials_are_redacted_and_connection_test_is_explicit(monkeypatch) -> None:
-    from openshield.api import main
-
+def test_threat_intel_credentials_are_redacted_and_legacy_connection_test_is_rejected(monkeypatch) -> None:
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     _register("crowdsec", "crowdsec-home")
     response = client.put(
@@ -219,10 +217,11 @@ def test_threat_intel_credentials_are_redacted_and_connection_test_is_explicit(m
     assert response.status_code == 200
     assert "very-secret-crowdsec-key" not in response.text
     assert "very-secret-crowdsec-key" not in str(client.get("/api/v1/integrations").json())
-    monkeypatch.setattr(main, "lookup_crowdsec", lambda ip, key: {"matched": False})
     tested = client.post("/api/v1/integrations/crowdsec-home/test")
-    assert tested.status_code == 200
-    assert tested.json()["status"] == "connected"
+    assert tested.status_code == 409
+    assert tested.json()["detail"] == (
+        "CrowdSec Local API bouncer credentials are not configured"
+    )
 
 
 def test_enrichment_limits_unique_indicators_to_fifty(monkeypatch) -> None:
