@@ -445,17 +445,28 @@ def test_openwrt_secret_rotation_reencrypts_with_active_key(monkeypatch) -> None
     old_key = Fernet.generate_key().decode()
     new_key = Fernet.generate_key().decode()
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", old_key)
+    monkeypatch.delenv("OPENSHIELD_SECRET_KEY_PREVIOUS", raising=False)
     register_integration("home-gateway")
-    SecretStore(__import__("openshield.api.main", fromlist=["store"]).store).set(
+    from openshield.api import main
+
+    SecretStore(main.store).set(
         "home-gateway", {"username": "rpc", "password": "rotate-me"},
     )
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", new_key)
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY_PREVIOUS", old_key)
-    from openshield.api import main
-    rotated = SecretStore(main.store).get("home-gateway")
-    assert rotated == {"username": "rpc", "password": "rotate-me"}
+
+    assert SecretStore(main.store).reencrypt_all() == 1
     encrypted = main.store.get_integration_secret("home-gateway")
     assert encrypted and Fernet(new_key.encode()).decrypt(encrypted)
+
+    monkeypatch.delenv("OPENSHIELD_SECRET_KEY_PREVIOUS")
+    assert SecretStore(main.store).get("home-gateway") == {
+        "username": "rpc", "password": "rotate-me",
+    }
+    response = client.get("/api/v1/integrations")
+    assert response.status_code == 200
+    for secret in (old_key, new_key, "rotate-me"):
+        assert secret not in response.text
 
 
 def test_admin_auth_rate_limits_repeated_failures(monkeypatch) -> None:
