@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openshield.core.tls import resolve_ca_bundle_path
 
-
 DEFAULT_FIREWALL_ZONES = {
     "source": {"src": "wan", "dest": "lan"},
     "destination": {"src": "lan", "dest": "wan"},
