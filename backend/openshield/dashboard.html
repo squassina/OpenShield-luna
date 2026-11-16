@@ -341,6 +341,7 @@ async function load() {
     const integrations=value("integrations");
     if(integrations) {
       renderIntegrations(integrations);
+      $("ai-provider").disabled=false;
       renderAIProviders(integrations);
       providerIds=integrations.filter(x=>["pihole","adguard"].includes(x.kind));
       renderSyncButtons();
