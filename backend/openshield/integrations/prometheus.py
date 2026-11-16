@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import ssl
 from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from openshield.integrations.models import Capability, Integration
 
@@ -27,7 +28,10 @@ class PrometheusClient:
         "/api/v1/targets?state=active",
     }
 
-    def __init__(self, base_url: str, bearer_token: str | None = None, timeout: float = 8.0):
+    def __init__(
+        self, base_url: str, bearer_token: str | None = None, timeout: float = 8.0,
+        ssl_context: ssl.SSLContext | None = None,
+    ):
         try:
             parsed = urlsplit(base_url)
             hostname = parsed.hostname
@@ -50,6 +54,7 @@ class PrometheusClient:
         self._base_url = base_url.rstrip("/")
         self._bearer_token = bearer_token
         self._timeout = timeout
+        self._ssl_context = ssl_context
 
     def _get(self, path: str) -> dict[str, object]:
         if path not in self.ENDPOINTS:
@@ -59,7 +64,7 @@ class PrometheusClient:
             headers["Authorization"] = f"Bearer {self._bearer_token}"
         request = Request(self._base_url + path, headers=headers, method="GET")
         try:
-            with build_opener(_NoRedirectHandler()).open(request, timeout=self._timeout) as response:
+            with build_opener(_NoRedirectHandler(), HTTPSHandler(context=self._ssl_context)).open(request, timeout=self._timeout) as response:
                 raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
             if exc.code in {401, 403}:
