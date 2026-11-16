@@ -4,8 +4,8 @@ import threading
 from datetime import UTC, datetime
 
 import psycopg
-from psycopg_pool import ConnectionPool, PoolTimeout
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
