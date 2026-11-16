@@ -18,6 +18,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build application and validation images
         run: docker compose build openshield-node openshield-gateway-connector openshield-test openshield-lint openshield-browser-test
+      - name: Verify previous encryption key is forwarded to Node
+        run: |
+          docker compose config --format json | python -c 'import json, sys; env = json.load(sys.stdin)["services"]["openshield-node"]["environment"]; assert "OPENSHIELD_SECRET_KEY_PREVIOUS" in env'
       - name: Lint
         run: docker compose run --rm openshield-lint
       - name: Test
