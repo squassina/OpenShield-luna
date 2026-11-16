@@ -1,4 +1,6 @@
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,3 +138,97 @@ def test_luci_device_parser_ignores_invalid_macs_and_addresses() -> None:
     assert len(devices) == 1
     assert devices[0]["ip_address"] == ""
     assert devices[0]["interface"] == "Unmapped"
+
+
+def test_openwrt_rpc_renews_expired_session_and_retries_once() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "old-session"}]),
+        response([6, {}]),
+        response([0, {"ubus_rpc_session": "new-session"}]),
+        response([0, {"result": "ok"}]),
+    ]
+    with patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies) as mocked:
+        client = OpenWrtRPCClient("http://router", "user", "password")
+
+        assert client.call("system", "board") == {"result": "ok"}
+
+    assert mocked.call_count == 4
+    calls = [json.loads(call.args[0].data) for call in mocked.call_args_list]
+    assert calls[0][2] == "login"
+    assert calls[1][0] == "old-session"
+    assert calls[2][2] == "login"
+    assert calls[3][0] == "new-session"
+
+
+def test_openwrt_rpc_surfaces_second_session_failure() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "old-session"}]),
+        response([6, {}]),
+        response([0, {"ubus_rpc_session": "new-session"}]),
+        response([6, {}]),
+    ]
+    with (
+        patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies) as mocked,
+        pytest.raises(OpenWrtRPCError, match="no longer authorized"),
+    ):
+        OpenWrtRPCClient("http://router", "user", "password").call("system", "board")
+
+    assert mocked.call_count == 4
+
+
+def test_openwrt_rpc_does_not_retry_non_session_errors() -> None:
+    replies = [
+        response([0, {"ubus_rpc_session": "session"}]),
+        response([4, {}]),
+    ]
+    with (
+        patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=replies) as mocked,
+        pytest.raises(OpenWrtRPCError, match="rejected"),
+    ):
+        OpenWrtRPCClient("http://router", "user", "password").call("system", "board")
+
+    assert mocked.call_count == 2
+
+
+def test_openwrt_rpc_does_not_retry_invalid_credentials() -> None:
+    with (
+        patch(
+            "openshield.integrations.openwrt_rpc.urlopen",
+            return_value=response([6, {}]),
+        ) as mocked,
+        pytest.raises(OpenWrtRPCError, match="rejected"),
+    ):
+        OpenWrtRPCClient("http://router", "user", "wrong-password").call(
+            "system", "board"
+        )
+
+    assert mocked.call_count == 1
+
+
+def test_openwrt_rpc_concurrent_expiry_uses_one_renewed_session() -> None:
+    expired_calls = threading.Barrier(2)
+    state_lock = threading.Lock()
+    login_count = 0
+
+    def ubus_response(request: object, **_: object) -> MagicMock:
+        nonlocal login_count
+        payload = json.loads(request.data)
+        if payload[2] == "login":
+            with state_lock:
+                login_count += 1
+                session = "old-session" if login_count == 1 else "new-session"
+            return response([0, {"ubus_rpc_session": session}])
+        if payload[0] == "old-session":
+            expired_calls.wait(timeout=3)
+            return response([6, {}])
+        return response([0, {"result": "ok"}])
+
+    client = OpenWrtRPCClient("http://router", "user", "password")
+    with (
+        patch("openshield.integrations.openwrt_rpc.urlopen", side_effect=ubus_response),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        results = list(executor.map(lambda _: client.call("system", "board"), range(2)))
+
+    assert results == [{"result": "ok"}, {"result": "ok"}]
+    assert login_count == 2
