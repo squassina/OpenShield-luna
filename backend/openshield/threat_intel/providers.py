@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import ssl
 from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
@@ -15,7 +16,8 @@ class ThreatIntelProviderError(RuntimeError):
 
 
 def _request(url: str, *, headers: dict[str, str], method: str = "GET",
-             body: dict[str, object] | None = None) -> dict[str, object] | list[object]:
+             body: dict[str, object] | None = None,
+             ssl_context: ssl.SSLContext | None = None) -> dict[str, object] | list[object]:
     request = Request(
         url,
         data=json.dumps(body).encode("utf-8") if body is not None else None,
@@ -23,7 +25,7 @@ def _request(url: str, *, headers: dict[str, str], method: str = "GET",
         method=method,
     )
     try:
-        with urlopen(request, timeout=8) as response:
+        with urlopen(request, timeout=8, context=ssl_context) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         raise ThreatIntelProviderError(f"Threat intelligence provider returned HTTP {exc.code}") from exc
@@ -40,7 +42,9 @@ def _request(url: str, *, headers: dict[str, str], method: str = "GET",
     return result
 
 
-def lookup_crowdsec(ip_value: str, api_key: str) -> dict[str, object]:
+def lookup_crowdsec(
+    ip_value: str, api_key: str, ssl_context: ssl.SSLContext | None = None,
+) -> dict[str, object]:
     try:
         address = ipaddress.ip_address(ip_value)
     except ValueError as exc:
@@ -52,6 +56,7 @@ def lookup_crowdsec(ip_value: str, api_key: str) -> dict[str, object]:
     result = _request(
         f"https://cti.api.crowdsec.net/v2/smoke/{quote(str(address), safe='')}",
         headers={"Accept": "application/json", "x-api-key": api_key},
+        ssl_context=ssl_context,
     )
     if not isinstance(result, dict):
         raise ThreatIntelProviderError("CrowdSec returned an invalid reputation report")
@@ -93,7 +98,8 @@ def lookup_crowdsec(ip_value: str, api_key: str) -> dict[str, object]:
 
 
 def lookup_misp(
-    base_url: str, api_key: str, indicator_type: str, indicator_value: str
+    base_url: str, api_key: str, indicator_type: str, indicator_value: str,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> dict[str, object]:
     parsed = urlsplit(base_url)
     if (
@@ -112,6 +118,7 @@ def lookup_misp(
             "Authorization": api_key,
         },
         body={"returnFormat": "json", "value": indicator_value, "limit": 50, "page": 1},
+        ssl_context=ssl_context,
     )
     response = result.get("response", result) if isinstance(result, dict) else result
     if isinstance(response, dict):
