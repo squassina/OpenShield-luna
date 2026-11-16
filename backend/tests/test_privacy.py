@@ -417,7 +417,7 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
     class Metrics:
-        def increment(self, name):
+        def increment(self, name, labels=None):
             assert name == "openshield_events_ingested_total"
 
     outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
@@ -457,7 +457,7 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
     class Metrics:
-        def increment(self, name):
+        def increment(self, name, labels=None):
             raise AssertionError("No events should be ingested")
 
     outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
@@ -775,7 +775,7 @@ def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> No
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
     class Metrics:
-        def increment(self, name):
+        def increment(self, name, labels=None):
             raise AssertionError("No records should be ingested")
 
     first = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
@@ -809,7 +809,7 @@ def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypat
         def __init__(self):
             self.count = 0
 
-        def increment(self, name):
+        def increment(self, name, labels=None):
             self.count += 1
 
     metrics = Metrics()
@@ -1112,7 +1112,7 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
         def __init__(self):
             self.counts = {}
 
-        def increment(self, name):
+        def increment(self, name, labels=None):
             self.counts[name] = self.counts.get(name, 0) + 1
 
     metrics = Metrics()
