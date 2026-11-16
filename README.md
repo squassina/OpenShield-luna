@@ -82,6 +82,25 @@ Docker Engine and the Docker Compose plugin are the only local runtime/test prer
 docker compose up --build -d openshield-node
 ```
 
+The Node and Gateway Connector runtime images run as UID/GID 10001 (`openshield`). The image pre-creates the runtime-secrets and gateway-spool mount points with ownership restricted to this user. New named volumes inherit these permissions.
+
+If upgrading an installation whose named volumes were created by an older root-based image, migrate ownership once **before** starting the new runtime:
+
+```bash
+docker compose build openshield-node openshield-gateway-connector
+docker compose run --rm --no-deps --user 0:0 --entrypoint sh openshield-node \
+  -c 'chown -R 10001:10001 /run/openshield-secrets && chmod 0700 /run/openshield-secrets'
+```
+
+If the Gateway Connector profile is used, also migrate its spool volume:
+
+```bash
+docker compose --profile gateway run --rm --no-deps --user 0:0 --entrypoint sh openshield-gateway-connector \
+  -c 'chown -R 10001:10001 /run/openshield-secrets /var/lib/openshield && chmod 0700 /run/openshield-secrets /var/lib/openshield'
+```
+
+These one-time commands run only the migration shell as root; the long-running Node and Connector processes remain unprivileged. Secret files retain their existing restrictive modes.
+
 Run lint and tests in the same Python 3.12 container environment used by CI:
 
 ```bash

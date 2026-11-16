@@ -7,6 +7,14 @@ RUN pip install --no-cache-dir --root-user-action=ignore .
 
 FROM base AS runtime
 
+RUN groupadd --system --gid 10001 openshield \
+    && useradd --system --uid 10001 --gid openshield --home-dir /home/openshield \
+        --create-home --shell /usr/sbin/nologin openshield \
+    && install -d -o openshield -g openshield -m 0700 \
+        /run/openshield-secrets /var/lib/openshield
+
+USER 10001:10001
+
 EXPOSE 8000
 CMD ["uvicorn", "openshield.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
