@@ -12,8 +12,8 @@ from openshield.ai.providers import (
     generate_openai,
 )
 from openshield.core.secrets import SecretConfigurationError, SecretStore
-from openshield.core.tls import create_ssl_context
 from openshield.core.storage import PostgresStore
+from openshield.core.tls import create_ssl_context
 from openshield.integrations.registry import IntegrationRegistry
 
 PROMPT_VERSION = "openshield.incident-investigation.v1"
