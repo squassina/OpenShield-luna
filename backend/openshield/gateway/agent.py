@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from openshield.core.bootstrap import load_runtime_secrets
+from openshield.core.tls import create_ssl_context
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
 from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
