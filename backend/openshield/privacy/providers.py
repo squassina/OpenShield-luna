@@ -9,7 +9,6 @@ from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
-
 from openshield.integrations.models import Integration
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
