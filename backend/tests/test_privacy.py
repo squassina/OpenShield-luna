@@ -257,18 +257,29 @@ def test_adguard_provider_client_uses_basic_auth_and_maps_query_log(monkeypatch)
 
 
 
-def test_provider_list_sync_endpoint_is_explicit_and_audited() -> None:
+def test_provider_list_sync_merges_manual_and_provider_scoped_entries() -> None:
     register_dns()
     client.post("/api/v1/privacy/lists", json={
-        "list_type": "block", "domain": "ads.doubleclick.net",
+        "list_type": "block", "domain": "manual.example", "comment": "Manual entry",
     })
-    with patch("openshield.api.main.sync_provider_lists", return_value={
-        "provider": "pihole", "added": 1, "removed": 0,
-    }):
+    from openshield.api import main
+
+    main.store.upsert_privacy_list(
+        "pihole-home", "block", "p5-managed.example", "OpenShield managed execution test",
+    )
+    captured = []
+    def fake_sync(integration, entries, credentials=None):
+        captured.extend(dict(entry) for entry in entries)
+        return {"provider": "pihole", "added": 2, "removed": 0}
+
+    with patch("openshield.api.main.sync_provider_lists", side_effect=fake_sync):
         response = client.post("/api/v1/privacy/lists/pihole-home/sync")
     assert response.status_code == 200
-    assert response.json()["entries"] == 1
-    assert response.json()["added"] == 1
+    assert response.json()["entries"] == 2
+    assert {(item["domain"], item["list_type"]) for item in captured} == {
+        ("manual.example", "block"),
+        ("p5-managed.example", "block"),
+    }
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_lists.synchronized" for item in audit)
 

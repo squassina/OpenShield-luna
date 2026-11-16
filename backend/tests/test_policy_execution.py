@@ -133,6 +133,12 @@ def test_manual_approval_executes_dns_block_with_ttl_and_rolls_back(monkeypatch)
 
     _register("pihole", "pihole-home")
     incident = _incident()
+    main.store.upsert_privacy_list(
+        "openshield-local", "allow", "manual-allow.example", "Manual allow",
+    )
+    main.store.upsert_privacy_list(
+        "openshield-local", "block", "manual-block.example", "Manual block",
+    )
     policy = _policy()
     _enable_enforcement(monkeypatch, 1)
     sync_calls = []
@@ -150,6 +156,11 @@ def test_manual_approval_executes_dns_block_with_ttl_and_rolls_back(monkeypatch)
     assert execution["status"] == "active"
     assert execution["adapter_result"]["created_by_execution"] is True
     assert len(sync_calls) == 1
+    assert {(item["list_type"], item["domain"]) for item in sync_calls[0]} == {
+        ("allow", "manual-allow.example"),
+        ("block", "manual-block.example"),
+        ("block", "malicious.example"),
+    }
     assert any(
         item["domain"] == "malicious.example" and item["list_type"] == "block"
         for item in main.store.list_privacy_lists("pihole-home")
@@ -163,6 +174,10 @@ def test_manual_approval_executes_dns_block_with_ttl_and_rolls_back(monkeypatch)
     rolled_back = main.store.get_response_execution(execution["execution_id"])
     assert rolled_back["status"] == "rolled_back"
     assert main.store.list_privacy_lists("pihole-home") == []
+    assert {(item["list_type"], item["domain"]) for item in sync_calls[1]} == {
+        ("allow", "manual-allow.example"),
+        ("block", "manual-block.example"),
+    }
     assert len(sync_calls) == 2
 
 
@@ -171,7 +186,7 @@ def test_existing_manual_dns_block_is_never_removed_by_ttl(monkeypatch) -> None:
 
     _register("pihole", "pihole-home")
     incident = _incident()
-    main.store.upsert_privacy_list("pihole-home", "block", "malicious.example", "Manual admin entry")
+    main.store.upsert_privacy_list("openshield-local", "block", "malicious.example", "Manual admin entry")
     _enable_enforcement(monkeypatch, 1)
     monkeypatch.setattr(execution_service, "sync_provider_lists", lambda *args: {"status": "synced"})
     policy = _policy()
@@ -189,7 +204,8 @@ def test_existing_manual_dns_block_is_never_removed_by_ttl(monkeypatch) -> None:
     )
     execution_service.expire_due_executions(main.store, main.registry)
     assert main.store.get_response_execution(execution["execution_id"])["status"] == "rolled_back"
-    assert main.store.list_privacy_lists("pihole-home")[0]["comment"] == "Manual admin entry"
+    assert main.store.list_privacy_lists("openshield-local")[0]["comment"] == "Manual admin entry"
+    assert main.store.list_privacy_lists("pihole-home") == []
 
 
 def test_l2_automatic_execution_requires_explicit_policy_and_global_enable(monkeypatch) -> None:
