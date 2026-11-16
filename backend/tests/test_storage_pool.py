@@ -98,6 +98,7 @@ def test_application_lifespan_opens_and_closes_pool(monkeypatch: pytest.MonkeyPa
     asyncio.run(exercise_lifespan())
     assert calls == ["open", "close"]
 
+
 def test_response_execution_listing_uses_one_query_and_preserves_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
