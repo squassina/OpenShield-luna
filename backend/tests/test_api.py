@@ -1285,8 +1285,7 @@ def test_openwrt_firewall_zone_configuration_is_validated_and_sent_to_gateway(
     assert gateway_config is not None
     assert gateway_config["firewall_zones"] == zones
 
-def test_crowdsec_connection_test_does_not_consume_cti_quota_for_legacy_credentials(monkeypatch) -> None:
-    from openshield.api import main
+def test_crowdsec_connection_test_does_not_consume_cti_quota_for_legacy_credentials() -> None:
     from openshield.core.secrets import SecretStore
 
     registered = client.post("/api/v1/integrations", json={
