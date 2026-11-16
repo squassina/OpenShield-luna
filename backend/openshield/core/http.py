@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ssl
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 
@@ -16,4 +17,9 @@ def safe_urlopen(
     handlers = [_RejectRedirects()]
     if context is not None:
         handlers.append(HTTPSHandler(context=context))
-    return build_opener(*handlers).open(request, timeout=timeout)
+    try:
+        return build_opener(*handlers).open(request, timeout=timeout)
+    except HTTPError as exc:
+        if 300 <= exc.code < 400:
+            exc.close()
+        raise
