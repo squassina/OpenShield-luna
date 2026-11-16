@@ -6,7 +6,9 @@ import time
 from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from openshield.core.http import safe_urlopen as urlopen
 
 from openshield.integrations.models import Integration
 
