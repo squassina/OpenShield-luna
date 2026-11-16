@@ -780,7 +780,7 @@ def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> No
     from openshield.core.metrics import MetricsRegistry
 
     first = polling.poll_dns_sources_once(main.registry, main.store, MetricsRegistry())
-    second = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    second = polling.poll_dns_sources_once(main.registry, main.store, MetricsRegistry())
     assert first[0]["status"] == "error"
     assert second[0]["status"] == "ok"
     assert attempts == ["pihole-home", "pihole-home"]
