@@ -68,7 +68,6 @@ from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sy
 from openshield.threat_intel.engine import enrich_events
 from openshield.threat_intel.providers import (
     ThreatIntelProviderError,
-    lookup_crowdsec,
     lookup_misp,
 )
 from openshield.visibility.adapter import NetworkSensorAdapter
