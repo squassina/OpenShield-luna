@@ -46,7 +46,7 @@ def _record_poll_attempt(integration_id: str) -> None:
 
 
 def _record_poll_success(
-    integration_id: str, accepted: int, duplicates: int, rejected: int,
+    integration_id: str, accepted: int, duplicates: int, rejected: int = 0,
 ) -> None:
     now = datetime.now(UTC).isoformat()
     with _STATUS_LOCK:
