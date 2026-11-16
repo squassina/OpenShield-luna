@@ -15,6 +15,7 @@ from openshield.privacy.providers import (
 
 logger = logging.getLogger(__name__)
 DNS_PROVIDER_KINDS = {"pihole", "adguard"}
+MAX_PAGES_PER_POLL = 1
 _STATUS_LOCK = Lock()
 _POLL_STATUS: dict[str, dict[str, object]] = {}
 
@@ -77,7 +78,9 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             accepted = duplicates = received = rejected = pages = 0
             rejection_reasons: dict[str, int] = {}
             complete = False
-            while pages < 10 and not complete:
+            # Checkpoint one page per cycle so each page's ingestion/rejections are durable
+            # before the next provider request begins on the following cycle.
+            while pages < MAX_PAGES_PER_POLL and not complete:
                 if credentials is None:
                     records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
                 else:
