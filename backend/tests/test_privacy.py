@@ -1011,7 +1011,12 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
         assert seen["request"].full_url.startswith("https://")
 
 
-def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
+def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths(monkeypatch, tmp_path) -> None:
+    ca_dir = tmp_path / "ca"
+    ca_dir.mkdir()
+    ca_file = ca_dir / "root.pem"
+    ca_file.write_text("test CA bundle")
+    monkeypatch.setenv("OPENSHIELD_CA_BUNDLE_DIR", str(ca_dir))
     from openshield.privacy.providers import DnsProviderError, _ssl_context
 
     http_integration = Integration(
@@ -1064,7 +1069,7 @@ def test_dns_integration_validates_custom_ca_bundle_path(monkeypatch, tmp_path) 
         "display_name": "Pi-hole",
         "config": {
             "base_url": "https://pihole.example",
-            "ca_bundle_path": "/run/openshield/ca/root.pem",
+            "ca_bundle_path": str(ca_file),
         },
     })
     assert valid.status_code == 201
