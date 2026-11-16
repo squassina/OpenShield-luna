@@ -97,7 +97,7 @@ def test_ingestion_body_limit_rejects_chunked_body_over_five_mib(path: str) -> N
 
 
 @pytest.mark.parametrize("path", INGESTION_PATHS)
-@pytest.mark.parametrize("value", [b"", b"abc", b"-1", b"1.5"])
+@pytest.mark.parametrize("value", [b"", b"abc", b"-1", b"1.5", b"9" * 5000])
 def test_ingestion_body_limit_rejects_malformed_content_length(
     path: str, value: bytes
 ) -> None:
