@@ -1920,11 +1920,19 @@ CREATE TABLE IF NOT EXISTS events (
             for r in rows
         ]
 
-    def delete_privacy_list_item(self, integration_id: str, list_type: str, domain: str) -> bool:
+    def delete_privacy_list_item(
+        self, integration_id: str, list_type: str, domain: str,
+        expected_comment: str | None = None,
+    ) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "DELETE FROM privacy_lists WHERE integration_id = %s AND list_type = %s AND domain = %s RETURNING domain",
-                (integration_id, list_type, domain),
+                """
+                DELETE FROM privacy_lists
+                WHERE integration_id = %s AND list_type = %s AND domain = %s
+                  AND (%s::text IS NULL OR comment = %s)
+                RETURNING domain
+                """,
+                (integration_id, list_type, domain, expected_comment, expected_comment),
             )
             deleted = cursor.fetchone() is not None
             if deleted:
