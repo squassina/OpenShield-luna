@@ -43,6 +43,18 @@ class GatewayEventSpool:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS gateway_spool_counters (
+                    name TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            connection.executemany(
+                "INSERT OR IGNORE INTO gateway_spool_counters (name, value) VALUES (?, 0)",
+                (("evicted_events",), ("coalesced_health_events",), ("dropped_events",)),
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS gateway_command_results (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     command_id TEXT NOT NULL UNIQUE,
@@ -74,23 +86,100 @@ class GatewayEventSpool:
         finally:
             connection.close()
 
+    @staticmethod
+    def _protected_event(payload: dict[str, object]) -> bool:
+        event_type = str(payload.get("event_type", ""))
+        severity = str(payload.get("severity", ""))
+        return (
+            event_type == "gateway.health"
+            or event_type == "gateway.command_result"
+            or event_type.startswith(("security.", "audit."))
+            or severity in {"high", "critical"}
+        )
+
+    @staticmethod
+    def _health_compaction_key(payload: dict[str, object]) -> tuple[str, str, str] | None:
+        if payload.get("event_type") != "gateway.health":
+            return None
+        source = payload.get("source")
+        health_payload = payload.get("payload")
+        if not isinstance(source, dict) or not isinstance(health_payload, dict):
+            return None
+        integration_id = source.get("integration_id")
+        if not isinstance(integration_id, str):
+            return None
+        # Only identical health snapshots may be compacted. State transitions remain durable.
+        fingerprint = json.dumps(health_payload, sort_keys=True, separators=(",", ":"))
+        return integration_id, str(payload.get("event_type")), fingerprint
+
+    @staticmethod
+    def _increment_counter(connection: sqlite3.Connection, name: str) -> None:
+        connection.execute(
+            "UPDATE gateway_spool_counters SET value = value + 1 WHERE name = ?",
+            (name,),
+        )
+
     def enqueue(self, event: EventEnvelope) -> bool:
-        payload = json.dumps(event.model_dump(mode="json"), separators=(",", ":"))
+        payload_dict = event.model_dump(mode="json")
+        payload = json.dumps(payload_dict, separators=(",", ":"))
+        created_at = datetime.now(UTC).isoformat()
+        full = False
         with self._connection() as connection:
-            cursor = connection.execute(
-                """
-                INSERT OR IGNORE INTO pending_events (event_id, payload, created_at)
-                VALUES (?, ?, ?)
-                """,
-                (event.event_id, payload, datetime.now(UTC).isoformat()),
-            )
-            if cursor.rowcount == 0:
+            if connection.execute(
+                "SELECT 1 FROM pending_events WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone():
                 return False
-            count = connection.execute(
+
+            count = int(connection.execute(
                 "SELECT COUNT(*) FROM pending_events"
-            ).fetchone()[0]
-            if count > self._max_events:
-                raise SpoolFullError("Gateway event spool is full")
+            ).fetchone()[0])
+            if count >= self._max_events:
+                rows = connection.execute(
+                    "SELECT event_id, payload FROM pending_events ORDER BY created_at, event_id"
+                ).fetchall()
+                evict_id = next(
+                    (
+                        row[0] for row in rows
+                        if not self._protected_event(json.loads(row[1]))
+                    ),
+                    None,
+                )
+                if evict_id is not None:
+                    connection.execute(
+                        "DELETE FROM pending_events WHERE event_id = ?", (evict_id,)
+                    )
+                    self._increment_counter(connection, "evicted_events")
+                else:
+                    incoming_key = self._health_compaction_key(payload_dict)
+                    compact_id = None
+                    if incoming_key is not None:
+                        for row in rows:
+                            existing = json.loads(row[1])
+                            if self._health_compaction_key(existing) == incoming_key:
+                                compact_id = row[0]
+                                break
+                    if compact_id is not None:
+                        connection.execute(
+                            "DELETE FROM pending_events WHERE event_id = ?", (compact_id,)
+                        )
+                        self._increment_counter(connection, "coalesced_health_events")
+                    else:
+                        self._increment_counter(connection, "dropped_events")
+                        full = True
+
+            if not full:
+                connection.execute(
+                    """
+                    INSERT INTO pending_events (event_id, payload, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (event.event_id, payload, created_at),
+                )
+        if full:
+            raise SpoolFullError(
+                "Gateway event spool is full; protected events were retained"
+            )
         return True
 
     def pending(self, limit: int = 100) -> list[EventEnvelope]:
@@ -223,3 +312,17 @@ class GatewayEventSpool:
                 "SELECT COUNT(*) FROM pending_events"
             ).fetchone()
         return int(row[0])
+
+    def stats(self) -> dict[str, int]:
+        """Return durable retention counters and current queue depth."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT name, value FROM gateway_spool_counters"
+            ).fetchall()
+            pending = connection.execute(
+                "SELECT COUNT(*) FROM pending_events"
+            ).fetchone()[0]
+        result = {str(name): int(value) for name, value in rows}
+        result["pending_events"] = int(pending)
+        result["capacity"] = self._max_events
+        return result
