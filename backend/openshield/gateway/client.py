@@ -4,7 +4,6 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
-
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnectRequest
 from openshield.integrations.models import Capability
