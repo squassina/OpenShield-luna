@@ -20,6 +20,7 @@ from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
+from openshield.core.request_limits import RequestBodyLimitMiddleware
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.events.models import EventEnvelope
@@ -110,6 +111,7 @@ app = FastAPI(
     description="Gateway-first network security and privacy intelligence node.",
     lifespan=_dns_polling_lifespan,
 )
+app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=5 * 1024 * 1024)
 
 
 _AUTH_FAILURES: dict[str, tuple[float, int]] = {}
@@ -1797,9 +1799,6 @@ def ingest_sensor_events(
     request: Request,
     records: Annotated[list[dict[str, Any]], Body()],
 ) -> dict[str, object]:
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Sensor batch body exceeds 5 MiB")
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"suricata", "zeek"}:
         raise HTTPException(status_code=404, detail="Network sensor integration not found")
@@ -2165,9 +2164,6 @@ def ingest_dns_queries(
     request: Request,
     records: Annotated[list[dict[str, Any]], Body()],
 ) -> dict[str, object]:
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="DNS batch body exceeds 5 MiB")
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
