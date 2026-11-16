@@ -68,7 +68,6 @@ from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sy
 from openshield.threat_intel.engine import enrich_events
 from openshield.threat_intel.providers import (
     ThreatIntelProviderError,
-    lookup_crowdsec,
     lookup_misp,
 )
 from openshield.visibility.adapter import NetworkSensorAdapter
@@ -656,39 +655,28 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         if not secret:
             raise HTTPException(status_code=409, detail="CrowdSec credentials are not configured")
-        if isinstance(secret.get("bouncer_api_key"), str):
-            try:
-                diagnostics = CrowdSecClient(
-                    str(secret["base_url"]),
-                    secret["bouncer_api_key"],
-                    str(secret.get("machine_id") or "") or None,
-                    str(secret.get("machine_password") or "") or None,
-                    **_integration_ssl_context_kwargs(item, str(secret["base_url"])),
-                ).diagnostics()
-            except (KeyError, TypeError, ValueError) as exc:
-                raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
-            except CrowdSecError as exc:
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
-            summary = diagnostics["summary"]
-            return {
-                "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
-                "alerts_available": summary["alerts_available"],
-                "decisions_available": summary["decisions_available"], "imported": 0,
-            }
-        api_key = secret.get("api_key")
-        if not isinstance(api_key, str) or not api_key:
-            raise HTTPException(status_code=409, detail="CrowdSec API key is not configured")
-        try:
-            result = lookup_crowdsec(
-                "8.8.8.8", api_key,
-                **_integration_ssl_context_kwargs(item, "https://cti.api.crowdsec.net"),
+        if not isinstance(secret.get("bouncer_api_key"), str) or not secret["bouncer_api_key"]:
+            raise HTTPException(
+                status_code=409,
+                detail="CrowdSec Local API bouncer credentials are not configured",
             )
-        except (ThreatIntelProviderError, ValueError) as exc:
+        try:
+            diagnostics = CrowdSecClient(
+                str(secret["base_url"]),
+                secret["bouncer_api_key"],
+                str(secret.get("machine_id") or "") or None,
+                str(secret.get("machine_password") or "") or None,
+                **_integration_ssl_context_kwargs(item, str(secret["base_url"])),
+            ).diagnostics()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
+        except CrowdSecError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        summary = diagnostics["summary"]
         return {
             "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
-            "matches": int(bool(result.get("matched"))),
-            "message": "Provider authentication and API request succeeded.",
+            "alerts_available": summary["alerts_available"],
+            "decisions_available": summary["decisions_available"], "imported": 0,
         }
     if item.kind == "misp":
         try:
