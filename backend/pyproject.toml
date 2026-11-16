@@ -16,7 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3,<9.0", "httpx2>=2.0,<3.0", "ruff>=0.6,<1.0"]
+dev = [
+  "pytest>=8.3,<9.0",
+  "httpx2>=2.0,<3.0",
+  "ruff>=0.6,<1.0",
+  "html5lib>=1.1,<2.0",
+  "playwright>=1.49,<2.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
