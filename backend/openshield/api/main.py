@@ -684,7 +684,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
                 base_url, api_key, "ip", "192.0.2.1",
                 ssl_context=_integration_ssl_context(item, base_url),
             )
-        except ThreatIntelProviderError as exc:
+        except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "status": "connected", "integration_id": integration_id, "provider": "misp",
