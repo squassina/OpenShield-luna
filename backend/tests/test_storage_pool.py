@@ -2,8 +2,6 @@ import asyncio
 import os
 
 import pytest
-from psycopg_pool import PoolTimeout
-
 from openshield.core.storage import PostgresStore, StorageConfigurationError
 
 
