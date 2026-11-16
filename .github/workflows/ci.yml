@@ -31,3 +31,21 @@ jobs:
         run: docker compose run --rm openshield-test
       - name: Dashboard browser tests
         run: docker compose run --rm openshield-browser-test
+      - name: Smoke-test non-root Node and Gateway Connector startup
+        run: |
+          trap 'docker compose down' EXIT
+          docker compose --profile gateway up -d openshield-node openshield-gateway-connector
+          for attempt in $(seq 1 30); do
+            status="$(docker inspect --format '{{.State.Health.Status}}' openshield-luna-node)"
+            if [ "$status" = "healthy" ]; then
+              break
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker compose logs openshield-node
+              exit 1
+            fi
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' openshield-luna-node)" = "healthy"
+          test "$(docker exec openshield-luna-node id -u)" = "10001"
+          test "$(docker exec openshield-luna-gateway-connector id -u)" = "10001"
