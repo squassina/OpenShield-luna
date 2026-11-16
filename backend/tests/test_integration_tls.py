@@ -1,4 +1,3 @@
-import json
 import ssl
 from unittest.mock import Mock, patch
 from urllib.request import HTTPSHandler
