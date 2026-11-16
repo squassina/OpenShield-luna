@@ -56,7 +56,7 @@ class GatewayEventSpool:
             )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS pending_command_results_created_at_idx "
-                "ON gateway_command_results (acknowledged_at, created_at, command_id)"
+                "ON gateway_command_results (acknowledged_at, next_attempt_at, created_at)"
             )
         os.chmod(self._path, 0o600)
 
@@ -120,6 +120,7 @@ class GatewayEventSpool:
         self, command_id: str, status: str, result: dict[str, object],
     ) -> bool:
         payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        created_at = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             cursor = connection.execute(
                 """
@@ -127,7 +128,7 @@ class GatewayEventSpool:
                     (command_id, status, result, created_at, next_attempt_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (command_id, status, payload, datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
+                (command_id, status, payload, created_at, created_at),
             )
             if cursor.rowcount == 0:
                 row = connection.execute(
