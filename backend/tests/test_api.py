@@ -364,6 +364,40 @@ def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() 
     assert client.get("/api/v1/events").json()["items"] == []
 
 
+def test_openwrt_credentials_unwrap_secret_before_rpc_validation(monkeypatch, caplog) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    register_integration("home-gateway")
+    received: dict[str, object] = {}
+
+    def fake_rpc_client(base_url: str, username: str, password: str) -> object:
+        received.update(base_url=base_url, username=username, password=password)
+        return object()
+
+    monkeypatch.setattr(main, "OpenWrtRPCClient", fake_rpc_client)
+    secret = "router-secret-value"
+    response = client.put(
+        "/api/v1/integrations/home-gateway/openwrt-credentials",
+        json={"base_url": "https://192.0.2.1", "username": "rpc", "password": secret},
+    )
+
+    assert response.status_code == 200
+    assert received == {
+        "base_url": "https://192.0.2.1",
+        "username": "rpc",
+        "password": secret,
+    }
+    assert isinstance(received["password"], str)
+    assert secret not in response.text
+    assert secret not in caplog.text
+    encrypted = main.store.get_integration_secret("home-gateway")
+    assert encrypted and secret.encode() not in encrypted
+
+
 def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(
     monkeypatch, tmp_path
 ) -> None:
