@@ -546,3 +546,28 @@ def test_gateway_command_result_retry_backoff_is_bounded(tmp_path: Path) -> None
     assert attempts == 10
     assert 0 < remaining <= 60
     assert spool.pending_command_results() == []
+
+
+def test_gateway_command_result_backoff_does_not_reorder_outbox(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    path = tmp_path / "ordered-results.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    spool.enqueue_command_result("command-first", "completed", {"sequence": 1})
+    spool.enqueue_command_result("command-second", "completed", {"sequence": 2})
+    spool.defer_command_result("command-first")
+
+    assert spool.pending_command_results() == []
+
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE gateway_command_results SET next_attempt_at = ? WHERE command_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "command-first"),
+        )
+        connection.commit()
+
+    assert [item["command_id"] for item in spool.pending_command_results()] == [
+        "command-first",
+        "command-second",
+    ]
