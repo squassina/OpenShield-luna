@@ -73,7 +73,11 @@ async def invoke_middleware(
 @pytest.mark.parametrize("path", INGESTION_PATHS)
 def test_ingestion_body_limit_accepts_exactly_five_mib(path: str) -> None:
     status, app_called = asyncio.run(
-        invoke_middleware(path, [b"x" * MAX_BODY_BYTES])
+        invoke_middleware(
+            path,
+            [b"x" * MAX_BODY_BYTES],
+            headers=[(b"content-length", str(MAX_BODY_BYTES).encode())],
+        )
     )
     assert status == 204
     assert app_called
@@ -82,7 +86,11 @@ def test_ingestion_body_limit_accepts_exactly_five_mib(path: str) -> None:
 @pytest.mark.parametrize("path", INGESTION_PATHS)
 def test_ingestion_body_limit_rejects_chunked_body_over_five_mib(path: str) -> None:
     status, app_called = asyncio.run(
-        invoke_middleware(path, [b"x" * MAX_BODY_BYTES, b"x"])
+        invoke_middleware(
+            path,
+            [b"x" * MAX_BODY_BYTES, b"x"],
+            headers=[(b"transfer-encoding", b"chunked")],
+        )
     )
     assert status == 413
     assert app_called
@@ -90,7 +98,9 @@ def test_ingestion_body_limit_rejects_chunked_body_over_five_mib(path: str) -> N
 
 @pytest.mark.parametrize("path", INGESTION_PATHS)
 @pytest.mark.parametrize("value", [b"", b"abc", b"-1", b"1.5"])
-def test_ingestion_body_limit_rejects_malformed_content_length(path: str, value: bytes) -> None:
+def test_ingestion_body_limit_rejects_malformed_content_length(
+    path: str, value: bytes
+) -> None:
     status, app_called = asyncio.run(
         invoke_middleware(path, [], headers=[(b"content-length", value)])
     )
