@@ -274,12 +274,22 @@ def test_provider_list_sync_merges_manual_and_provider_scoped_entries() -> None:
 
     with patch("openshield.api.main.sync_provider_lists", side_effect=fake_sync):
         response = client.post("/api/v1/privacy/lists/pihole-home/sync")
-    assert response.status_code == 200
-    assert response.json()["entries"] == 2
-    assert {(item["domain"], item["list_type"]) for item in captured} == {
+        repeated = client.post("/api/v1/privacy/lists/pihole-home/sync")
+        deleted = client.delete("/api/v1/privacy/lists/block/manual.example")
+        after_delete = client.post("/api/v1/privacy/lists/pihole-home/sync")
+    assert response.status_code == repeated.status_code == after_delete.status_code == 200
+    assert response.json()["entries"] == repeated.json()["entries"] == 2
+    assert deleted.status_code == 204
+    assert {(item["domain"], item["list_type"]) for item in captured[:2]} == {
         ("manual.example", "block"),
         ("p5-managed.example", "block"),
     }
+    assert {(item["domain"], item["list_type"]) for item in captured[2:4]} == {
+        ("manual.example", "block"),
+        ("p5-managed.example", "block"),
+    }
+    assert captured[4]["domain"] == "p5-managed.example"
+    assert len(captured) == 5
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_lists.synchronized" for item in audit)
 
