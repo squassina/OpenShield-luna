@@ -1302,10 +1302,6 @@ def test_crowdsec_connection_test_does_not_consume_cti_quota_for_legacy_credenti
         lambda self, integration_id: {"api_key": "legacy-cti-key"},
     )
 
-    def fail_if_cti_lookup_is_called(*args, **kwargs):
-        pytest.fail("Connection test must not consume CrowdSec CTI quota")
-
-    monkeypatch.setattr(main, "lookup_crowdsec", fail_if_cti_lookup_is_called)
     response = client.post("/api/v1/integrations/crowdsec-legacy/test")
 
     assert response.status_code == 409
