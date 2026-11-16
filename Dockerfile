@@ -19,4 +19,7 @@ COPY scripts/ops ./scripts/ops
 FROM dev AS browser-test
 
 COPY tests/dashboard ./dashboard-tests
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN python -m playwright install --with-deps chromium
