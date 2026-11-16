@@ -1192,6 +1192,14 @@ CREATE TABLE IF NOT EXISTS events (
             row = cursor.fetchone()
         return bytes(row[0]) if row else None
 
+    def list_integration_secret_ids(self) -> list[str]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT integration_id FROM integration_secrets ORDER BY integration_id"
+            )
+            rows = cursor.fetchall()
+        return [str(row[0]) for row in rows]
+
     def delete_integration_secret(self, integration_id: str) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
