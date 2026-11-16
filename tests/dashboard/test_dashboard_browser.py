@@ -15,7 +15,7 @@ def open_dashboard(page: Page, dashboard_url: str, mock_api, fail_path: str | No
 
 
 def test_initial_load_refresh_and_gateway_status(page: Page, dashboard_url: str, mock_api) -> None:
-    mock = open_dashboard(page, dashboard_url, mock_api)
+    open_dashboard(page, dashboard_url, mock_api)
 
     scripts = page.locator("script").all_text_contents()
     for script in scripts:
