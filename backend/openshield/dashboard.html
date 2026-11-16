@@ -344,7 +344,7 @@ async function load() {
       $("ai-provider").disabled=false;
       try {
         renderAIProviders(integrations);
-        markPanelFresh("ai-provider");
+        $("ai-provider").title="Updated "+new Date().toLocaleTimeString();
       } catch(error) {
         failures.push("ai-provider-renderer");
         setSelectUnavailable("ai-provider","AI provider renderer",error);
