@@ -186,6 +186,11 @@ def test_generic_event_ingestion_rejects_disabled_integration_and_audits() -> No
         and item["details"] == {"source": "events", "reason": "integration_disabled"}
         for item in client.get("/api/v1/audit").json()
     )
+    assert client.patch(
+        "/api/v1/integrations/router-lab", json={"enabled": True}
+    ).status_code == 200
+    assert client.post("/api/v1/events", json=sample_event()).status_code == 202
+    assert len(client.get("/api/v1/events").json()["items"]) == 1
 
 
 def test_router_device_inventory_uses_mac_identity_and_tracks_presence() -> None:
