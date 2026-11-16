@@ -473,6 +473,7 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     assert sources["pihole-home"]["last_error"] == "DNS provider request failed"
     assert sources["pihole-home"]["last_error_category"] == "provider_error"
     assert sources["pihole-home"]["retryable"] is True
+    assert sources["pihole-home"]["last_failure_at"]
     rendered = metrics.render()
     assert 'openshield_dns_poll_failures_total{category="provider_error",integration_id="pihole-home",provider="pihole"} 1' in rendered
     assert 'openshield_dns_poll_success_total{integration_id="adguard-home",provider="adguard"} 1' in rendered
@@ -1113,9 +1114,11 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     class Metrics:
         def __init__(self):
             self.counts = {}
+            self.samples = []
 
         def increment(self, name, labels=None):
             self.counts[name] = self.counts.get(name, 0) + 1
+            self.samples.append((name, labels or {}))
 
     metrics = Metrics()
     first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
@@ -1129,6 +1132,10 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     }
     assert metrics.counts["openshield_events_ingested_total"] == 499
     assert metrics.counts["openshield_dns_records_rejected_total"] == 1
+    assert (
+        "openshield_dns_poll_records_total",
+        {"integration_id": "pihole-home", "provider": "pihole", "outcome": "rejected"},
+    ) in metrics.samples
     events = client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]
     assert len(events) == 499
     rejection_audit = next(
