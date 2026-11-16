@@ -223,24 +223,15 @@ async def authenticate_requests(request: Request, call_next):
         return await call_next(request)
     is_gateway = path.startswith("/api/v1/gateway/")
     if is_gateway:
-        if not _gateway_token_valid(request):
-            return JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
-        response = await call_next(request)
+        response = (
+            JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
+            if not _gateway_token_valid(request)
+            else await call_next(request)
+        )
     else:
         denied = _check_admin_auth(request)
-        if denied is not None:
-            return denied
-        response = await call_next(request)
-    if path.startswith("/api/v1/gateway/") or path.endswith((
-        "/openwrt-credentials", "/opnsense-credentials", "/pfsense-credentials",
-        "/opnsense-diagnostics", "/pfsense-diagnostics",
-        "/crowdsec-credentials", "/crowdsec-diagnostics",
-        "/misp-credentials", "/misp-diagnostics",
-        "/wazuh-credentials", "/wazuh-diagnostics",
-        "/prometheus-credentials", "/prometheus-diagnostics",
-        "/grafana-credentials", "/grafana-diagnostics",
-        "/dns-provider-credentials",
-    )):
+        response = denied if denied is not None else await call_next(request)
+    if is_gateway or path.endswith(("-credentials", "-diagnostics")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response
