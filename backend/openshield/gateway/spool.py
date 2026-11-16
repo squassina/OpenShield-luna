@@ -71,7 +71,14 @@ class GatewayEventSpool:
                 "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
                 "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
-        os.chmod(self._path, 0o600)
+
+    def _secure_file_permissions(self) -> None:
+        sidecars = (Path(f"{self._path}-wal"), Path(f"{self._path}-shm"))
+        for path in (self._path, *sidecars):
+            try:
+                os.chmod(path, 0o600)
+            except FileNotFoundError:
+                pass
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -85,6 +92,7 @@ class GatewayEventSpool:
             raise
         finally:
             connection.close()
+            self._secure_file_permissions()
 
     @staticmethod
     def _protected_event(payload: dict[str, object]) -> bool:

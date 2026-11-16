@@ -1,4 +1,6 @@
 import json
+import os
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -229,6 +231,40 @@ def test_gateway_spool_survives_recreation_and_acknowledges(tmp_path: Path) -> N
     assert restarted_spool.pending_count() == 0
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_gateway_spool_restricts_wal_and_shm_permissions_after_reopen(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "protected-spool.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    keeper = sqlite3.connect(path)
+    try:
+        keeper.execute("PRAGMA journal_mode=WAL")
+        keeper.execute(
+            "INSERT INTO gateway_spool_counters (name, value) VALUES (?, ?)",
+            ("permission-test", 1),
+        )
+        keeper.commit()
+
+        sidecars = [Path(f"{path}-wal"), Path(f"{path}-shm")]
+        assert all(sidecar.exists() for sidecar in sidecars)
+        for sidecar in sidecars:
+            os.chmod(sidecar, 0o644)
+
+        spool.pending_count()
+        assert all(sidecar.stat().st_mode & 0o777 == 0o600 for sidecar in sidecars)
+
+        for sidecar in sidecars:
+            os.chmod(sidecar, 0o644)
+        restarted = GatewayEventSpool(str(path))
+        restarted.pending_count()
+
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert path.parent.stat().st_mode & 0o777 == 0o700
+        assert all(sidecar.stat().st_mode & 0o777 == 0o600 for sidecar in sidecars)
+    finally:
+        keeper.close()
 
 
 def test_gateway_spool_requires_absolute_path() -> None:
