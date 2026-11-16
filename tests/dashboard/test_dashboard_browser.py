@@ -17,19 +17,19 @@ def open_dashboard(page: Page, dashboard_url: str, mock_api, fail_path: str | No
 def test_initial_load_refresh_and_gateway_status(page: Page, dashboard_url: str, mock_api) -> None:
     mock = open_dashboard(page, dashboard_url, mock_api)
 
+    scripts = page.locator("script").all_text_contents()
+    for script in scripts:
+        page.evaluate("(source) => { new Function(source); }", script)
     expect(page.locator("#queries")).to_have_text("12")
     expect(page.locator("#integrations")).to_contain_text("Pi-hole")
     expect(page.locator("#openwrt-status")).to_contain_text("Router connected")
     expect(page.locator("#router-topology")).to_contain_text("router-home")
     assert page.page_errors == []
 
-    previous = mock["requests"].count(("GET", "/api/v1/privacy/report"))
-    page.locator("#refresh").click()
-    page.wait_for_function(
-        "(previous) => window.performance.getEntriesByType('resource')"
-        ".filter(item => item.name.includes('/api/v1/privacy/report')).length > previous",
-        arg=previous,
-    )
+    with page.expect_response(
+        lambda response: "/api/v1/privacy/report" in response.url and response.request.method == "GET"
+    ):
+        page.locator("#refresh").click()
     assert page.page_errors == []
 
 
@@ -86,10 +86,10 @@ def test_integration_can_be_edited_and_deleted(page: Page, dashboard_url: str, m
     page.once("dialog", lambda dialog: dialog.accept())
     integrations.get_by_role("button", name="Delete").first.click()
     expect(integrations).not_to_contain_text("Pi-hole renamed")
-    assert not any(
+    assert any(
         method == "DELETE" and path == "/api/v1/integrations/pihole-home"
         for method, path in mock["requests"]
-    ) is False
+    )
     assert page.page_errors == []
 
 
