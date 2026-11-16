@@ -25,7 +25,10 @@ def _request(url: str, *, headers: dict[str, str], method: str = "GET",
         method=method,
     )
     try:
-        with urlopen(request, timeout=8, context=ssl_context) as response:
+        with urlopen(
+            request, timeout=8,
+            **({"context": ssl_context} if ssl_context is not None else {}),
+        ) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         raise ThreatIntelProviderError(f"Threat intelligence provider returned HTTP {exc.code}") from exc
