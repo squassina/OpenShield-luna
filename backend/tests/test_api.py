@@ -170,6 +170,24 @@ def test_ingest_event_preserves_source_provenance() -> None:
     assert stored[0]["source"]["integration_id"] == "router-lab"
 
 
+def test_generic_event_ingestion_rejects_disabled_integration_and_audits() -> None:
+    register_integration()
+    assert client.patch(
+        "/api/v1/integrations/router-lab", json={"enabled": False}
+    ).status_code == 200
+
+    response = client.post("/api/v1/events", json=sample_event())
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Integration is disabled; new ingestion is rejected"
+    assert client.get("/api/v1/events").json()["items"] == []
+    assert any(
+        item["action"] == "integration.ingestion.rejected"
+        and item["target_id"] == "router-lab"
+        and item["details"] == {"source": "events", "reason": "integration_disabled"}
+        for item in client.get("/api/v1/audit").json()
+    )
+
+
 def test_router_device_inventory_uses_mac_identity_and_tracks_presence() -> None:
     client.post("/api/v1/gateway/connect", json=gateway_payload())
     old_seen = datetime.now(UTC) - timedelta(seconds=120)
@@ -317,7 +335,17 @@ def test_disabled_sensor_rejects_ingestion() -> None:
     })
     assert response.status_code == 201
     assert client.patch("/api/v1/integrations/sensor-disabled", json={"enabled": False}).status_code == 200
-    assert client.post("/api/v1/sensors/sensor-disabled/events", json=[{}]).status_code == 404
+    response = client.post("/api/v1/sensors/sensor-disabled/events", json=[{}])
+    assert response.status_code == 409
+    assert client.get("/api/v1/events").json()["items"] == []
+    assert any(
+        item["action"] == "integration.ingestion.rejected"
+        and item["target_id"] == "sensor-disabled"
+        and item["details"] == {
+            "source": "sensor_events", "reason": "integration_disabled",
+        }
+        for item in client.get("/api/v1/audit").json()
+    )
 
 
 def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() -> None:
