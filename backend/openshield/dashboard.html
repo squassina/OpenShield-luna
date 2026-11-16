@@ -342,7 +342,13 @@ async function load() {
     if(integrations) {
       renderIntegrations(integrations);
       $("ai-provider").disabled=false;
-      renderAIProviders(integrations);
+      try {
+        renderAIProviders(integrations);
+        markPanelFresh("ai-provider");
+      } catch(error) {
+        failures.push("ai-provider-renderer");
+        setSelectUnavailable("ai-provider","AI provider renderer",error);
+      }
       providerIds=integrations.filter(x=>["pihole","adguard"].includes(x.kind));
       renderSyncButtons();
       markPanelFresh("integrations");
