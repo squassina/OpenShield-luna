@@ -61,5 +61,23 @@ class SecretStore:
             self.set(integration_id, value)
         return value
 
+    def reencrypt_all(self) -> int:
+        """Re-encrypt legacy values with the active key and verify every stored value."""
+        verified = 0
+        for integration_id in self._store.list_integration_secret_ids():
+            if self.get(integration_id) is None:
+                continue
+            encrypted = self._store.get_integration_secret(integration_id)
+            if encrypted is None:
+                continue
+            try:
+                self._cipher.decrypt(encrypted)
+            except InvalidToken as exc:
+                raise SecretConfigurationError(
+                    "Stored integration credentials failed active-key verification"
+                ) from exc
+            verified += 1
+        return verified
+
     def delete(self, integration_id: str) -> bool:
         return self._store.delete_integration_secret(integration_id)
