@@ -1,7 +1,7 @@
 import ipaddress
 import json
-import ssl
 import re
+import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
