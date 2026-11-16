@@ -55,6 +55,20 @@ def test_rejects_ca_paths_outside_root(value: str, tmp_path: Path, monkeypatch) 
         resolve_ca_bundle_path(value)
 
 
+def test_rejects_traversal_even_when_normalized_path_stays_inside_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "certs"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    ca_file = root / "private-ca.pem"
+    write_ca(ca_file)
+    monkeypatch.setenv("OPENSHIELD_CA_BUNDLE_DIR", str(root))
+
+    with pytest.raises(CABundleError, match="traversal"):
+        resolve_ca_bundle_path(str(nested / ".." / ca_file.name))
+
+
 def test_rejects_symlink_escape(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "certs"
     root.mkdir()
