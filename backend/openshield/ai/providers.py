@@ -1,4 +1,5 @@
 import json
+import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -15,6 +16,7 @@ class AIProviderError(RuntimeError):
 def _request_json(
     url: str, *, method: str = "POST", headers: dict[str, str] | None = None,
     payload: dict[str, object] | None = None,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> dict[str, object]:
     request = Request(
         url,
@@ -23,7 +25,7 @@ def _request_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=45) as response:
+        with urlopen(request, timeout=45, context=ssl_context) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         raise AIProviderError(f"AI provider returned HTTP {exc.code}") from exc
@@ -52,9 +54,9 @@ def validate_ollama_url(base_url: str) -> str:
     return base_url.rstrip("/")
 
 
-def test_ollama(base_url: str) -> list[str]:
+def test_ollama(base_url: str, ssl_context: ssl.SSLContext | None = None) -> list[str]:
     endpoint = validate_ollama_url(base_url) + "/api/tags"
-    result = _request_json(endpoint, method="GET")
+    result = _request_json(endpoint, method="GET", ssl_context=ssl_context)
     models = result.get("models", [])
     if not isinstance(models, list):
         raise AIProviderError("Ollama returned an invalid model list")
@@ -65,12 +67,14 @@ def test_ollama(base_url: str) -> list[str]:
 
 
 def generate_ollama(
-    base_url: str, model: str, instructions: str, context: dict[str, object]
+    base_url: str, model: str, instructions: str, context: dict[str, object],
+    ssl_context: ssl.SSLContext | None = None,
 ) -> str:
     endpoint = validate_ollama_url(base_url) + "/api/chat"
     result = _request_json(
         endpoint,
         headers={"Content-Type": "application/json"},
+        ssl_context=ssl_context,
         payload={
             "model": model,
             "messages": [
@@ -89,13 +93,14 @@ def generate_ollama(
     return content
 
 
-def test_openai(api_key: str) -> list[str]:
+def test_openai(api_key: str, ssl_context: ssl.SSLContext | None = None) -> list[str]:
     if not api_key:
         raise AIProviderError("OpenAI API key is not configured")
     result = _request_json(
         "https://api.openai.com/v1/models",
         method="GET",
         headers={"Authorization": f"Bearer {api_key}"},
+        ssl_context=ssl_context,
     )
     models = result.get("data", [])
     if not isinstance(models, list):
@@ -107,7 +112,8 @@ def test_openai(api_key: str) -> list[str]:
 
 
 def generate_openai(
-    api_key: str, model: str, instructions: str, context: dict[str, object]
+    api_key: str, model: str, instructions: str, context: dict[str, object],
+    ssl_context: ssl.SSLContext | None = None,
 ) -> str:
     if not api_key:
         raise AIProviderError("OpenAI API key is not configured")
@@ -117,6 +123,7 @@ def generate_openai(
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
+        ssl_context=ssl_context,
         payload={
             "model": model,
             "instructions": instructions,
