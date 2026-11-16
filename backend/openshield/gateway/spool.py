@@ -71,8 +71,10 @@ class GatewayEventSpool:
                 "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
                 "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
+
     def _secure_file_permissions(self) -> None:
-        for path in (self._path, Path(f"{self._path}-wal"), Path(f"{self._path}-shm")):
+        sidecars = (Path(f"{self._path}-wal"), Path(f"{self._path}-shm"))
+        for path in (self._path, *sidecars):
             try:
                 os.chmod(path, 0o600)
             except FileNotFoundError:
