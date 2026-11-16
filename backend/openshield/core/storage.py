@@ -48,7 +48,9 @@ class PostgresStore:
                 "Database pool sizes must satisfy 1 <= min_size <= max_size <= 32"
             )
         if not 0.05 <= pool_timeout <= 30:
-            raise StorageConfigurationError("Database pool timeout must be between 0.05 and 30 seconds")
+            raise StorageConfigurationError(
+                "Database pool timeout must be between 0.05 and 30 seconds"
+            )
         self._dsn = dsn.strip()
         self._pool_min_size = pool_min_size
         self._pool_max_size = pool_max_size
