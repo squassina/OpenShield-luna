@@ -1682,11 +1682,9 @@ def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object
     if integration is None or integration.kind != "openwrt":
         raise HTTPException(status_code=404, detail="Gateway integration not found")
     try:
-        credentials = SecretStore(store).get(gateway_id)
+        credentials = _gateway_openwrt_config(gateway_id)
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    if credentials is not None:
-        credentials["ca_bundle_path"] = integration.config.get("ca_bundle_path")
     return {"gateway_id": gateway_id, "openwrt_config": credentials}
 
 
@@ -1715,8 +1713,6 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
     metrics.increment("openshield_gateway_connections_total")
     try:
         openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
-        if openwrt_config is not None:
-            openwrt_config["ca_bundle_path"] = integration.config.get("ca_bundle_path")
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
@@ -1740,7 +1736,7 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     metrics.increment("openshield_gateway_heartbeats_total")
     try:
-        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
