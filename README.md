@@ -22,7 +22,7 @@ Residential admin authentication remains disabled by default to preserve the hom
 - **Deterministic control:** AI recommends; deterministic policy authorizes. P0 exposes no traffic-blocking action.
 - **Modular monolith:** FastAPI backend with explicit modules and versioned contracts.
 
-See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, risks, and exit criteria.
+See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, risks, and exit criteria. Disabled integrations reject new event, sensor, and DNS ingestion with HTTP 409; see the [integration enable/disable policy](docs/operations/integration-enable-disable.md).
 
 ## P0 — Foundation & Gateway Connectivity
 
