@@ -97,3 +97,77 @@ def test_application_lifespan_opens_and_closes_pool(monkeypatch: pytest.MonkeyPa
 
     asyncio.run(exercise_lifespan())
     assert calls == ["open", "close"]
+
+def test_response_execution_listing_uses_one_query_and_preserves_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import contextmanager
+    from datetime import UTC, datetime
+
+    store = PostgresStore("postgresql://test")
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
+    expires_at = datetime(2026, 1, 2, tzinfo=UTC)
+    rows = [
+        (
+            f"execution-{index}", "decision", "incident", "policy", "integration",
+            "block_ip", "ip", f"192.0.2.{index}", "destination", "active", 600,
+            expires_at, {"verified": True}, created_at, None,
+        )
+        for index in (1, 2)
+    ]
+    executed: list[tuple[str, tuple[object, ...]]] = []
+
+    class FakeCursor:
+        def __enter__(self) -> "FakeCursor":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[object, ...] = ()) -> None:
+            executed.append((query, params))
+
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return rows
+
+        def fetchone(self) -> None:
+            return None
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+    @contextmanager
+    def fake_connect():
+        yield FakeConnection()
+
+    monkeypatch.setattr(store, "_connect", fake_connect)
+    monkeypatch.setattr(
+        store,
+        "get_response_execution",
+        lambda _execution_id: (_ for _ in ()).throw(AssertionError("N+1 lookup")),
+    )
+
+    listed = store.list_response_executions(limit=25)
+    assert len(executed) == 1
+    assert "ORDER BY created_at DESC LIMIT %s" in executed[0][0]
+    assert executed[0][1] == (25,)
+    assert [item["execution_id"] for item in listed] == ["execution-1", "execution-2"]
+    assert listed[0]["expires_at"] == expires_at.isoformat()
+    assert listed[0]["created_at"] == created_at.isoformat()
+    assert listed[0]["adapter_result"] == {"verified": True}
+
+    executed.clear()
+    due = store.get_due_response_executions()
+    assert len(executed) == 1
+    assert "ORDER BY expires_at ASC LIMIT 50" in executed[0][0]
+    assert len(due) == 2
+    assert due[1]["execution_id"] == "execution-2"
+
+    rows.clear()
+    executed.clear()
+    assert store.list_response_executions() == []
+    assert len(executed) == 1
+    executed.clear()
+    assert store.get_due_response_executions() == []
+    assert len(executed) == 1
