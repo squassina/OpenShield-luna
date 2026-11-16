@@ -121,6 +121,13 @@ def _integration_ssl_context(integration, url: str):
     except CABundleError as exc:
         raise ValueError("Configured integration CA bundle is invalid") from exc
 
+def _gateway_openwrt_config(gateway_id: str) -> dict[str, object] | None:
+    credentials = _gateway_openwrt_config(gateway_id)
+    integration = registry.get(gateway_id)
+    if credentials is not None and integration is not None:
+        credentials["ca_bundle_path"] = integration.config.get("ca_bundle_path")
+    return credentials
+
 
 _AUTH_FAILURES: dict[str, tuple[float, int]] = {}
 _AUTH_FAILURES_LOCK = threading.Lock()
@@ -562,7 +569,9 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             if credentials is None:
                 raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
             diagnostics = PrometheusClient(
-                str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None
+                str(credentials["base_url"]),
+                str(credentials.get("bearer_token") or "") or None,
+                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -580,6 +589,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             diagnostics = GrafanaClient(
                 str(credentials["base_url"]),
                 str(credentials.get("bearer_token") or "") or None,
+                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -642,8 +652,11 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if not isinstance(api_key, str) or not api_key:
             raise HTTPException(status_code=409, detail="CrowdSec API key is not configured")
         try:
-            result = lookup_crowdsec("8.8.8.8", api_key)
-        except ThreatIntelProviderError as exc:
+            result = lookup_crowdsec(
+                "8.8.8.8", api_key,
+                ssl_context=_integration_ssl_context(item, "https://cti.api.crowdsec.net"),
+            )
+        except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
@@ -706,7 +719,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             models = test_openai(
                 api_key, ssl_context=_integration_ssl_context(item, "https://api.openai.com")
             )
-        except AIProviderError as exc:
+        except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         configured_model = item.config.get("model")
         if not isinstance(configured_model, str) or configured_model not in models:
@@ -1011,7 +1024,10 @@ def sync_misp_indicators(
         credentials = SecretStore(store).get(integration_id)
         if credentials is None:
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
-        client = MispClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        client = MispClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+        )
         indicators = client.search_indicators(limit)
         complete_snapshot = len(indicators) < limit
         sync_result = store.sync_threat_indicators(
@@ -1693,7 +1709,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
     connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
     try:
-        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
         if openwrt_config is not None:
             openwrt_config["ca_bundle_path"] = integration.config.get("ca_bundle_path")
     except SecretConfigurationError as exc:
