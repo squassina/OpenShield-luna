@@ -1286,20 +1286,19 @@ def test_openwrt_firewall_zone_configuration_is_validated_and_sent_to_gateway(
     assert gateway_config["firewall_zones"] == zones
 
 def test_crowdsec_connection_test_does_not_consume_cti_quota_for_legacy_credentials(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
     from openshield.core.secrets import SecretStore
 
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     registered = client.post("/api/v1/integrations", json={
         "integration_id": "crowdsec-legacy",
         "kind": "crowdsec",
         "display_name": "Legacy CrowdSec",
     })
     assert registered.status_code == 201
-
-    monkeypatch.setattr(
-        SecretStore,
-        "get",
-        lambda self, integration_id: {"api_key": "legacy-cti-key"},
-    )
+    SecretStore(main.store).set("crowdsec-legacy", {"api_key": "legacy-cti-key"})
 
     response = client.post("/api/v1/integrations/crowdsec-legacy/test")
 
