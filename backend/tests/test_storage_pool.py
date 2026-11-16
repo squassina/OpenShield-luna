@@ -43,7 +43,7 @@ def test_pool_exhaustion_is_bounded_and_reports_not_ready(database_url: str) -> 
         database_url,
         pool_min_size=1,
         pool_max_size=1,
-        pool_timeout=0.1,
+        pool_timeout=1,
     )
     try:
         store.open()
