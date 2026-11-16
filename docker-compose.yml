@@ -78,6 +78,16 @@ services:
     profiles: ["tools"]
     command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
 
+  openshield-browser-test:
+    container_name: openshield-luna-browser-test
+    image: openshield-browser-test
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: browser-test
+    profiles: ["tools"]
+    command: ["pytest", "-v", "dashboard-tests"]
+
   openshield-gateway-connector:
     container_name: openshield-luna-gateway-connector
     profiles: ["gateway"]
