@@ -945,7 +945,7 @@ def test_dns_provider_auth_failures_are_sanitized(monkeypatch) -> None:
             raise AssertionError("Provider authentication failure must be reported")
 
 
-def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(monkeypatch) -> None:
+def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(monkeypatch, tmp_path) -> None:
     from openshield.privacy import providers
 
     class FakeSSLContext:
@@ -968,6 +968,9 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
         def read(self, size):
             return self.payload
 
+    ca_dir = tmp_path / "ca"
+    ca_dir.mkdir()
+    monkeypatch.setenv("OPENSHIELD_CA_BUNDLE_DIR", str(ca_dir))
     monkeypatch.delenv("OPENSHIELD_PIHOLE_PASSWORD", raising=False)
     monkeypatch.delenv("OPENSHIELD_ADGUARD_USERNAME", raising=False)
     monkeypatch.delenv("OPENSHIELD_ADGUARD_PASSWORD", raising=False)
@@ -992,17 +995,19 @@ def test_dns_provider_uses_integration_ca_bundle_without_disabling_verification(
             return fake_urlopen
 
         monkeypatch.setattr(providers, "urlopen", make_urlopen(payload, seen))
+        ca_file = ca_dir / f"{kind}.pem"
+        ca_file.write_text("test CA bundle")
         integration = Integration(
             integration_id=f"{kind}-tls", kind=kind, display_name=kind.title(),
             capabilities=[], config={
                 "base_url": base_url,
-                "ca_bundle_path": f"/run/openshield/ca/{kind}.pem",
+                "ca_bundle_path": str(ca_file),
             },
         )
 
         assert fetch_dns_records(integration) == []
         assert seen["context"] is context
-        assert context.loaded_ca == f"/run/openshield/ca/{kind}.pem"
+        assert context.loaded_ca == str(ca_file.resolve())
         assert seen["request"].full_url.startswith("https://")
 
 
@@ -1013,7 +1018,7 @@ def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
         integration_id="pihole-http", kind="pihole", display_name="Pi-hole",
         capabilities=[], config={
             "base_url": "http://192.0.2.53",
-            "ca_bundle_path": "/run/openshield/ca/root.pem",
+            "ca_bundle_path": str(ca_file),
         },
     )
     relative_integration = Integration(
@@ -1036,7 +1041,12 @@ def test_dns_provider_rejects_ca_bundle_for_http_and_relative_paths() -> None:
             raise AssertionError("Invalid custom CA configuration must be rejected")
 
 
-def test_dns_integration_validates_custom_ca_bundle_path() -> None:
+def test_dns_integration_validates_custom_ca_bundle_path(monkeypatch, tmp_path) -> None:
+    ca_dir = tmp_path / "ca"
+    ca_dir.mkdir()
+    ca_file = ca_dir / "root.pem"
+    ca_file.write_text("test CA bundle")
+    monkeypatch.setenv("OPENSHIELD_CA_BUNDLE_DIR", str(ca_dir))
     invalid = client.post("/api/v1/integrations", json={
         "integration_id": "pihole-relative-ca",
         "kind": "pihole",
