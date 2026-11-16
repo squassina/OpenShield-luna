@@ -487,6 +487,34 @@ def test_disabled_dns_provider_cannot_be_manually_polled() -> None:
     assert client.post("/api/v1/privacy/sources/pihole-home/sync").status_code == 409
     source = client.get("/api/v1/privacy/sources").json()[0]
     assert source["status"] == "disabled"
+    assert any(
+        item["action"] == "integration.ingestion.rejected"
+        and item["target_id"] == "pihole-home"
+        and item["details"] == {
+            "source": "dns_manual_sync", "reason": "integration_disabled",
+        }
+        for item in client.get("/api/v1/audit").json()
+    )
+
+
+def test_disabled_dns_integration_rejects_direct_ingestion_and_audits() -> None:
+    register_dns()
+    assert client.patch(
+        "/api/v1/integrations/pihole-home", json={"enabled": False}
+    ).status_code == 200
+
+    response = client.post("/api/v1/dns/pihole-home/queries", json=[{}])
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Integration is disabled; new ingestion is rejected"
+    assert client.get("/api/v1/events").json()["items"] == []
+    assert any(
+        item["action"] == "integration.ingestion.rejected"
+        and item["target_id"] == "pihole-home"
+        and item["details"] == {
+            "source": "dns_queries", "reason": "integration_disabled",
+        }
+        for item in client.get("/api/v1/audit").json()
+    )
 
 
 def test_provider_poll_cursor_persists_and_cascades_with_integration() -> None:
