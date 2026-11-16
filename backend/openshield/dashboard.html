@@ -264,7 +264,7 @@ function renderPanelUnavailable(target, endpoint, error) {
   const root=$(target);
   if(!root) return;
   root.replaceChildren();
-  const message=document.createElement("p");
+  const message=document.createElement(["SPAN","P"].includes(root.tagName)?"span":"p");
   message.className="error";
   const status=error&&error.status?"HTTP "+error.status:"request failed";
   message.textContent=endpoint+" unavailable ("+status+"): "+(error&&error.message?error.message:"Unknown error");
@@ -448,7 +448,7 @@ async function load() {
       ].forEach(target=>renderPanelUnavailable(target,endpoints.integrations,results.integrations.reason));
     }
 
-    if(failures.length) showNotice(failures.length+" dashboard endpoint(s) unavailable; other panels updated.",true);
+    if(failures.length) showNotice("Some dashboard panels are unavailable; unaffected panels were refreshed.",true);
     else showNotice("Dashboard updated.");
   } catch(error) {
     showNotice("Dashboard rendering partially failed: "+error.message,true);
