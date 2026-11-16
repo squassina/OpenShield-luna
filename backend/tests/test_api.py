@@ -364,12 +364,24 @@ def test_event_retention_deletes_only_events_before_cutoff_in_bounded_batches() 
     assert client.get("/api/v1/events").json()["items"] == []
 
 
-def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(monkeypatch) -> None:
+def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(
+    monkeypatch, tmp_path
+) -> None:
     from cryptography.fernet import Fernet
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
-    register_integration("home-gateway")
+    ca_root = tmp_path / "ca"
+    ca_root.mkdir()
+    ca_file = ca_root / "router-ca.pem"
+    ca_file.write_text("test CA placeholder")
+    monkeypatch.setenv("OPENSHIELD_CA_BUNDLE_DIR", str(ca_root))
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "home-gateway", "kind": "openwrt",
+        "display_name": "Home gateway",
+        "config": {"ca_bundle_path": str(ca_file)},
+    })
+    assert created.status_code == 201
     response = client.put(
         "/api/v1/integrations/home-gateway/openwrt-credentials",
         json={
@@ -391,6 +403,22 @@ def test_openwrt_credentials_are_encrypted_and_only_released_to_gateway(monkeypa
     )
     assert config.status_code == 200
     assert config.json()["openwrt_config"]["password"] == "router-secret-value"
+    assert config.json()["openwrt_config"]["ca_bundle_path"] == str(ca_file)
+
+    connected = client.post(
+        "/api/v1/gateway/connect",
+        headers={"Authorization": "Bearer connector-test-token"},
+        json=gateway_payload(),
+    )
+    assert connected.status_code == 201
+    assert connected.json()["openwrt_config"]["ca_bundle_path"] == str(ca_file)
+    heartbeat = client.post(
+        "/api/v1/gateway/heartbeat",
+        headers={"Authorization": "Bearer connector-test-token"},
+        json={"protocol_version": "openshield.gateway.v1", "gateway_id": "home-gateway"},
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["openwrt_config"]["ca_bundle_path"] == str(ca_file)
     assert client.get("/api/v1/gateway/config/home-gateway", headers={"Authorization": ""}).status_code == 401
 
 
