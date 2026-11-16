@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import pytest
 
 from openshield.api.main import app
 from openshield.integrations.models import Integration
