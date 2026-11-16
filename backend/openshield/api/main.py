@@ -121,9 +121,11 @@ def _integration_ssl_context(integration, url: str):
     except CABundleError as exc:
         raise ValueError("Configured integration CA bundle is invalid") from exc
 
+
 def _integration_ssl_context_kwargs(integration, url: str) -> dict[str, object]:
     context = _integration_ssl_context(integration, url)
     return {"ssl_context": context} if context is not None else {}
+
 
 def _gateway_openwrt_config(gateway_id: str) -> dict[str, object] | None:
     credentials = SecretStore(store).get(gateway_id)
