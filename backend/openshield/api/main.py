@@ -1796,7 +1796,6 @@ def list_events(
 @app.post("/api/v1/sensors/{integration_id}/events", status_code=202, tags=["sensors"])
 def ingest_sensor_events(
     integration_id: str,
-    request: Request,
     records: Annotated[list[dict[str, Any]], Body()],
 ) -> dict[str, object]:
     integration = registry.get(integration_id)
@@ -2161,7 +2160,6 @@ def get_network_topology(
 @app.post("/api/v1/dns/{integration_id}/queries", status_code=202, tags=["privacy"])
 def ingest_dns_queries(
     integration_id: str,
-    request: Request,
     records: Annotated[list[dict[str, Any]], Body()],
 ) -> dict[str, object]:
     integration = registry.get(integration_id)
