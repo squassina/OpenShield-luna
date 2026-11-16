@@ -41,6 +41,21 @@ class GatewayEventSpool:
                 "CREATE INDEX IF NOT EXISTS pending_events_created_at_idx "
                 "ON pending_events (created_at, event_id)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gateway_command_results (
+                    command_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    acknowledged_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS pending_command_results_created_at_idx "
+                "ON gateway_command_results (acknowledged_at, created_at, command_id)"
+            )
         os.chmod(self._path, 0o600)
 
     @contextmanager
@@ -97,6 +112,76 @@ class GatewayEventSpool:
             connection.execute(
                 "DELETE FROM pending_events WHERE event_id = ?",
                 (event_id,),
+            )
+
+    def enqueue_command_result(
+        self, command_id: str, status: str, result: dict[str, object],
+    ) -> bool:
+        payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO gateway_command_results
+                    (command_id, status, result, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (command_id, status, payload, datetime.now(UTC).isoformat()),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT status, result FROM gateway_command_results WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()
+                if row != (status, payload):
+                    raise ValueError("Gateway command result cannot be changed once persisted")
+                return False
+        return True
+
+    def get_command_result(self, command_id: str) -> dict[str, object] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT command_id, status, result, acknowledged_at
+                FROM gateway_command_results WHERE command_id = ?
+                """,
+                (command_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "command_id": row[0],
+            "status": row[1],
+            "result": json.loads(row[2]),
+            "acknowledged": row[3] is not None,
+        }
+
+    def pending_command_results(self, limit: int = 100) -> list[dict[str, object]]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("Command result read limit must be between 1 and 1000")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT command_id, status, result
+                FROM gateway_command_results
+                WHERE acknowledged_at IS NULL
+                ORDER BY created_at, command_id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {"command_id": row[0], "status": row[1], "result": json.loads(row[2])}
+            for row in rows
+        ]
+
+    def acknowledge_command_result(self, command_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE gateway_command_results SET acknowledged_at = ?
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (datetime.now(UTC).isoformat(), command_id),
             )
 
     def pending_count(self) -> int:
