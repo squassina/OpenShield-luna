@@ -408,8 +408,8 @@ def test_gateway_command_result_outbox_rejects_conflicting_duplicate(
 def test_gateway_command_result_delivery_survives_node_outage_without_reexecution(
     tmp_path: Path,
 ) -> None:
-    from datetime import UTC, datetime, timedelta
     import sqlite3
+    from datetime import UTC, datetime, timedelta
 
     from openshield.gateway import agent
 
@@ -418,7 +418,10 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
         reports: list[tuple[str, str, dict[str, object]]] = []
 
         def report_command_result(
-            self, command_id: str, status: str, result: dict[str, object],
+            self,
+            command_id: str,
+            status: str,
+            result: dict[str, object],
         ) -> dict[str, object]:
             if self.unavailable:
                 raise GatewayTransportError("node unavailable")
@@ -429,7 +432,10 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
         calls = 0
 
         def apply_firewall_block(
-            self, execution_id: str, ip_value: str, direction: str,
+            self,
+            execution_id: str,
+            ip_value: str,
+            direction: str,
         ) -> dict[str, object]:
             self.calls += 1
             return {"section": "rule-1", "execution_id": execution_id}
