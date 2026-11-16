@@ -72,7 +72,10 @@ class OpenWrtRPCClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self._timeout, context=self._ssl_context) as response:
+            with urlopen(
+                request, timeout=self._timeout,
+                **({"context": self._ssl_context} if self._ssl_context is not None else {}),
+            ) as response:
                 raw = response.read(1_048_577)
         except HTTPError as exc:
             raise OpenWrtRPCError(f"OpenWrt RPC returned HTTP {exc.code}") from exc
