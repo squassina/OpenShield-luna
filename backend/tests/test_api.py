@@ -605,15 +605,37 @@ def test_admin_auth_rate_limits_repeated_failures(monkeypatch) -> None:
 
 
 def test_admin_auth_failure_tracking_expires_stale_entries(monkeypatch) -> None:
+    from starlette.requests import Request
+
     from openshield.api import main
 
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
     monkeypatch.setattr(main.time, "monotonic", lambda: 1000.0)
     with main._AUTH_FAILURES_LOCK:
         main._AUTH_FAILURES.clear()
         main._AUTH_FAILURES.update({"stale-ip": (900.0, 3), "active-ip": (950.0, 2)})
-        main._prune_auth_failures_locked(1000.0)
+    request = Request({
+        "type": "http",
+        "method": "GET",
+        "headers": [],
+        "client": ("new-ip", 1234),
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "path": "/api/v1/integrations",
+        "raw_path": b"/api/v1/integrations",
+        "query_string": b"",
+        "root_path": "",
+        "http_version": "1.1",
+    })
+
+    assert main._check_admin_auth(request).status_code == 401
+    with main._AUTH_FAILURES_LOCK:
         assert "stale-ip" not in main._AUTH_FAILURES
-        assert main._AUTH_FAILURES == {"active-ip": (950.0, 2)}
+        assert main._AUTH_FAILURES["active-ip"] == (950.0, 2)
+        assert main._AUTH_FAILURES["new-ip"] == (1000.0, 1)
+        main._AUTH_FAILURES.clear()
 
 
 def test_admin_auth_failure_tracking_has_bounded_lru_eviction(monkeypatch) -> None:
@@ -629,6 +651,24 @@ def test_admin_auth_failure_tracking_has_bounded_lru_eviction(monkeypatch) -> No
     with main._AUTH_FAILURES_LOCK:
         assert list(main._AUTH_FAILURES) == ["first-ip", "third-ip"]
         assert len(main._AUTH_FAILURES) <= main._AUTH_FAILURE_MAX_ENTRIES
+        main._AUTH_FAILURES.clear()
+
+
+def test_admin_auth_failure_tracking_updates_are_thread_safe(monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from openshield.api import main
+
+    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_ENTRIES", 10)
+    with main._AUTH_FAILURES_LOCK:
+        main._AUTH_FAILURES.clear()
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(
+            lambda _: main._record_auth_failure("shared-ip", 1000.0),
+            range(100),
+        ))
+    with main._AUTH_FAILURES_LOCK:
+        assert main._AUTH_FAILURES == {"shared-ip": (1000.0, 100)}
         main._AUTH_FAILURES.clear()
 
 
