@@ -54,8 +54,8 @@ from openshield.policy.engine import (
     max_autonomy_level,
 )
 from openshield.privacy.adapter import DnsPrivacyAdapter
-from openshield.privacy.lists import provider_privacy_lists
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
+from openshield.privacy.lists import provider_privacy_lists
 from openshield.privacy.polling import (
     _record_poll_attempt,
     _record_poll_failure,
