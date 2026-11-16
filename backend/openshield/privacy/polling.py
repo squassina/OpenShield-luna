@@ -35,6 +35,10 @@ class PollingDatabaseError(RuntimeError):
     """A persistence failure that must abort the current polling cycle."""
 
 
+class DnsNormalizationError(ValueError):
+    """A provider page failed record-batch normalization."""
+
+
 def _record_poll_attempt(integration_id: str) -> None:
     with _STATUS_LOCK:
         previous = _POLL_STATUS.get(integration_id, {})
@@ -164,12 +168,17 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
                 integration, cursor, credentials=credentials,
             ) if credentials is not None else fetch_dns_records_page(integration, cursor)
 
-            events, rejections = normalize_dns_batch_resilient(
-                integration.kind,
-                integration_id,
-                records,
-                store.list_privacy_classification_overrides(),
-            ) if records else ([], [])
+            try:
+                events, rejections = normalize_dns_batch_resilient(
+                    integration.kind,
+                    integration_id,
+                    records,
+                    store.list_privacy_classification_overrides(),
+                ) if records else ([], [])
+            except (TypeError, ValueError, OverflowError, OSError) as exc:
+                raise DnsNormalizationError(
+                    "DNS provider page normalization failed"
+                ) from exc
 
             accepted = duplicates = 0
             for event in events:
@@ -278,7 +287,7 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
                 "status": "error",
                 "category": "provider_error",
             })
-        except (TypeError, ValueError, OverflowError, OSError):
+        except DnsNormalizationError:
             logger.error("DNS provider response normalization failed integration_id=%s", integration_id)
             _record_failure(integration, store, metrics, "normalization_error")
             outcomes.append({
