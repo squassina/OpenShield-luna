@@ -2252,6 +2252,7 @@ def list_privacy_sources() -> list[dict[str, object]]:
             "last_query_at": latest.isoformat() if latest else None,
             "last_attempt_at": poll.get("last_attempt_at"),
             "last_success_at": last_success,
+            "last_failure_at": poll.get("last_failure_at"),
             "last_imported": poll.get("last_imported", 0),
             "last_duplicates": poll.get("last_duplicates", 0),
             "last_rejected": poll.get("last_rejected", 0),
