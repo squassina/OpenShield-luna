@@ -512,3 +512,31 @@ def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path
     )]
     assert spool.pending_command_results() == []
     assert spool.get_command_result("command-failed")["acknowledged"] is True
+
+
+def test_gateway_command_result_retry_backoff_is_bounded(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import UTC, datetime
+
+    path = tmp_path / "backoff.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    spool.enqueue_command_result("command-backoff", "failed", {"status": "failed"})
+
+    for _ in range(10):
+        spool.defer_command_result("command-backoff")
+
+    with sqlite3.connect(path) as connection:
+        attempts, next_attempt_at = connection.execute(
+            """
+            SELECT attempts, next_attempt_at
+            FROM gateway_command_results WHERE command_id = ?
+            """,
+            ("command-backoff",),
+        ).fetchone()
+
+    remaining = (
+        datetime.fromisoformat(next_attempt_at) - datetime.now(UTC)
+    ).total_seconds()
+    assert attempts == 10
+    assert 0 < remaining <= 60
+    assert spool.pending_command_results() == []
