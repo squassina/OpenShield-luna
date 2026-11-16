@@ -2,6 +2,7 @@ import asyncio
 import os
 
 import pytest
+
 from openshield.core.storage import PostgresStore, StorageConfigurationError
 
 
