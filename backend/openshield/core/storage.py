@@ -815,6 +815,33 @@ CREATE TABLE IF NOT EXISTS events (
             row = cursor.fetchone()
         return self._response_execution_from_row(row) if row is not None else None
 
+    def update_response_execution(
+        self, execution_id: str, status: str,
+        adapter_result: dict[str, object] | None = None,
+        expires_at: datetime | None = None, rolled_back_at: datetime | None = None,
+    ) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE response_executions SET status = %s,
+                    adapter_result = COALESCE(%s, adapter_result),
+                    expires_at = COALESCE(%s, expires_at),
+                    rolled_back_at = COALESCE(%s, rolled_back_at)
+                WHERE execution_id = %s
+                """,
+                (
+                    status, Jsonb(adapter_result) if adapter_result is not None else None,
+                    expires_at, rolled_back_at, execution_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                return None
+            self._insert_audit(
+                cursor, "response.execution.status.updated", None, execution_id,
+                {"status": status, **(adapter_result or {})},
+            )
+        return self.get_response_execution(execution_id)
+
     def list_response_executions(self, limit: int = 100) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
