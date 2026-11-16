@@ -20,7 +20,12 @@ class RequestBodyLimitMiddleware:
         self.app = app
         self.max_body_bytes = max_body_bytes
 
-    async def __call__(self, scope: dict[str, Any], receive: Callable[..., Awaitable[dict[str, Any]]], send: Callable[..., Awaitable[None]]) -> None:
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[..., Awaitable[dict[str, Any]]],
+        send: Callable[..., Awaitable[None]],
+    ) -> None:
         if (
             scope.get("type") != "http"
             or scope.get("method") != "POST"
@@ -30,7 +35,9 @@ class RequestBodyLimitMiddleware:
             return
 
         content_lengths = [
-            value for name, value in scope.get("headers", []) if name.lower() == b"content-length"
+            value
+            for name, value in scope.get("headers", [])
+            if name.lower() == b"content-length"
         ]
         if len(content_lengths) > 1:
             await self._reject(send, 400, "Invalid Content-Length header")
