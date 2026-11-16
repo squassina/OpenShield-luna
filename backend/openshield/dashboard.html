@@ -165,6 +165,7 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
     </form>
   </dialog>
 
+  <p id="report-status" class="muted" aria-live="polite"></p>
   <section class="grid" aria-label="DNS summary">
     <article class="panel"><div class="metric-label">DNS queries</div><div id="queries" class="metric">—</div></article>
     <article class="panel"><div class="metric-label">Blocked queries</div><div id="blocked" class="metric">—</div></article>
@@ -239,7 +240,9 @@ const api = async (path, options={}) => {
   if (!response.ok) {
     let detail = response.statusText;
     try { const body = await response.json(); detail = body.detail || detail; } catch {}
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 };
@@ -257,57 +260,198 @@ const table = (target, headers, rows) => {
   t.append(tbody);root.append(t);
 };
 let providerIds=[];
+function renderPanelUnavailable(target, endpoint, error) {
+  const root=$(target);
+  if(!root) return;
+  root.replaceChildren();
+  const message=document.createElement(["SPAN","P"].includes(root.tagName)?"span":"p");
+  message.className="error";
+  const status=error&&error.status?"HTTP "+error.status:"request failed";
+  message.textContent=endpoint+" unavailable ("+status+"): "+(error&&error.message?error.message:"Unknown error");
+  root.append(message);
+}
+function markPanelFresh(target) {
+  const root=$(target);
+  if(!root) return;
+  const stamp=document.createElement("small");
+  stamp.className="muted panel-freshness";
+  stamp.textContent="Updated "+new Date().toLocaleTimeString();
+  root.append(stamp);
+}
+function setSelectUnavailable(target, endpoint, error) {
+  const select=$(target);
+  select.replaceChildren(new Option(endpoint+" unavailable: "+(error.message||"request failed"),""));
+  select.disabled=true;
+}
 async function load() {
   $("refresh").disabled=true;
   showNotice("Refreshing dashboard…");
+  const days=$("period").value;
+  const endpoints={
+    report:"/api/v1/privacy/report?days="+days,
+    sources:"/api/v1/privacy/sources",
+    sensors:"/api/v1/sensors",
+    devices:"/api/v1/privacy/analytics/devices?days="+days,
+    integrations:"/api/v1/integrations",
+    lists:"/api/v1/privacy/lists",
+    inventory:"/api/v1/inventory/devices?limit=20",
+    inventoryTopology:"/api/v1/inventory/router-devices?limit=500",
+    incidents:"/api/v1/incidents?limit=50",
+    policies:"/api/v1/policies",
+    decisions:"/api/v1/policy-decisions?limit=50",
+    executions:"/api/v1/executions?limit=50",
+    control:"/api/v1/control/emergency-stop"
+  };
+  const keys=Object.keys(endpoints);
+  const settled=await Promise.allSettled(keys.map(key=>api(endpoints[key])));
+  const results=Object.fromEntries(keys.map((key,index)=>[key,settled[index]]));
+  const failures=[];
+  const value=(key)=>{
+    const result=results[key];
+    if(result.status==="fulfilled") return result.value;
+    failures.push(key);
+    return null;
+  };
   try {
-    const days=$("period").value;
-    const [
-      report,sources,sensors,devices,integrations,lists,inventory,inventoryTopology,
-      incidents,policyState,decisions,executions,control
-    ] = await Promise.all([
-      api("/api/v1/privacy/report?days="+days),
-      api("/api/v1/privacy/sources"),
-      api("/api/v1/sensors"),
-      api("/api/v1/privacy/analytics/devices?days="+days),
-      api("/api/v1/integrations"),
-      api("/api/v1/privacy/lists"),
-      api("/api/v1/inventory/devices?limit=20"),
-      api("/api/v1/inventory/router-devices?limit=500"),
-      api("/api/v1/incidents?limit=50"),
-      api("/api/v1/policies"),
-      api("/api/v1/policy-decisions?limit=50"),
-      api("/api/v1/executions?limit=50"),
-      api("/api/v1/control/emergency-stop")
-    ]);
-    $("queries").textContent=fmt(report.totals.queries);
-    $("blocked").textContent=fmt(report.totals.blocked);
-    $("trackers").textContent=fmt(report.totals.tracker_queries);
-    $("block-rate").textContent=report.totals.block_rate_percent+"%";
-    table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
-    table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
-    renderSources(sources,integrations);
-    renderPolicyPanel(policyState,decisions,executions,control,integrations);
-    renderIncidents(incidents);
-    renderAIProviders(integrations);
-    renderIntegrations(integrations);
-    renderRouterTopology(inventoryTopology);
-    await loadOpenWrtStatus(integrations);
-    await loadOpnsenseStatus(integrations);
-    await loadPfsenseStatus(integrations);
-    await loadCrowdSecStatus(integrations);
-    await loadWazuhStatus(integrations);
-    await loadPrometheusStatus(integrations);
-    await loadGrafanaStatus(integrations);
-    table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
-    table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
-    renderTrend(report.daily_trends);
-    renderLists(lists);
-    providerIds=integrations.filter(x=>["pihole","adguard"].includes(x.kind));
-    renderSyncButtons();
-    showNotice("Dashboard updated.");
+    const report=value("report");
+    if(report) {
+      $("queries").textContent=fmt(report.totals.queries);
+      $("blocked").textContent=fmt(report.totals.blocked);
+      $("trackers").textContent=fmt(report.totals.tracker_queries);
+      $("block-rate").textContent=report.totals.block_rate_percent+"%";
+      table("domains",["Domain","Queries","Blocked","Category"],report.top_domains.map(x=>[x.domain,fmt(x.queries),fmt(x.blocked),x.tracker_queries?"tracker":"—"]));
+      renderTrend(report.daily_trends);
+      markPanelFresh("domains");
+      markPanelFresh("trend");
+      markPanelFresh("report-status");
+    } else {
+      ["queries","blocked","trackers","block-rate"].forEach(id=>$(id).textContent="—");
+      const error=results.report.reason;
+      renderPanelUnavailable("domains",endpoints.report,error);
+      renderPanelUnavailable("trend",endpoints.report,error);
+      renderPanelUnavailable("report-status",endpoints.report,error);
+    }
+
+    const devices=value("devices");
+    if(devices) {
+      table("devices",["Client","Queries","Domains","Blocked"],devices.slice(0,10).map(x=>[x.client,fmt(x.queries),fmt(x.unique_domains),fmt(x.blocked)]));
+      markPanelFresh("devices");
+    } else renderPanelUnavailable("devices",endpoints.devices,results.devices.reason);
+
+    const integrations=value("integrations");
+    if(integrations) {
+      renderIntegrations(integrations);
+      $("ai-provider").disabled=false;
+      try {
+        renderAIProviders(integrations);
+        $("ai-provider").title="Updated "+new Date().toLocaleTimeString();
+      } catch(error) {
+        failures.push("ai-provider-renderer");
+        setSelectUnavailable("ai-provider","AI provider renderer",error);
+      }
+      providerIds=integrations.filter(x=>["pihole","adguard"].includes(x.kind));
+      renderSyncButtons();
+      markPanelFresh("integrations");
+    } else {
+      renderPanelUnavailable("integrations",endpoints.integrations,results.integrations.reason);
+      setSelectUnavailable("ai-provider",endpoints.integrations,results.integrations.reason);
+      renderPanelUnavailable("list-sync",endpoints.integrations,results.integrations.reason);
+      providerIds=[];
+    }
+
+    const sources=value("sources");
+    if(sources&&integrations) {
+      renderSources(sources,integrations);
+      markPanelFresh("sources");
+    } else {
+      const key=!sources?"sources":"integrations";
+      renderPanelUnavailable("sources",endpoints[key],results[key].reason);
+    }
+
+    const policyState=value("policies");
+    const decisions=value("decisions");
+    const executions=value("executions");
+    const control=value("control");
+    renderPolicyPanel(
+      policyState||{items:[]},decisions||[],executions||[],
+      control||{enforcement_enabled:false,active:true,max_autonomy_level:0},
+      integrations||[],
+    );
+    if(policyState) markPanelFresh("policies");
+    else renderPanelUnavailable("policies",endpoints.policies,results.policies.reason);
+    if(decisions) markPanelFresh("policy-decisions");
+    else renderPanelUnavailable("policy-decisions",endpoints.decisions,results.decisions.reason);
+    if(executions) markPanelFresh("executions");
+    else renderPanelUnavailable("executions",endpoints.executions,results.executions.reason);
+    if(control) markPanelFresh("policy-runtime-status");
+    else {
+      renderPanelUnavailable("policy-runtime-status",endpoints.control,results.control.reason);
+      $("emergency-stop").disabled=true;
+    }
+    if(!integrations) {
+      const status=$("policy-runtime-status");
+      status.textContent+=" · Integration choices unavailable";
+    }
+
+    const incidents=value("incidents");
+    if(incidents) {
+      renderIncidents(incidents);
+      markPanelFresh("incidents");
+    } else renderPanelUnavailable("incidents",endpoints.incidents,results.incidents.reason);
+
+    const inventoryTopology=value("inventoryTopology");
+    if(inventoryTopology) {
+      renderRouterTopology(inventoryTopology);
+      markPanelFresh("router-topology");
+    } else renderPanelUnavailable("router-topology",endpoints.inventoryTopology,results.inventoryTopology.reason);
+
+    const sensors=value("sensors");
+    if(sensors) {
+      table("sensors",["Sensor","Status","Events"],sensors.map(x=>[x.display_name,x.status,fmt(x.events_seen)]));
+      markPanelFresh("sensors");
+    } else renderPanelUnavailable("sensors",endpoints.sensors,results.sensors.reason);
+
+    const inventory=value("inventory");
+    if(inventory) {
+      table("inventory",["IP address","Scope","Observations"],inventory.map(x=>[x.ip_address,x.scope,fmt(x.observations)]));
+      markPanelFresh("inventory");
+    } else renderPanelUnavailable("inventory",endpoints.inventory,results.inventory.reason);
+
+    const lists=value("lists");
+    if(lists) {
+      renderLists(lists);
+      markPanelFresh("lists");
+    } else renderPanelUnavailable("lists",endpoints.lists,results.lists.reason);
+
+    if(integrations) {
+      const providerLoaders=[
+        ["openwrt-status",loadOpenWrtStatus],
+        ["opnsense-status",loadOpnsenseStatus],
+        ["pfsense-status",loadPfsenseStatus],
+        ["crowdsec-status",loadCrowdSecStatus],
+        ["wazuh-status",loadWazuhStatus],
+        ["prometheus-status",loadPrometheusStatus],
+        ["grafana-status",loadGrafanaStatus],
+      ];
+      const providerResults=await Promise.allSettled(
+        providerLoaders.map(([,loader])=>loader(integrations)),
+      );
+      providerResults.forEach((result,index)=>{
+        const [target]=providerLoaders[index];
+        if(result.status==="fulfilled") markPanelFresh(target);
+        else renderPanelUnavailable(target,"provider status",result.reason);
+      });
+    } else {
+      [
+        "openwrt-status","opnsense-status","pfsense-status","crowdsec-status",
+        "wazuh-status","prometheus-status","grafana-status",
+      ].forEach(target=>renderPanelUnavailable(target,endpoints.integrations,results.integrations.reason));
+    }
+
+    if(failures.length) showNotice("Some dashboard panels are unavailable; unaffected panels were refreshed.",true);
+    else showNotice("Dashboard updated.");
   } catch(error) {
-    showNotice("Dashboard refresh failed: "+error.message,true);
+    showNotice("Dashboard rendering partially failed: "+error.message,true);
   } finally {
     $("refresh").disabled=false;
   }
