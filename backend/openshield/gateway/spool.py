@@ -44,7 +44,8 @@ class GatewayEventSpool:
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS gateway_command_results (
-                    command_id TEXT PRIMARY KEY,
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command_id TEXT NOT NULL UNIQUE,
                     status TEXT NOT NULL,
                     result TEXT NOT NULL,
                     created_at TEXT NOT NULL,
@@ -55,8 +56,8 @@ class GatewayEventSpool:
                 """
             )
             connection.execute(
-                "CREATE INDEX IF NOT EXISTS pending_command_results_created_at_idx "
-                "ON gateway_command_results (acknowledged_at, next_attempt_at, created_at)"
+                "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
+                "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
         os.chmod(self._path, 0o600)
 
@@ -167,7 +168,7 @@ class GatewayEventSpool:
                 SELECT command_id, status, result, next_attempt_at
                 FROM gateway_command_results
                 WHERE acknowledged_at IS NULL
-                ORDER BY rowid
+                ORDER BY sequence
                 LIMIT ?
                 """,
                 (limit,),
