@@ -1328,6 +1328,36 @@ CREATE TABLE IF NOT EXISTS events (
                 (integration_id, provider_kind, Jsonb(value)),
             )
 
+    def checkpoint_integration_poll_page(
+        self,
+        integration_id: str,
+        provider_kind: str,
+        value: dict[str, object],
+        completion_details: dict[str, object],
+        rejection_details: dict[str, object] | None = None,
+    ) -> None:
+        """Atomically persist page diagnostics and advance its provider cursor."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO integration_poll_cursors (integration_id, provider_kind, cursor)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (integration_id) DO UPDATE
+                SET provider_kind = EXCLUDED.provider_kind,
+                    cursor = EXCLUDED.cursor, updated_at = NOW()
+                """,
+                (integration_id, provider_kind, Jsonb(value)),
+            )
+            if rejection_details is not None:
+                self._insert_audit(
+                    cursor, "privacy.provider_poll.records_rejected", None,
+                    integration_id, rejection_details,
+                )
+            self._insert_audit(
+                cursor, "privacy.provider_poll.completed", None,
+                integration_id, completion_details,
+            )
+
     def insert_event(self, event: EventEnvelope, actor_id: str | None = None) -> bool:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
