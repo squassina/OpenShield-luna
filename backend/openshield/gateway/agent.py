@@ -119,10 +119,9 @@ def _configured_openwrt_client(config: object) -> OpenWrtRPCClient | None:
         logger.error("Node returned incomplete OpenWrt connector configuration")
         return None
     try:
-        return OpenWrtRPCClient(
-            base_url, username, password,
-            ssl_context=create_ssl_context(config.get("ca_bundle_path"), base_url),
-        )
+        context = create_ssl_context(config.get("ca_bundle_path"), base_url)
+        options = {"ssl_context": context} if context is not None else {}
+        return OpenWrtRPCClient(base_url, username, password, **options)
     except ValueError:
         logger.error("Node returned invalid OpenWrt connector configuration")
         return None
