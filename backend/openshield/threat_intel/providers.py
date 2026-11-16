@@ -3,7 +3,9 @@ import json
 from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
+
+from openshield.core.http import safe_urlopen as urlopen
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
