@@ -31,7 +31,8 @@ class IntegrationRegistration(BaseModel):
         forbidden = ("password", "secret", "token", "credential", "private_key", "api_key")
         ca_bundle_path = config.get("ca_bundle_path")
         if ca_bundle_path not in (None, ""):
-            resolve_ca_bundle_path(ca_bundle_path)
+            resolved_ca_bundle = resolve_ca_bundle_path(ca_bundle_path)
+            config["ca_bundle_path"] = str(resolved_ca_bundle)
 
         def validate(value: Any) -> None:
             if isinstance(value, dict):
