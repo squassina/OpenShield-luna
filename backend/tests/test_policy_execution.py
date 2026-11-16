@@ -355,6 +355,10 @@ def test_gateway_command_agent_only_executes_allowlisted_actions(tmp_path) -> No
 def test_openwrt_rpc_adds_and_verifies_scoped_firewall_rule(monkeypatch) -> None:
     responses = [
         [0, {"ubus_rpc_session": "session-id"}],
+        [0, {"values": {
+            "zone_wan": {".type": "zone", "name": "wan"},
+            "zone_lan": {".type": "zone", "name": "lan"},
+        }}],
         [0, {}],  # Initial UCI lookup: this execution section does not exist yet.
         [0, {"section": "os_abcdef1234567890"}],
         [0, {}],
@@ -373,15 +377,15 @@ def test_openwrt_rpc_adds_and_verifies_scoped_firewall_rule(monkeypatch) -> None
         "abcdef12-3456-7890-abcd-ef1234567890", "8.8.8.8", "destination",
     )
     assert result["verified"] is True
-    add = json.loads(requests[2].data)[3]
+    add = json.loads(requests[3].data)[3]
     assert add["config"] == "firewall"
     assert add["type"] == "rule"
     assert add["values"]["src"] == "lan"
     assert add["values"]["dest"] == "wan"
     assert add["values"]["dest_ip"] == "8.8.8.8"
     assert add["values"]["target"] == "REJECT"
-    assert json.loads(requests[3].data)[2] == "apply"
-    assert json.loads(requests[5].data)[2] == "confirm"
+    assert json.loads(requests[4].data)[2] == "apply"
+    assert json.loads(requests[6].data)[2] == "confirm"
 
 
 def test_openwrt_rpc_removes_and_verifies_firewall_rule(monkeypatch) -> None:
