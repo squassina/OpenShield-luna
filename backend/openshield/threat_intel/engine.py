@@ -81,20 +81,18 @@ def _provider_lookup(
                 "indicator_value": indicator_value, "matched": False,
                 "skipped": "CrowdSec CTI supports IP reputation lookups",
             }
-        result = lookup_crowdsec(
-            indicator_value, api_key,
-            ssl_context=create_ssl_context(
-                integration.config.get("ca_bundle_path"), "https://cti.api.crowdsec.net"
-            ),
+        ssl_context = create_ssl_context(
+            integration.config.get("ca_bundle_path"), "https://cti.api.crowdsec.net"
         )
+        options = {"ssl_context": ssl_context} if ssl_context is not None else {}
+        result = lookup_crowdsec(indicator_value, api_key, **options)
     elif integration.kind == "misp":
         base_url = integration.config.get("base_url")
         if not isinstance(base_url, str) or not base_url:
             raise ThreatIntelProviderError("MISP integration requires config.base_url")
-        result = lookup_misp(
-            base_url, api_key, indicator_type, indicator_value,
-            ssl_context=create_ssl_context(integration.config.get("ca_bundle_path"), base_url),
-        )
+        ssl_context = create_ssl_context(integration.config.get("ca_bundle_path"), base_url)
+        options = {"ssl_context": ssl_context} if ssl_context is not None else {}
+        result = lookup_misp(base_url, api_key, indicator_type, indicator_value, **options)
     else:
         raise ThreatIntelProviderError("Unsupported threat intelligence provider")
     store.set_threat_intel_cache(
