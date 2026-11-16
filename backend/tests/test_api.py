@@ -1150,6 +1150,8 @@ def test_operations_report_summarizes_multiple_gateways_and_bounded_state() -> N
 def test_operations_report_rejects_unbounded_limit() -> None:
     assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
 
+
+
 def test_openwrt_firewall_zone_configuration_is_validated_and_sent_to_gateway(
     monkeypatch,
 ) -> None:

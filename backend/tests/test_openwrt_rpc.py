@@ -233,6 +233,8 @@ def test_openwrt_rpc_concurrent_expiry_uses_one_renewed_session() -> None:
     assert results == [{"result": "ok"}, {"result": "ok"}]
     assert login_count == 2
 
+
+
 @pytest.mark.parametrize(
     ("direction", "zones", "expected_src", "expected_dest", "ip_field"),
     [
