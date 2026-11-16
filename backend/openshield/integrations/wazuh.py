@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import ssl
 from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from openshield.integrations.models import Capability, Integration
 
@@ -31,6 +32,7 @@ class WazuhClient:
         username: str,
         password: str,
         timeout: float = 8.0,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         try:
             parsed = urlsplit(base_url)
@@ -62,6 +64,7 @@ class WazuhClient:
         self._username = username
         self._password = password
         self._timeout = timeout
+        self._ssl_context = ssl_context
 
     def _request(
         self,
@@ -84,7 +87,7 @@ class WazuhClient:
             method=method,
         )
         try:
-            opener = build_opener(_NoRedirectHandler())
+            opener = build_opener(_NoRedirectHandler(), HTTPSHandler(context=self._ssl_context))
             with opener.open(request, timeout=self._timeout) as response:
                 raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
