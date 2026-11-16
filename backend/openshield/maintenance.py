@@ -19,11 +19,14 @@ def run_retention() -> int:
     store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
     cutoff = datetime.now(UTC) - timedelta(days=days)
     deleted = 0
-    while True:
-        count = store.purge_events_before(cutoff, batch_size=1000)
-        deleted += count
-        if count < 1000:
-            break
+    try:
+        while True:
+            count = store.purge_events_before(cutoff, batch_size=1000)
+            deleted += count
+            if count < 1000:
+                break
+    finally:
+        store.close()
     print(f"Deleted {deleted} events received before {cutoff.isoformat()}.")
     return deleted
 

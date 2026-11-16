@@ -8,7 +8,10 @@ from openshield.core.storage import PostgresStore
 def main() -> None:
     load_runtime_secrets(create=False)
     store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
-    verified = SecretStore(store).reencrypt_all()
+    try:
+        verified = SecretStore(store).reencrypt_all()
+    finally:
+        store.close()
     print(f"Verified {verified} integration secret(s) with the active encryption key.")
 
 

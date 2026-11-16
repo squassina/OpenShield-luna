@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import psycopg
 from psycopg.types.json import Jsonb
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
@@ -34,16 +35,72 @@ class StorageConfigurationError(RuntimeError):
 class PostgresStore:
     """Small synchronous PostgreSQL store for P0 state and event persistence."""
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        pool_min_size: int = 1,
+        pool_max_size: int = 10,
+        pool_timeout: float = 5.0,
+    ) -> None:
+        if not 1 <= pool_min_size <= pool_max_size <= 32:
+            raise StorageConfigurationError(
+                "Database pool sizes must satisfy 1 <= min_size <= max_size <= 32"
+            )
+        if not 0.05 <= pool_timeout <= 30:
+            raise StorageConfigurationError(
+                "Database pool timeout must be between 0.05 and 30 seconds"
+            )
         self._dsn = dsn.strip()
+        self._pool_min_size = pool_min_size
+        self._pool_max_size = pool_max_size
+        self._pool_timeout = pool_timeout
+        self._pool: ConnectionPool | None = None
+        self._pool_lock = threading.Lock()
         self._schema_ready = False
         self._schema_lock = threading.Lock()
 
-    def _connect(self) -> psycopg.Connection:
+    def open(self) -> None:
+        """Open the bounded connection pool; safe to call more than once."""
         if not self._dsn:
             raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
         self.ensure_schema()
-        return psycopg.connect(self._dsn, connect_timeout=5)
+        with self._pool_lock:
+            if self._pool is not None and not self._pool.closed:
+                return
+            pool = ConnectionPool(
+                conninfo=self._dsn,
+                min_size=self._pool_min_size,
+                max_size=self._pool_max_size,
+                timeout=self._pool_timeout,
+                kwargs={"connect_timeout": 5},
+                open=False,
+            )
+            try:
+                pool.open(wait=True, timeout=self._pool_timeout)
+            except Exception:
+                pool.close()
+                raise
+            self._pool = pool
+
+    def close(self) -> None:
+        """Close the pool and all its connections."""
+        with self._pool_lock:
+            pool = self._pool
+            self._pool = None
+            if pool is not None and not pool.closed:
+                pool.close()
+
+    def _connect(self):
+        if not self._dsn:
+            raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
+        # Lazy opening keeps direct store use in tests and one-off tooling safe.
+        self.open()
+        with self._pool_lock:
+            pool = self._pool
+        if pool is None:
+            raise StorageConfigurationError("Database connection pool is not available")
+        return pool.connection(timeout=self._pool_timeout)
 
     def ensure_schema(self) -> None:
         if self._schema_ready:
@@ -477,7 +534,7 @@ CREATE TABLE IF NOT EXISTS events (
             with self._connect() as connection, connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
                 return cursor.fetchone() == (1,)
-        except (psycopg.Error, StorageConfigurationError):
+        except (psycopg.Error, PoolTimeout, StorageConfigurationError):
             return False
 
     def reset(self) -> None:

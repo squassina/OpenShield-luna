@@ -284,9 +284,12 @@ def test_persisted_state_survives_store_recreation() -> None:
     client.post("/api/v1/gateway/connect", json=gateway_payload())
     assert client.post("/api/v1/events", json=sample_event(integration_id="home-gateway")).status_code == 202
     restarted_store = PostgresStore(os.environ["OPENSHIELD_DATABASE_URL"])
-    assert IntegrationRegistry(restarted_store).get("home-gateway") is not None
-    assert len(restarted_store.list_events()) == 1
-    assert GatewayConnectionRegistry(restarted_store).get_status("home-gateway")["status"] == "connected"
+    try:
+        assert IntegrationRegistry(restarted_store).get("home-gateway") is not None
+        assert len(restarted_store.list_events()) == 1
+        assert GatewayConnectionRegistry(restarted_store).get_status("home-gateway")["status"] == "connected"
+    finally:
+        restarted_store.close()
 
 
 def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
