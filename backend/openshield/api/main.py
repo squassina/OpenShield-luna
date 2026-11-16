@@ -2254,7 +2254,10 @@ def list_privacy_sources() -> list[dict[str, object]]:
             "last_success_at": last_success,
             "last_imported": poll.get("last_imported", 0),
             "last_duplicates": poll.get("last_duplicates", 0),
+            "last_rejected": poll.get("last_rejected", 0),
             "last_error": poll.get("last_error"),
+            "last_error_category": poll.get("last_error_category"),
+            "retryable": poll.get("retryable"),
             "queries_seen": source.get("queries_seen", 0),
             "freshness_basis": "node_observed_at",
         })
