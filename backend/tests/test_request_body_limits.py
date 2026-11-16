@@ -18,18 +18,21 @@ async def invoke_middleware(
     headers: list[tuple[bytes, bytes]] | None = None,
 ) -> tuple[int, bool]:
     received = iter(chunks)
+    remaining = len(chunks)
     app_called = False
     messages: list[dict[str, object]] = []
 
     async def receive() -> dict[str, object]:
+        nonlocal remaining
         try:
             body = next(received)
         except StopIteration:
             return {"type": "http.request", "body": b"", "more_body": False}
+        remaining -= 1
         return {
             "type": "http.request",
             "body": body,
-            "more_body": bool(list(received)),
+            "more_body": remaining > 0,
         }
 
     async def app(scope, app_receive, send) -> None:
