@@ -302,7 +302,11 @@ def mock_api():
                 respond(route, state["incidents"])
                 return
             if path.startswith("/api/v1/incidents/"):
-                incident_id = path.rsplit("/", 1)[-1]
+                incident_id = (
+                    path.split("/")[-2]
+                    if path.endswith("/investigate")
+                    else path.rsplit("/", 1)[-1]
+                )
                 incident = next(
                     (item for item in state["incidents"] if item["incident_id"] == incident_id),
                     None,
