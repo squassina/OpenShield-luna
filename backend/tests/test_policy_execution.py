@@ -234,6 +234,67 @@ def test_policy_rejects_indicator_mismatch_private_ip_and_wrong_adapter() -> Non
         _policy("block_ip", "ip", "8.8.8.8", "pihole-home")
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("min_risk_score", -1, "between 0 and 100"),
+        ("min_risk_score", 101, "between 0 and 100"),
+        ("autonomy_level", -1, "between 0 and 3"),
+        ("autonomy_level", 4, "between 0 and 3"),
+        ("ttl_seconds", 0, "between 60 and 86400"),
+        ("ttl_seconds", 59, "between 60 and 86400"),
+        ("ttl_seconds", 86401, "between 60 and 86400"),
+        ("direction", "inbound", "source or destination"),
+        ("direction", "source", "only support destination"),
+    ],
+)
+def test_policy_creation_rejects_invalid_fields_without_persisting(
+    field: str, value: object, message: str,
+) -> None:
+    from openshield.api import main
+
+    _register("pihole", "pihole-home")
+    data = {
+        "name": "Test policy",
+        "enabled": True,
+        "indicator_type": "domain",
+        "indicator_value": "malicious.example",
+        "action": "block_domain",
+        "integration_id": "pihole-home",
+        "min_risk_score": 70,
+        "autonomy_level": 1,
+        "ttl_seconds": 600,
+        "require_approval": True,
+        "direction": "destination",
+    }
+    data[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        create_policy(main.store, main.registry, data)
+    assert main.store.list_policies() == []
+
+
+def test_policy_creation_accepts_documented_numeric_boundaries() -> None:
+    from openshield.api import main
+
+    _register("pihole", "pihole-home")
+    policy = create_policy(main.store, main.registry, {
+        "name": "Boundary policy",
+        "indicator_type": "domain",
+        "indicator_value": "malicious.example",
+        "action": "block_domain",
+        "integration_id": "pihole-home",
+        "min_risk_score": 0,
+        "autonomy_level": 3,
+        "ttl_seconds": 86400,
+    })
+
+    assert policy["min_risk_score"] == 0
+    assert policy["autonomy_level"] == 3
+    assert policy["ttl_seconds"] == 86400
+    assert policy["direction"] == "destination"
+
+
 def test_global_autonomy_cap_blocks_higher_policy(monkeypatch) -> None:
     from openshield.api import main
 
