@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
+from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.integrations.models import Integration
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -35,19 +36,10 @@ def _base_url(integration: Integration) -> str:
 def _ssl_context(integration: Integration | None, url: str) -> ssl.SSLContext | None:
     if integration is None:
         return None
-    ca_bundle_path = integration.config.get("ca_bundle_path")
-    if ca_bundle_path in (None, ""):
-        return None
-    if not isinstance(ca_bundle_path, str) or not os.path.isabs(ca_bundle_path):
-        raise DnsProviderError("DNS provider ca_bundle_path must be an absolute PEM file path")
-    if urlsplit(url).scheme != "https":
-        raise DnsProviderError("DNS provider ca_bundle_path requires an HTTPS base_url")
     try:
-        context = ssl.create_default_context()
-        context.load_verify_locations(cafile=ca_bundle_path)
-    except (OSError, ssl.SSLError) as exc:
-        raise DnsProviderError("DNS provider CA bundle could not be loaded") from exc
-    return context
+        return create_ssl_context(integration.config.get("ca_bundle_path"), url)
+    except CABundleError as exc:
+        raise DnsProviderError("DNS provider CA bundle configuration is invalid") from exc
 
 
 def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = None,
