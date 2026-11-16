@@ -1287,6 +1287,11 @@ def test_dns_database_failure_aborts_cycle_and_replays_without_cursor_loss(
     assert main.store.get_integration_poll_cursor("a-pihole-home") is None
     assert main.store.get_integration_poll_cursor("b-adguard-home") is None
     assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 1
+    assert not any(
+        item["action"] == "privacy.provider_poll.completed"
+        and item["target_id"] == "a-pihole-home"
+        for item in client.get("/api/v1/audit").json()
+    )
     source = next(
         item for item in client.get("/api/v1/privacy/sources").json()
         if item["integration_id"] == "a-pihole-home"
