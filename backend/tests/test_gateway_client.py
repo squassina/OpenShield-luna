@@ -660,3 +660,41 @@ def test_gateway_spool_health_compaction_keeps_state_transitions(
     }
     assert any(event.event_id == "health-reachable-new" for event in spool.pending())
     assert spool.stats()["coalesced_health_events"] == 1
+
+
+
+def test_configured_openwrt_client_receives_firewall_zone_mapping(monkeypatch) -> None:
+    from openshield.gateway import agent
+
+    zones = {
+        "source": {"src": "iot", "dest": "dmz"},
+        "destination": {"src": "guest", "dest": "lan"},
+    }
+    received: dict[str, object] = {}
+
+    class FakeOpenWrtRPCClient:
+        def __init__(
+            self,
+            base_url: str,
+            username: str,
+            password: str,
+            **options: object,
+        ) -> None:
+            received.update(
+                base_url=base_url,
+                username=username,
+                password=password,
+                options=options,
+            )
+
+    monkeypatch.setattr(agent, "OpenWrtRPCClient", FakeOpenWrtRPCClient)
+    result = agent._configured_openwrt_client({
+        "base_url": "http://router",
+        "username": "rpc",
+        "password": "secret",
+        "firewall_zones": zones,
+    })
+
+    assert isinstance(result, FakeOpenWrtRPCClient)
+    assert received["options"] == {"firewall_zones": zones}
+

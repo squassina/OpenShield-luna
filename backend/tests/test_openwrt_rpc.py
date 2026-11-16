@@ -232,3 +232,123 @@ def test_openwrt_rpc_concurrent_expiry_uses_one_renewed_session() -> None:
 
     assert results == [{"result": "ok"}, {"result": "ok"}]
     assert login_count == 2
+
+
+
+@pytest.mark.parametrize(
+    ("direction", "zones", "expected_src", "expected_dest", "ip_field"),
+    [
+        ("source", None, "wan", "lan", "src_ip"),
+        ("destination", None, "lan", "wan", "dest_ip"),
+        (
+            "source",
+            {
+                "source": {"src": "iot", "dest": "dmz"},
+                "destination": {"src": "guest", "dest": "lan"},
+            },
+            "iot",
+            "dmz",
+            "src_ip",
+        ),
+        (
+            "destination",
+            {
+                "source": {"src": "iot", "dest": "dmz"},
+                "destination": {"src": "guest", "dest": "lan"},
+            },
+            "guest",
+            "lan",
+            "dest_ip",
+        ),
+    ],
+)
+def test_openwrt_firewall_block_uses_configured_existing_zones(
+    direction: str,
+    zones: dict[str, dict[str, str]] | None,
+    expected_src: str,
+    expected_dest: str,
+    ip_field: str,
+) -> None:
+    client = OpenWrtRPCClient(
+        "http://router", "user", "password", firewall_zones=zones
+    )
+    firewall_zones = {expected_src, expected_dest, "lan", "wan", "iot", "guest", "dmz"}
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def fake_call(
+        object_name: str,
+        method: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        payload = params or {}
+        calls.append((object_name, method, payload))
+        if method == "get" and payload == {"config": "firewall"}:
+            return {
+                "values": {
+                    f"@zone[{index}]": {".type": "zone", "name": zone}
+                    for index, zone in enumerate(sorted(firewall_zones))
+                }
+            }
+        if method == "get" and "section" in payload:
+            if len([call for call in calls if call[1] == "add"]) == 0:
+                raise OpenWrtRPCError("missing rule")
+            return {"values": {"name": "OpenShield rule"}}
+        if method == "add":
+            return {"section": "os_abcd"}
+        return {}
+
+    client.call = fake_call  # type: ignore[method-assign]
+    result = client.apply_firewall_block("abcd", "8.8.8.8", direction)
+
+    add = next(payload for _, method, payload in calls if method == "add")
+    rule = add["values"]
+    assert isinstance(rule, dict)
+    assert rule["src"] == expected_src
+    assert rule["dest"] == expected_dest
+    assert rule[ip_field] == "8.8.8.8"
+    assert result["verified"] is True
+
+
+def test_openwrt_firewall_block_rejects_unavailable_configured_zone() -> None:
+    client = OpenWrtRPCClient(
+        "http://router",
+        "user",
+        "password",
+        firewall_zones={
+            "source": {"src": "iot", "dest": "guest"},
+            "destination": {"src": "guest", "dest": "iot"},
+        },
+    )
+    calls: list[str] = []
+
+    def fake_call(
+        object_name: str,
+        method: str,
+        params: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append(method)
+        return {
+            "values": {
+                "@zone[0]": {".type": "zone", "name": "lan"},
+                "@zone[1]": {".type": "zone", "name": "wan"},
+            }
+        }
+
+    client.call = fake_call  # type: ignore[method-assign]
+    with pytest.raises(OpenWrtRPCError, match="zone does not exist"):
+        client.apply_firewall_block("abcd", "8.8.8.8", "source")
+    assert calls == ["get"]
+
+
+def test_openwrt_rpc_rejects_invalid_firewall_zone_configuration() -> None:
+    with pytest.raises(ValueError, match="letters, numbers"):
+        OpenWrtRPCClient(
+            "http://router",
+            "user",
+            "password",
+            firewall_zones={
+                "source": {"src": "lan;drop", "dest": "wan"},
+                "destination": {"src": "wan", "dest": "lan"},
+            },
+        )
+

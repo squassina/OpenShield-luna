@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
+from openshield.integrations.models import DEFAULT_FIREWALL_ZONES, validate_firewall_zones
 
 
 def _valid_mac(value: object) -> bool:
@@ -47,6 +48,7 @@ class OpenWrtRPCClient:
         password: str,
         timeout: float = 5.0,
         ssl_context: ssl.SSLContext | None = None,
+        firewall_zones: dict[str, dict[str, str]] | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -67,6 +69,9 @@ class OpenWrtRPCClient:
         self._password = password
         self._timeout = timeout
         self._ssl_context = ssl_context
+        self._firewall_zones = validate_firewall_zones(
+            DEFAULT_FIREWALL_ZONES if firewall_zones is None else firewall_zones
+        )
         self._session: str | None = None
         self._session_lock = threading.Lock()
 
@@ -341,6 +346,20 @@ class OpenWrtRPCClient:
             raise ValueError("Firewall block accepts public IP addresses only")
         if direction not in {"source", "destination"}:
             raise ValueError("Firewall block direction must be source or destination")
+        zone_pair = self._firewall_zones[direction]
+        firewall = self.call("uci", "get", {"config": "firewall"})
+        sections = firewall.get("values")
+        if not isinstance(sections, dict):
+            raise OpenWrtRPCError("OpenWrt firewall configuration response was invalid")
+        existing_zones = {
+            section.get("name")
+            for section in sections.values()
+            if isinstance(section, dict) and section.get(".type") == "zone"
+            and isinstance(section.get("name"), str)
+        }
+        if zone_pair["src"] not in existing_zones or zone_pair["dest"] not in existing_zones:
+            raise OpenWrtRPCError("Configured OpenWrt firewall zone does not exist")
+
         section = "os_" + re.sub(r"[^a-f0-9]", "", execution_id.lower())[:16]
         try:
             existing = self.call("uci", "get", {"config": "firewall", "section": section})
@@ -355,10 +374,8 @@ class OpenWrtRPCClient:
             "family": "ipv4" if address.version == 4 else "ipv6",
             "enabled": "1",
         }
-        if direction == "source":
-            values.update({"src": "wan", "dest": "lan", "src_ip": str(address)})
-        else:
-            values.update({"src": "lan", "dest": "wan", "dest_ip": str(address)})
+        values.update({"src": zone_pair["src"], "dest": zone_pair["dest"]})
+        values["src_ip" if direction == "source" else "dest_ip"] = str(address)
         try:
             created = self.call(
                 "uci", "add",
