@@ -19,6 +19,8 @@ def resolve_ca_bundle_path(value: str | None) -> Path | None:
         raise CABundleError("CA bundle path must be an absolute file inside the certificate directory")
 
     candidate = Path(value)
+    if ".." in candidate.parts:
+        raise CABundleError("CA bundle path cannot contain traversal components")
     if not candidate.is_absolute():
         raise CABundleError("CA bundle path must be an absolute file inside the certificate directory")
 
