@@ -531,7 +531,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         try:
             client = PfSenseClient(
                 str(credentials["base_url"]), str(credentials["api_key"]),
-                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             )
             system = client.get("/api/v2/status/system")
         except (KeyError, TypeError, ValueError) as exc:
@@ -551,7 +551,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
                 str(credentials["base_url"]),
                 str(credentials["username"]),
                 str(credentials["password"]),
-                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -576,7 +576,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             diagnostics = PrometheusClient(
                 str(credentials["base_url"]),
                 str(credentials.get("bearer_token") or "") or None,
-                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -594,7 +594,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             diagnostics = GrafanaClient(
                 str(credentials["base_url"]),
                 str(credentials.get("bearer_token") or "") or None,
-                ssl_context=_integration_ssl_context(item, str(credentials["base_url"])),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -641,7 +641,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
                     secret["bouncer_api_key"],
                     str(secret.get("machine_id") or "") or None,
                     str(secret.get("machine_password") or "") or None,
-                    ssl_context=_integration_ssl_context(item, str(secret["base_url"])),
+                    **_integration_ssl_context_kwargs(item, str(secret["base_url"])),
                 ).diagnostics()
             except (KeyError, TypeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
@@ -659,7 +659,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         try:
             result = lookup_crowdsec(
                 "8.8.8.8", api_key,
-                ssl_context=_integration_ssl_context(item, "https://cti.api.crowdsec.net"),
+                **_integration_ssl_context_kwargs(item, "https://cti.api.crowdsec.net"),
             )
         except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -682,7 +682,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         try:
             result = lookup_misp(
                 base_url, api_key, "ip", "192.0.2.1",
-                ssl_context=_integration_ssl_context(item, base_url),
+                **_integration_ssl_context_kwargs(item, base_url),
             )
         except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -697,7 +697,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
         try:
             models = test_ollama(
-                base_url, ssl_context=_integration_ssl_context(item, base_url)
+                base_url, **_integration_ssl_context_kwargs(item, base_url)
             )
         except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -722,7 +722,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
         try:
             models = test_openai(
-                api_key, ssl_context=_integration_ssl_context(item, "https://api.openai.com")
+                api_key, **_integration_ssl_context_kwargs(item, "https://api.openai.com")
             )
         except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -793,7 +793,7 @@ def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
         client = OPNsenseClient(
             str(credentials["base_url"]), str(credentials["api_key"]),
             str(credentials["api_secret"]),
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
@@ -851,7 +851,7 @@ def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="pfSense API key is not configured")
         client = PfSenseClient(
             str(credentials["base_url"]), str(credentials["api_key"]),
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
@@ -938,7 +938,7 @@ def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
             str(credentials["bouncer_api_key"]),
             str(credentials.get("machine_id") or "") or None,
             str(credentials.get("machine_password") or "") or None,
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -1001,7 +1001,7 @@ def misp_diagnostics(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
         client = MispClient(
             str(credentials["base_url"]), str(credentials["api_key"]),
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -1031,7 +1031,7 @@ def sync_misp_indicators(
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
         client = MispClient(
             str(credentials["base_url"]), str(credentials["api_key"]),
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         indicators = client.search_indicators(limit)
         complete_snapshot = len(indicators) < limit
@@ -1183,7 +1183,7 @@ def wazuh_diagnostics(integration_id: str) -> dict[str, object]:
             str(credentials["base_url"]),
             str(credentials["username"]),
             str(credentials["password"]),
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -1245,7 +1245,7 @@ def prometheus_diagnostics(integration_id: str) -> dict[str, object]:
             raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
         client = PrometheusClient(
             str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None,
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
@@ -1312,7 +1312,7 @@ def grafana_diagnostics(integration_id: str) -> dict[str, object]:
         client = GrafanaClient(
             str(credentials["base_url"]),
             str(credentials.get("bearer_token") or "") or None,
-            ssl_context=_integration_ssl_context(integration, str(credentials["base_url"])),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
