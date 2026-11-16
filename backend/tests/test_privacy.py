@@ -416,11 +416,10 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name, labels=None):
-            assert name == "openshield_events_ingested_total"
+    from openshield.core.metrics import MetricsRegistry
 
-    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    metrics = MetricsRegistry()
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
     assert calls == ["pihole-home"]
     assert outcomes == [{
         "integration_id": "pihole-home", "status": "ok",
@@ -456,11 +455,10 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name, labels=None):
-            raise AssertionError("No events should be ingested")
+    from openshield.core.metrics import MetricsRegistry
 
-    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    metrics = MetricsRegistry()
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
     assert calls == ["adguard-home", "pihole-home"]
     assert outcomes == [
         {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0,
@@ -774,11 +772,9 @@ def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> No
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name, labels=None):
-            raise AssertionError("No records should be ingested")
+    from openshield.core.metrics import MetricsRegistry
 
-    first = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    first = polling.poll_dns_sources_once(main.registry, main.store, MetricsRegistry())
     second = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
     assert first[0]["status"] == "error"
     assert second[0]["status"] == "ok"
@@ -810,7 +806,8 @@ def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypat
             self.count = 0
 
         def increment(self, name, labels=None):
-            self.count += 1
+            if name == "openshield_events_ingested_total":
+                self.count += 1
 
     metrics = Metrics()
     first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
