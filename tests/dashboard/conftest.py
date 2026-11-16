@@ -67,6 +67,22 @@ def mock_api():
                     "config": {"base_url": "http://192.0.2.53", "auth_configured": False},
                 },
                 {
+                    "integration_id": "ollama-home",
+                    "kind": "ollama",
+                    "display_name": "Local Ollama",
+                    "enabled": True,
+                    "capabilities": [],
+                    "config": {"base_url": "http://192.0.2.20:11434", "model": "llama3"},
+                },
+                {
+                    "integration_id": "openai-disabled",
+                    "kind": "openai",
+                    "display_name": "Disabled OpenAI",
+                    "enabled": False,
+                    "capabilities": [],
+                    "config": {"model": "gpt-4.1-mini"},
+                },
+                {
                     "integration_id": "router-home",
                     "kind": "openwrt",
                     "display_name": "OpenWrt",
@@ -286,13 +302,33 @@ def mock_api():
                 respond(route, state["incidents"])
                 return
             if path.startswith("/api/v1/incidents/"):
-                incident_id = path.rsplit("/", 1)[-1]
+                incident_id = (
+                    path.split("/")[-2]
+                    if path.endswith("/investigate")
+                    else path.rsplit("/", 1)[-1]
+                )
                 incident = next(
                     (item for item in state["incidents"] if item["incident_id"] == incident_id),
                     None,
                 )
                 if incident is None:
                     respond(route, {"detail": "not found"}, 404)
+                elif method == "POST" and path.endswith("/investigate"):
+                    respond(route, {
+                        "investigation_id": "investigation-1",
+                        "incident_id": incident_id,
+                        "provider_integration_id": "ollama-home",
+                        "provider_kind": "ollama",
+                        "model": "llama3",
+                        "result": {
+                            "summary": "<img src=x onerror=alert(1)> suspicious DNS activity",
+                            "confidence": 0.85,
+                            "observed_facts": ["Three matching DNS events"],
+                            "hypotheses": ["Possible beaconing"],
+                            "recommendations": ["Review the affected client"],
+                            "caveats": [],
+                        },
+                    })
                 elif method == "PATCH":
                     incident.update(request.post_data_json)
                     respond(route, incident)

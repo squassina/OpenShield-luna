@@ -115,3 +115,49 @@ def test_incident_and_policy_actions_work(page: Page, dashboard_url: str, mock_a
     page.locator("#policy-decisions").get_by_role("button", name="Approve").click()
     expect(page.locator("#policy-decisions")).to_contain_text("approved")
     assert page.page_errors == []
+
+
+
+def test_ai_providers_and_investigation_render_safely(
+    page: Page, dashboard_url: str, mock_api
+) -> None:
+    open_dashboard(page, dashboard_url, mock_api)
+
+    providers = page.locator("#ai-provider")
+    expect(providers).to_be_enabled()
+    expect(providers.locator("option")).to_have_count(2)
+    expect(providers).to_contain_text("Local Ollama")
+    expect(providers).not_to_contain_text("Disabled OpenAI")
+
+    providers.select_option("ollama-home")
+    page.locator("#incidents").get_by_role("button", name="AI investigate").click()
+
+    results = page.locator("#ai-results")
+    expect(results).to_contain_text("AI investigation")
+    expect(results).to_contain_text("<img src=x onerror=alert(1)> suspicious DNS activity")
+    expect(results).to_contain_text("Confidence: 85%")
+    expect(results).to_contain_text("Three matching DNS events")
+    expect(results).to_contain_text("Possible beaconing")
+    expect(results).to_contain_text("Review the affected client")
+    expect(results).to_contain_text("Caveats")
+    expect(results.locator("img")).to_have_count(0)
+    assert page.page_errors == []
+
+
+def test_ai_provider_selector_handles_no_enabled_ai_providers(
+    page: Page, dashboard_url: str, mock_api
+) -> None:
+    mock = mock_api(page)
+    mock["state"]["integrations"] = [
+        item for item in mock["state"]["integrations"]
+        if item["kind"] not in {"ollama", "openai"}
+    ]
+    page.goto(dashboard_url)
+    page.wait_for_function(
+        "() => document.querySelector('#notice').textContent.includes('Dashboard')"
+        " || document.querySelector('#notice').textContent.includes('dashboard panels')"
+    )
+
+    expect(page.locator("#ai-provider")).to_be_disabled()
+    expect(page.locator("#ai-provider")).to_contain_text("No enabled AI providers")
+    assert page.page_errors == []
