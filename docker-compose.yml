@@ -86,7 +86,7 @@ services:
       dockerfile: Dockerfile
       target: browser-test
     profiles: ["tools"]
-    command: ["pytest", "-v", "dashboard-tests"]
+    command: ["sh", "-c", "ruff check dashboard-tests && pytest -v dashboard-tests"]
 
   openshield-gateway-connector:
     container_name: openshield-luna-gateway-connector
