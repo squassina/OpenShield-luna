@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
@@ -416,11 +417,10 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name):
-            assert name == "openshield_events_ingested_total"
+    from openshield.core.metrics import MetricsRegistry
 
-    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    metrics = MetricsRegistry()
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
     assert calls == ["pihole-home"]
     assert outcomes == [{
         "integration_id": "pihole-home", "status": "ok",
@@ -456,23 +456,28 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name):
-            raise AssertionError("No events should be ingested")
+    from openshield.core.metrics import MetricsRegistry
 
-    outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    metrics = MetricsRegistry()
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
     assert calls == ["adguard-home", "pihole-home"]
     assert outcomes == [
         {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0,
          "rejected": 0, "pages": 1, "complete": True},
-        {"integration_id": "pihole-home", "status": "error"},
+        {"integration_id": "pihole-home", "status": "error", "category": "provider_error"},
     ]
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
     assert any(item["action"] == "privacy.provider_poll.completed" for item in audit)
     sources = {item["integration_id"]: item for item in client.get("/api/v1/privacy/sources").json()}
     assert sources["pihole-home"]["status"] == "failed"
-    assert sources["pihole-home"]["last_error"] == "Provider polling failed"
+    assert sources["pihole-home"]["last_error"] == "DNS provider request failed"
+    assert sources["pihole-home"]["last_error_category"] == "provider_error"
+    assert sources["pihole-home"]["retryable"] is True
+    assert sources["pihole-home"]["last_failure_at"]
+    rendered = metrics.render()
+    assert 'openshield_dns_poll_failures_total{category="provider_error",integration_id="pihole-home",provider="pihole"} 1' in rendered
+    assert 'openshield_dns_poll_success_total{integration_id="adguard-home",provider="adguard"} 1' in rendered
 
 
 
@@ -774,12 +779,10 @@ def test_dns_polling_retries_provider_after_transient_failure(monkeypatch) -> No
 
     monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
 
-    class Metrics:
-        def increment(self, name):
-            raise AssertionError("No records should be ingested")
+    from openshield.core.metrics import MetricsRegistry
 
-    first = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
-    second = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
+    first = polling.poll_dns_sources_once(main.registry, main.store, MetricsRegistry())
+    second = polling.poll_dns_sources_once(main.registry, main.store, MetricsRegistry())
     assert first[0]["status"] == "error"
     assert second[0]["status"] == "ok"
     assert attempts == ["pihole-home", "pihole-home"]
@@ -809,8 +812,9 @@ def test_dns_polling_is_idempotent_across_pages_and_overlapping_cycles(monkeypat
         def __init__(self):
             self.count = 0
 
-        def increment(self, name):
-            self.count += 1
+        def increment(self, name, labels=None):
+            if name == "openshield_events_ingested_total":
+                self.count += 1
 
     metrics = Metrics()
     first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
@@ -1111,9 +1115,11 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     class Metrics:
         def __init__(self):
             self.counts = {}
+            self.samples = []
 
-        def increment(self, name):
+        def increment(self, name, labels=None):
             self.counts[name] = self.counts.get(name, 0) + 1
+            self.samples.append((name, labels or {}))
 
     metrics = Metrics()
     first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
@@ -1127,6 +1133,10 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     }
     assert metrics.counts["openshield_events_ingested_total"] == 499
     assert metrics.counts["openshield_dns_records_rejected_total"] == 1
+    assert (
+        "openshield_dns_poll_records_total",
+        {"integration_id": "pihole-home", "provider": "pihole", "outcome": "rejected"},
+    ) in metrics.samples
     events = client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]
     assert len(events) == 499
     rejection_audit = next(
@@ -1145,3 +1155,159 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
         "offset": 501, "complete": True,
     }
     assert len(client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]) == 500
+
+
+def test_dns_polling_isolates_normalization_failure_and_continues(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.core.metrics import MetricsRegistry
+    from openshield.privacy import polling
+
+    register_dns("a-pihole-home", "pihole")
+    register_dns("b-adguard-home", "adguard")
+    integrations = sorted(main.registry.list_all(), key=lambda item: item.integration_id)
+    monkeypatch.setattr(main.registry, "list_all", lambda: integrations)
+    calls = []
+    original_normalize = polling.normalize_dns_batch_resilient
+
+    def fake_fetch_page(integration, cursor):
+        calls.append(integration.integration_id)
+        return [{
+            "domain": f"{integration.integration_id}.example",
+            "timestamp": "2026-11-15T12:00:00Z",
+        }], {"offset": 1, "complete": True}, True
+
+    def fail_first_normalization(kind, integration_id, records, overrides):
+        if integration_id == "a-pihole-home":
+            raise ValueError("malformed provider page")
+        return original_normalize(kind, integration_id, records, overrides)
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+    monkeypatch.setattr(polling, "normalize_dns_batch_resilient", fail_first_normalization)
+    metrics = MetricsRegistry()
+
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+
+    assert calls == ["a-pihole-home", "b-adguard-home"]
+    assert outcomes[0] == {
+        "integration_id": "a-pihole-home",
+        "status": "error",
+        "category": "normalization_error",
+    }
+    assert outcomes[1]["status"] == "ok"
+    assert main.store.get_integration_poll_cursor("a-pihole-home") is None
+    assert main.store.get_integration_poll_cursor("b-adguard-home") == {
+        "offset": 1, "complete": True,
+    }
+    source = next(
+        item for item in client.get("/api/v1/privacy/sources").json()
+        if item["integration_id"] == "a-pihole-home"
+    )
+    assert source["last_error_category"] == "normalization_error"
+    assert source["retryable"] is False
+    assert 'category="normalization_error",integration_id="a-pihole-home",provider="pihole"' in metrics.render()
+
+
+def test_dns_polling_isolates_unexpected_provider_error(monkeypatch, caplog) -> None:
+    from openshield.api import main
+    from openshield.core.metrics import MetricsRegistry
+    from openshield.privacy import polling
+
+    register_dns("a-pihole-home", "pihole")
+    register_dns("b-adguard-home", "adguard")
+    integrations = sorted(main.registry.list_all(), key=lambda item: item.integration_id)
+    monkeypatch.setattr(main.registry, "list_all", lambda: integrations)
+    calls = []
+
+    def fake_fetch_page(integration, cursor):
+        calls.append(integration.integration_id)
+        if integration.integration_id == "a-pihole-home":
+            raise RuntimeError("secret provider payload must not be logged")
+        return [], {"offset": 1, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+    metrics = MetricsRegistry()
+    outcomes = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+
+    assert calls == ["a-pihole-home", "b-adguard-home"]
+    assert outcomes[0]["category"] == "unexpected_error"
+    assert outcomes[1]["status"] == "ok"
+    assert main.store.get_integration_poll_cursor("a-pihole-home") is None
+    assert main.store.get_integration_poll_cursor("b-adguard-home") == {
+        "offset": 1, "complete": True,
+    }
+    assert "secret provider payload" not in caplog.text
+    source = next(
+        item for item in client.get("/api/v1/privacy/sources").json()
+        if item["integration_id"] == "a-pihole-home"
+    )
+    assert source["last_error_category"] == "unexpected_error"
+
+
+def test_dns_database_failure_aborts_cycle_and_replays_without_cursor_loss(
+    monkeypatch,
+) -> None:
+    import psycopg
+
+    from openshield.api import main
+    from openshield.core.metrics import MetricsRegistry
+    from openshield.privacy import polling
+
+    register_dns("a-pihole-home", "pihole")
+    register_dns("b-adguard-home", "adguard")
+    integrations = sorted(main.registry.list_all(), key=lambda item: item.integration_id)
+    monkeypatch.setattr(main.registry, "list_all", lambda: integrations)
+    calls = []
+
+    def fake_fetch_page(integration, cursor):
+        calls.append(integration.integration_id)
+        if integration.integration_id == "a-pihole-home":
+            return [{
+                "domain": "durable.example",
+                "timestamp": "2026-11-15T12:00:00Z",
+            }], {"offset": 1, "complete": True}, True
+        return [], {"offset": 2, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+    original_insert_audit = main.store._insert_audit
+    audit_calls = 0
+
+    def fail_checkpoint_audit(cursor, action, actor_id, target_id, details):
+        nonlocal audit_calls
+        audit_calls += 1
+        if audit_calls == 2:
+            raise psycopg.OperationalError("simulated database outage")
+        original_insert_audit(cursor, action, actor_id, target_id, details)
+
+    monkeypatch.setattr(main.store, "_insert_audit", fail_checkpoint_audit)
+    metrics = MetricsRegistry()
+
+    with pytest.raises(polling.PollingDatabaseError):
+        polling.poll_dns_sources_once(main.registry, main.store, metrics)
+
+    assert calls == ["a-pihole-home"]
+    assert main.store.get_integration_poll_cursor("a-pihole-home") is None
+    assert main.store.get_integration_poll_cursor("b-adguard-home") is None
+    assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 1
+    assert not any(
+        item["action"] == "privacy.provider_poll.completed"
+        and item["target_id"] == "a-pihole-home"
+        for item in client.get("/api/v1/audit").json()
+    )
+    source = next(
+        item for item in client.get("/api/v1/privacy/sources").json()
+        if item["integration_id"] == "a-pihole-home"
+    )
+    assert source["last_error_category"] == "database_error"
+    assert source["retryable"] is True
+    assert 'category="database_error",integration_id="a-pihole-home",provider="pihole"' in metrics.render()
+
+    monkeypatch.setattr(main.store, "_insert_audit", original_insert_audit)
+    retry = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert calls == ["a-pihole-home", "a-pihole-home", "b-adguard-home"]
+    assert retry[0]["accepted"] == 0
+    assert retry[0]["duplicates"] == 1
+    assert main.store.get_integration_poll_cursor("a-pihole-home") == {
+        "offset": 1, "complete": True,
+    }
+    assert retry[1]["status"] == "ok"
+    assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 1
