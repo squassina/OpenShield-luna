@@ -148,6 +148,7 @@ def _flush_command_results(
                     item["result"],
                 )
             except GatewayTransportError as exc:
+                spool.defer_command_result(str(item["command_id"]))
                 logger.warning(
                     "Gateway command result delivery deferred for command %s: %s",
                     item["command_id"],
