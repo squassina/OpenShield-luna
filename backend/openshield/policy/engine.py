@@ -41,6 +41,25 @@ def create_policy(
         or not store.get_integration_secret(integration.integration_id)
     ):
         raise ValueError("OpenWrt enforcement requires a gateway token and encrypted router credentials")
+    try:
+        min_risk_score = int(data["min_risk_score"])
+        autonomy_level = int(data["autonomy_level"])
+        ttl_seconds = int(data["ttl_seconds"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Policy risk score, autonomy level and TTL must be integers") from exc
+    if not 0 <= min_risk_score <= 100:
+        raise ValueError("Policy minimum risk score must be between 0 and 100")
+    if not 0 <= autonomy_level <= 3:
+        raise ValueError("Policy autonomy level must be between 0 and 3")
+    if not 60 <= ttl_seconds <= 86400:
+        raise ValueError("Policy TTL must be between 60 and 86400 seconds")
+
+    direction = str(data.get("direction", "destination"))
+    if direction not in {"source", "destination"}:
+        raise ValueError("Policy direction must be source or destination")
+    if action == "block_domain" and direction != "destination":
+        raise ValueError("block_domain policies only support destination direction")
+
     policy = {
         "policy_id": str(uuid4()),
         "name": str(data["name"]).strip(),
@@ -49,11 +68,11 @@ def create_policy(
         "indicator_value": indicator_value,
         "action": action,
         "integration_id": integration.integration_id,
-        "min_risk_score": int(data["min_risk_score"]),
-        "autonomy_level": int(data["autonomy_level"]),
-        "ttl_seconds": int(data["ttl_seconds"]),
+        "min_risk_score": min_risk_score,
+        "autonomy_level": autonomy_level,
+        "ttl_seconds": ttl_seconds,
         "require_approval": bool(data.get("require_approval", True)),
-        "direction": str(data.get("direction", "destination")),
+        "direction": direction,
     }
     if not policy["name"]:
         raise ValueError("Policy name is required")
