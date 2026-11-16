@@ -1057,6 +1057,7 @@ def test_resilient_dns_normalization_isolates_bad_records() -> None:
         {"domain": "valid.example", "timestamp": "2026-11-15T12:00:00Z"},
         {"domain": "invalid domain", "timestamp": "2026-11-15T12:00:01Z"},
         {"domain": "bad-time.example", "timestamp": "not-a-timestamp"},
+        {"domain": "empty-time.example", "timestamp": ""},
         None,
     ])
 
@@ -1065,7 +1066,8 @@ def test_resilient_dns_normalization_isolates_bad_records() -> None:
     assert rejected == [
         {"record_index": 1, "reason": "invalid_domain"},
         {"record_index": 2, "reason": "invalid_timestamp"},
-        {"record_index": 3, "reason": "invalid_record_shape"},
+        {"record_index": 3, "reason": "invalid_timestamp"},
+        {"record_index": 4, "reason": "invalid_record_shape"},
     ]
     assert all("domain" not in item and "value" not in item for item in rejected)
 
