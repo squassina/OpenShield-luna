@@ -473,6 +473,9 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
     )]
     assert restarted.pending_command_results() == []
     assert restarted.get_command_result("command-1")["acknowledged"] is True
+    agent._process_gateway_commands(node, router, [command], restarted)
+    assert router.calls == 1
+    assert len(node.reports) == 1
 
 
 def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path) -> None:
@@ -483,7 +486,10 @@ def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path
         reports: list[tuple[str, str, dict[str, object]]] = []
 
         def report_command_result(
-            self, command_id: str, status: str, result: dict[str, object],
+            self,
+            command_id: str,
+            status: str,
+            result: dict[str, object],
         ) -> dict[str, object]:
             self.reports.append((command_id, status, result))
             return {"status": "acknowledged"}
