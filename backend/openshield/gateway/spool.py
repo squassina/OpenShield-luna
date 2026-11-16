@@ -164,18 +164,25 @@ class GatewayEventSpool:
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT command_id, status, result
+                SELECT command_id, status, result, next_attempt_at
                 FROM gateway_command_results
-                WHERE acknowledged_at IS NULL AND next_attempt_at <= ?
+                WHERE acknowledged_at IS NULL
                 ORDER BY rowid
                 LIMIT ?
                 """,
-                (datetime.now(UTC).isoformat(), limit),
+                (limit,),
             ).fetchall()
-        return [
-            {"command_id": row[0], "status": row[1], "result": json.loads(row[2])}
-            for row in rows
-        ]
+        now = datetime.now(UTC).isoformat()
+        pending = []
+        for row in rows:
+            if row[3] > now:
+                break
+            pending.append({
+                "command_id": row[0],
+                "status": row[1],
+                "result": json.loads(row[2]),
+            })
+        return pending
 
     def defer_command_result(self, command_id: str) -> None:
         with self._connection() as connection:
