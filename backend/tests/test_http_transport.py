@@ -9,7 +9,17 @@ from openshield.core.http import safe_urlopen
 
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
-def test_safe_urlopen_rejects_redirects_without_forwarding_credentials(status: int) -> None:
+@pytest.mark.parametrize(
+    ("header", "value"),
+    [
+        ("Authorization", "Bearer must-not-leak"),
+        ("X-API-Key", "must-not-leak"),
+        ("X-FTL-SID", "must-not-leak"),
+    ],
+)
+def test_safe_urlopen_rejects_redirects_without_forwarding_credentials(
+    status: int, header: str, value: str
+) -> None:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/redirect":
@@ -32,7 +42,7 @@ def test_safe_urlopen_rejects_redirects_without_forwarding_credentials(status: i
     try:
         request = Request(
             f"http://127.0.0.1:{server.server_port}/redirect",
-            headers={"Authorization": "Bearer must-not-leak"},
+            headers={header: value},
         )
         with pytest.raises(HTTPError) as error:
             safe_urlopen(request, timeout=2)
