@@ -55,6 +55,30 @@ def test_health_endpoints_are_public_and_readiness_checks_database() -> None:
     assert client.get("/health/ready").json() == {"status": "ready"}
 
 
+def test_all_credential_and_diagnostics_routes_disable_caching() -> None:
+    from fastapi.routing import APIRoute
+
+    sensitive_routes = [
+        (method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path.endswith(("-credentials", "-diagnostics"))
+        for method in route.methods or ()
+        if method in {"GET", "PUT", "PATCH", "POST", "DELETE"}
+    ]
+    assert sensitive_routes
+
+    for method, route_path in sensitive_routes:
+        path = route_path.replace("{integration_id}", "missing-test-integration")
+        response = client.request(
+            method,
+            path,
+            json={} if method in {"PUT", "PATCH", "POST"} else None,
+        )
+        assert response.headers["cache-control"] == "no-store", (method, path)
+        assert response.headers["pragma"] == "no-cache", (method, path)
+
+
 def test_api_endpoints_are_available_without_authentication() -> None:
     assert client.get("/api/v1/integrations").status_code == 200
     assert client.get("/api/v1/events").status_code == 200
