@@ -8,7 +8,6 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
-
 from openshield.integrations.models import Capability, Integration
 
 
