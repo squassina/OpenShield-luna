@@ -3,7 +3,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from openshield.events.models import EventEnvelope
@@ -40,6 +40,24 @@ class GatewayEventSpool:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS pending_events_created_at_idx "
                 "ON pending_events (created_at, event_id)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS gateway_command_results (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    command_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    result TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    acknowledged_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
+                "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
         os.chmod(self._path, 0o600)
 
@@ -97,6 +115,106 @@ class GatewayEventSpool:
             connection.execute(
                 "DELETE FROM pending_events WHERE event_id = ?",
                 (event_id,),
+            )
+
+    def enqueue_command_result(
+        self, command_id: str, status: str, result: dict[str, object],
+    ) -> bool:
+        payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        created_at = datetime.now(UTC).isoformat()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO gateway_command_results
+                    (command_id, status, result, created_at, next_attempt_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (command_id, status, payload, created_at, created_at),
+            )
+            if cursor.rowcount == 0:
+                row = connection.execute(
+                    "SELECT status, result FROM gateway_command_results WHERE command_id = ?",
+                    (command_id,),
+                ).fetchone()
+                if row != (status, payload):
+                    raise ValueError("Gateway command result cannot be changed once persisted")
+                return False
+        return True
+
+    def get_command_result(self, command_id: str) -> dict[str, object] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT command_id, status, result, acknowledged_at
+                FROM gateway_command_results WHERE command_id = ?
+                """,
+                (command_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "command_id": row[0],
+            "status": row[1],
+            "result": json.loads(row[2]),
+            "acknowledged": row[3] is not None,
+        }
+
+    def pending_command_results(self, limit: int = 100) -> list[dict[str, object]]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("Command result read limit must be between 1 and 1000")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT command_id, status, result, next_attempt_at
+                FROM gateway_command_results
+                WHERE acknowledged_at IS NULL
+                ORDER BY sequence
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        now = datetime.now(UTC).isoformat()
+        pending = []
+        for row in rows:
+            if row[3] > now:
+                break
+            pending.append({
+                "command_id": row[0],
+                "status": row[1],
+                "result": json.loads(row[2]),
+            })
+        return pending
+
+    def defer_command_result(self, command_id: str) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT attempts FROM gateway_command_results
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (command_id,),
+            ).fetchone()
+            if row is None:
+                return
+            delay = min(2 ** min(int(row[0]), 6), 60)
+            next_attempt = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+            connection.execute(
+                """
+                UPDATE gateway_command_results
+                SET attempts = attempts + 1, next_attempt_at = ?
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (next_attempt, command_id),
+            )
+
+    def acknowledge_command_result(self, command_id: str) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE gateway_command_results SET acknowledged_at = ?
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (datetime.now(UTC).isoformat(), command_id),
             )
 
     def pending_count(self) -> int:

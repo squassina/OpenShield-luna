@@ -11,6 +11,7 @@ from openshield.core.secrets import SecretStore
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.execution import service as execution_service
 from openshield.gateway.agent import _process_gateway_commands
+from openshield.gateway.spool import GatewayEventSpool
 from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.policy.engine import create_policy, evaluate_policy
@@ -306,7 +307,7 @@ def test_failed_gateway_rollback_is_requeued_until_acknowledged(monkeypatch) -> 
     assert main.store.list_pending_gateway_commands("home-gateway")[0]["action"] == "unblock_ip"
 
 
-def test_gateway_command_agent_only_executes_allowlisted_actions() -> None:
+def test_gateway_command_agent_only_executes_allowlisted_actions(tmp_path) -> None:
     class FakeRPC:
         def apply_firewall_block(self, execution_id, ip_value, direction):
             return {"section": "os_abc", "verified": True}
@@ -328,7 +329,7 @@ def test_gateway_command_agent_only_executes_allowlisted_actions() -> None:
          "payload":{"ip":"8.8.8.8","direction":"destination"}},
         {"command_id":"c2","execution_id":"e2","action":"run_shell",
          "payload":{"command":"rm -rf /"}},
-    ])
+    ], GatewayEventSpool(str(tmp_path / "command-agent.sqlite3")))
     assert client_stub.results[0][1] == "completed"
     assert client_stub.results[0][2]["status"] == "applied"
     assert client_stub.results[1][1] == "failed"

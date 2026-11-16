@@ -135,13 +135,43 @@ def _openwrt_config_signature(config: object) -> str | None:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _flush_command_results(
+    client: GatewayConnectorClient,
+    spool: GatewayEventSpool,
+) -> bool:
+    while pending := spool.pending_command_results():
+        for item in pending:
+            try:
+                client.report_command_result(
+                    str(item["command_id"]),
+                    str(item["status"]),
+                    item["result"],
+                )
+            except GatewayTransportError as exc:
+                spool.defer_command_result(str(item["command_id"]))
+                logger.warning(
+                    "Gateway command result delivery deferred for command %s: %s",
+                    item["command_id"],
+                    exc,
+                )
+                return False
+            spool.acknowledge_command_result(str(item["command_id"]))
+    return True
+
+
 def _process_gateway_commands(
     client: GatewayConnectorClient,
     openwrt_client: OpenWrtRPCClient | None,
     commands: object,
+    spool: GatewayEventSpool | None = None,
 ) -> None:
     if not isinstance(commands, list):
         return
+    if spool is None:
+        if commands:
+            logger.error("Gateway commands not executed because durable result spool is unavailable")
+        return
+
     for command in commands:
         if not isinstance(command, dict):
             continue
@@ -151,6 +181,15 @@ def _process_gateway_commands(
         payload = command.get("payload")
         if not all(isinstance(value, str) and value for value in (command_id, execution_id, action)):
             continue
+
+        # A persisted receipt prevents a repeated heartbeat from executing the
+        # router action again, including after the result has been acknowledged.
+        existing = spool.get_command_result(command_id)
+        if existing is not None:
+            if not existing["acknowledged"]:
+                _flush_command_results(client, spool)
+            continue
+
         if not isinstance(payload, dict):
             payload = {}
         try:
@@ -171,15 +210,18 @@ def _process_gateway_commands(
                 result["status"] = "rolled_back"
             else:
                 raise ValueError("Unsupported gateway command")
-            client.report_command_result(command_id, "completed", result)
-        except (OpenWrtRPCError, ValueError, GatewayTransportError):
+            status = "completed"
+        except (OpenWrtRPCError, ValueError):
             logger.warning("Gateway command failed; details withheld for command %s", command_id)
-            try:
-                client.report_command_result(
-                    command_id, "failed", {"status": "failed", "error": "gateway_command_failed"},
-                )
-            except GatewayTransportError:
-                logger.warning("Gateway command result delivery deferred for command %s", command_id)
+            status = "failed"
+            result = {"status": "failed", "error": "gateway_command_failed"}
+
+        try:
+            spool.enqueue_command_result(command_id, status, result)
+        except ValueError:
+            logger.error("Conflicting persisted result for gateway command %s", command_id)
+            continue
+        _flush_command_results(client, spool)
 
 
 def run_agent(
@@ -227,6 +269,7 @@ def run_agent(
 
         if spool is not None:
             _flush_spool(client, spool)
+            _flush_command_results(client, spool)
 
         if openwrt_client is not None and integration_id is not None:
             try:
@@ -257,9 +300,10 @@ def run_agent(
                                 _event(integration_id, "gateway.discovery", discovery),
                                 spool,
                             )
-                _process_gateway_commands(client, openwrt_client, heartbeat.get("commands", []))
+                _process_gateway_commands(client, openwrt_client, heartbeat.get("commands", []), spool)
                 if spool is not None:
                     _flush_spool(client, spool)
+                    _flush_command_results(client, spool)
                 if openwrt_client is not None and integration_id is not None:
                     try:
                         discovery = openwrt_client.discover()

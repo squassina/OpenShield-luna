@@ -367,3 +367,212 @@ def test_connector_client_sends_gateway_bearer_token_and_receives_router_config(
     request = mocked.call_args.args[0]
     assert request.get_header("Authorization") == "Bearer connector-token"
     assert result["openwrt_config"]["password"] == "secret"
+
+
+def test_gateway_command_result_outbox_survives_restart_and_acknowledges(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "command-results.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    result = {"status": "applied", "section": "rule-1"}
+
+    assert spool.enqueue_command_result("command-1", "completed", result) is True
+    assert spool.enqueue_command_result("command-1", "completed", result) is False
+
+    restarted = GatewayEventSpool(str(path))
+    assert restarted.pending_command_results() == [{
+        "command_id": "command-1",
+        "status": "completed",
+        "result": result,
+    }]
+    restarted.acknowledge_command_result("command-1")
+    assert restarted.pending_command_results() == []
+    assert restarted.get_command_result("command-1") == {
+        "command_id": "command-1",
+        "status": "completed",
+        "result": result,
+        "acknowledged": True,
+    }
+
+
+def test_gateway_command_result_outbox_rejects_conflicting_duplicate(
+    tmp_path: Path,
+) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "conflict.sqlite3"))
+    spool.enqueue_command_result("command-1", "completed", {"status": "applied"})
+
+    with pytest.raises(ValueError, match="cannot be changed"):
+        spool.enqueue_command_result("command-1", "failed", {"status": "failed"})
+
+
+def test_gateway_command_result_delivery_survives_node_outage_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    from openshield.gateway import agent
+
+    class NodeClient:
+        def __init__(self) -> None:
+            self.unavailable = True
+            self.reports: list[tuple[str, str, dict[str, object]]] = []
+
+        def report_command_result(
+            self,
+            command_id: str,
+            status: str,
+            result: dict[str, object],
+        ) -> dict[str, object]:
+            if self.unavailable:
+                raise GatewayTransportError("node unavailable")
+            self.reports.append((command_id, status, result))
+            return {"status": "acknowledged"}
+
+    class RouterClient:
+        calls = 0
+
+        def apply_firewall_block(
+            self,
+            execution_id: str,
+            ip_value: str,
+            direction: str,
+        ) -> dict[str, object]:
+            self.calls += 1
+            return {"section": "rule-1", "execution_id": execution_id}
+
+    path = tmp_path / "command-outage.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    node = NodeClient()
+    router = RouterClient()
+    command = {
+        "command_id": "command-1",
+        "execution_id": "execution-1",
+        "action": "block_ip",
+        "payload": {"ip": "192.0.2.10", "direction": "source"},
+    }
+
+    agent._process_gateway_commands(node, router, [command], spool)
+    assert router.calls == 1
+    persisted = spool.get_command_result("command-1")
+    assert persisted["status"] == "completed"
+    assert persisted["acknowledged"] is False
+    assert spool.pending_command_results() == []  # Deferred by the durable retry backoff.
+
+    # Simulate process restart and make the persisted retry immediately due.
+    restarted = GatewayEventSpool(str(path))
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE gateway_command_results SET next_attempt_at = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(),),
+        )
+        connection.commit()
+
+    node.unavailable = False
+    agent._process_gateway_commands(node, router, [command], restarted)
+    assert router.calls == 1
+    assert node.reports == [(
+        "command-1", "completed",
+        {"section": "rule-1", "execution_id": "execution-1", "status": "applied"},
+    )]
+    assert restarted.pending_command_results() == []
+    assert restarted.get_command_result("command-1")["acknowledged"] is True
+    agent._process_gateway_commands(node, router, [command], restarted)
+    assert router.calls == 1
+    assert len(node.reports) == 1
+
+
+def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path) -> None:
+    from openshield.gateway import agent
+    from openshield.integrations.openwrt_rpc import OpenWrtRPCError
+
+    class NodeClient:
+        def __init__(self) -> None:
+            self.reports: list[tuple[str, str, dict[str, object]]] = []
+
+        def report_command_result(
+            self,
+            command_id: str,
+            status: str,
+            result: dict[str, object],
+        ) -> dict[str, object]:
+            self.reports.append((command_id, status, result))
+            return {"status": "acknowledged"}
+
+    class RouterClient:
+        def apply_firewall_block(self, *_args) -> dict[str, object]:
+            raise OpenWrtRPCError("router rejected action")
+
+    spool = GatewayEventSpool(str(tmp_path / "failed-command.sqlite3"))
+    node = NodeClient()
+    agent._process_gateway_commands(
+        node,
+        RouterClient(),
+        [{
+            "command_id": "command-failed",
+            "execution_id": "execution-failed",
+            "action": "block_ip",
+            "payload": {"ip": "192.0.2.10", "direction": "source"},
+        }],
+        spool,
+    )
+
+    assert node.reports == [(
+        "command-failed", "failed",
+        {"status": "failed", "error": "gateway_command_failed"},
+    )]
+    assert spool.pending_command_results() == []
+    assert spool.get_command_result("command-failed")["acknowledged"] is True
+
+
+def test_gateway_command_result_retry_backoff_is_bounded(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import UTC, datetime
+
+    path = tmp_path / "backoff.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    spool.enqueue_command_result("command-backoff", "failed", {"status": "failed"})
+
+    for _ in range(10):
+        spool.defer_command_result("command-backoff")
+
+    with sqlite3.connect(path) as connection:
+        attempts, next_attempt_at = connection.execute(
+            """
+            SELECT attempts, next_attempt_at
+            FROM gateway_command_results WHERE command_id = ?
+            """,
+            ("command-backoff",),
+        ).fetchone()
+
+    remaining = (
+        datetime.fromisoformat(next_attempt_at) - datetime.now(UTC)
+    ).total_seconds()
+    assert attempts == 10
+    assert 0 < remaining <= 60
+    assert spool.pending_command_results() == []
+
+
+def test_gateway_command_result_backoff_does_not_reorder_outbox(tmp_path: Path) -> None:
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    path = tmp_path / "ordered-results.sqlite3"
+    spool = GatewayEventSpool(str(path))
+    spool.enqueue_command_result("command-first", "completed", {"sequence": 1})
+    spool.enqueue_command_result("command-second", "completed", {"sequence": 2})
+    spool.defer_command_result("command-first")
+
+    assert spool.pending_command_results() == []
+
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE gateway_command_results SET next_attempt_at = ? WHERE command_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "command-first"),
+        )
+        connection.commit()
+
+    assert [item["command_id"] for item in spool.pending_command_results()] == [
+        "command-first",
+        "command-second",
+    ]
