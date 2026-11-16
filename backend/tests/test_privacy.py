@@ -463,14 +463,19 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     assert outcomes == [
         {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0,
          "rejected": 0, "pages": 1, "complete": True},
-        {"integration_id": "pihole-home", "status": "error"},
+        {"integration_id": "pihole-home", "status": "error", "category": "provider_error"},
     ]
     audit = client.get("/api/v1/audit").json()
     assert any(item["action"] == "privacy.provider_poll.failed" for item in audit)
     assert any(item["action"] == "privacy.provider_poll.completed" for item in audit)
     sources = {item["integration_id"]: item for item in client.get("/api/v1/privacy/sources").json()}
     assert sources["pihole-home"]["status"] == "failed"
-    assert sources["pihole-home"]["last_error"] == "Provider polling failed"
+    assert sources["pihole-home"]["last_error"] == "DNS provider request failed"
+    assert sources["pihole-home"]["last_error_category"] == "provider_error"
+    assert sources["pihole-home"]["retryable"] is True
+    rendered = metrics.render()
+    assert 'openshield_dns_poll_failures_total{category="provider_error",integration_id="pihole-home",provider="pihole"} 1' in rendered
+    assert 'openshield_dns_poll_success_total{integration_id="adguard-home",provider="adguard"} 1' in rendered
 
 
 
