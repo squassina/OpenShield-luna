@@ -3,7 +3,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from openshield.events.models import EventEnvelope
@@ -48,7 +48,9 @@ class GatewayEventSpool:
                     status TEXT NOT NULL,
                     result TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    acknowledged_at TEXT
+                    acknowledged_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT NOT NULL
                 )
                 """
             )
@@ -122,10 +124,10 @@ class GatewayEventSpool:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO gateway_command_results
-                    (command_id, status, result, created_at)
-                VALUES (?, ?, ?, ?)
+                    (command_id, status, result, created_at, next_attempt_at)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (command_id, status, payload, datetime.now(UTC).isoformat()),
+                (command_id, status, payload, datetime.now(UTC).isoformat(), datetime.now(UTC).isoformat()),
             )
             if cursor.rowcount == 0:
                 row = connection.execute(
@@ -163,16 +165,38 @@ class GatewayEventSpool:
                 """
                 SELECT command_id, status, result
                 FROM gateway_command_results
-                WHERE acknowledged_at IS NULL
-                ORDER BY created_at, command_id
+                WHERE acknowledged_at IS NULL AND next_attempt_at <= ?
+                ORDER BY rowid
                 LIMIT ?
                 """,
-                (limit,),
+                (datetime.now(UTC).isoformat(), limit),
             ).fetchall()
         return [
             {"command_id": row[0], "status": row[1], "result": json.loads(row[2])}
             for row in rows
         ]
+
+    def defer_command_result(self, command_id: str) -> None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT attempts FROM gateway_command_results
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (command_id,),
+            ).fetchone()
+            if row is None:
+                return
+            delay = min(2 ** min(int(row[0]), 6), 60)
+            next_attempt = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+            connection.execute(
+                """
+                UPDATE gateway_command_results
+                SET attempts = attempts + 1, next_attempt_at = ?
+                WHERE command_id = ? AND acknowledged_at IS NULL
+                """,
+                (next_attempt, command_id),
+            )
 
     def acknowledge_command_result(self, command_id: str) -> None:
         with self._connection() as connection:
