@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from psycopg_pool import PoolTimeout
 
 from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
@@ -85,25 +86,22 @@ async def _dns_polling_lifespan(app: FastAPI):
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be an integer") from exc
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
+    store.open()
     task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
     execution_task = asyncio.create_task(run_expiration_loop(store, registry))
     try:
         yield
     finally:
-        for background_task in (task, execution_task):
-            if background_task is not None:
-                background_task.cancel()
-                try:
-                    await background_task
-                except asyncio.CancelledError:
-                    pass
-        for background_task in (task, execution_task):
-            if background_task is not None:
-                background_task.cancel()
-                try:
-                    await background_task
-                except asyncio.CancelledError:
-                    pass
+        try:
+            for background_task in (task, execution_task):
+                if background_task is not None:
+                    background_task.cancel()
+                    try:
+                        await background_task
+                    except asyncio.CancelledError:
+                        pass
+        finally:
+            store.close()
 
 
 app = FastAPI(
@@ -112,6 +110,15 @@ app = FastAPI(
     description="Gateway-first network security and privacy intelligence node.",
     lifespan=_dns_polling_lifespan,
 )
+
+@app.exception_handler(PoolTimeout)
+async def database_pool_timeout_handler(_request: Request, _exc: PoolTimeout) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "Database connection pool is busy; retry shortly"},
+        status_code=503,
+        headers={"Retry-After": "1"},
+    )
+
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=5 * 1024 * 1024)
 
 
@@ -287,7 +294,12 @@ async def collect_http_metrics(request: Request, call_next) -> Response:
     return response
 
 
-store = PostgresStore(os.getenv("OPENSHIELD_DATABASE_URL", ""))
+store = PostgresStore(
+    os.getenv("OPENSHIELD_DATABASE_URL", ""),
+    pool_min_size=int(os.getenv("OPENSHIELD_DB_POOL_MIN_SIZE", "1")),
+    pool_max_size=int(os.getenv("OPENSHIELD_DB_POOL_MAX_SIZE", "10")),
+    pool_timeout=float(os.getenv("OPENSHIELD_DB_POOL_TIMEOUT_SECONDS", "5")),
+)
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
