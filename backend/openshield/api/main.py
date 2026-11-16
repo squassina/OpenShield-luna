@@ -132,8 +132,12 @@ def _gateway_openwrt_config(gateway_id: str) -> dict[str, object] | None:
     credentials = SecretStore(store).get(gateway_id)
     integration = registry.get(gateway_id)
     ca_bundle_path = integration.config.get("ca_bundle_path") if integration is not None else None
-    if credentials is not None and ca_bundle_path:
-        credentials["ca_bundle_path"] = ca_bundle_path
+    if credentials is not None and integration is not None:
+        if ca_bundle_path:
+            credentials["ca_bundle_path"] = ca_bundle_path
+        firewall_zones = integration.config.get("firewall_zones")
+        if firewall_zones is not None:
+            credentials["firewall_zones"] = firewall_zones
     return credentials
 
 

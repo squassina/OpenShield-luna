@@ -1150,3 +1150,44 @@ def test_operations_report_summarizes_multiple_gateways_and_bounded_state() -> N
 def test_operations_report_rejects_unbounded_limit() -> None:
     assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
 
+def test_openwrt_firewall_zone_configuration_is_validated_and_sent_to_gateway(
+    monkeypatch,
+) -> None:
+    from cryptography.fernet import Fernet
+
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
+    zones = {
+        "source": {"src": "iot", "dest": "dmz"},
+        "destination": {"src": "guest", "dest": "lan"},
+    }
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "segmented-router",
+        "kind": "openwrt",
+        "display_name": "Segmented router",
+        "config": {"firewall_zones": zones},
+    })
+    assert created.status_code == 201
+    assert created.json()["config"]["firewall_zones"] == zones
+
+    invalid = client.patch("/api/v1/integrations/segmented-router", json={
+        "config": {
+            "firewall_zones": {
+                "source": {"src": "iot;drop", "dest": "dmz"},
+                "destination": {"src": "guest", "dest": "lan"},
+            },
+        },
+    })
+    assert invalid.status_code == 422
+
+    main.SecretStore(main.store).set("segmented-router", {
+        "base_url": "https://192.0.2.1",
+        "username": "rpc",
+        "password": "router-secret",
+    })
+    gateway_config = main._gateway_openwrt_config("segmented-router")
+    assert gateway_config is not None
+    assert gateway_config["firewall_zones"] == zones
+

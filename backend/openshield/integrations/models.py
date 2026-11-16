@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -5,6 +6,35 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from openshield.core.tls import resolve_ca_bundle_path
+
+
+DEFAULT_FIREWALL_ZONES = {
+    "source": {"src": "wan", "dest": "lan"},
+    "destination": {"src": "lan", "dest": "wan"},
+}
+
+
+def validate_firewall_zones(value: Any) -> dict[str, dict[str, str]]:
+    """Validate explicit UCI source/destination zone pairs for firewall actions."""
+    if not isinstance(value, dict) or set(value) != {"source", "destination"}:
+        raise ValueError("Firewall zones must define source and destination mappings")
+
+    result: dict[str, dict[str, str]] = {}
+    for direction in ("source", "destination"):
+        pair = value[direction]
+        if not isinstance(pair, dict) or set(pair) != {"src", "dest"}:
+            raise ValueError("Each firewall direction must define src and dest zones")
+        source = pair["src"]
+        destination = pair["dest"]
+        if not all(
+            isinstance(zone, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,32}", zone)
+            for zone in (source, destination)
+        ):
+            raise ValueError("Firewall zone names must contain only letters, numbers, '_' or '-'")
+        if source == destination:
+            raise ValueError("Firewall source and destination zones must be different")
+        result[direction] = {"src": source, "dest": destination}
+    return result
 
 
 class Capability(StrEnum):
@@ -29,6 +59,8 @@ class IntegrationRegistration(BaseModel):
     @classmethod
     def reject_secret_material(cls, config: dict[str, Any]) -> dict[str, Any]:
         forbidden = ("password", "secret", "token", "credential", "private_key", "api_key")
+        if "firewall_zones" in config:
+            config["firewall_zones"] = validate_firewall_zones(config["firewall_zones"])
         ca_bundle_path = config.get("ca_bundle_path")
         if ca_bundle_path not in (None, ""):
             resolved_ca_bundle = resolve_ca_bundle_path(ca_bundle_path)

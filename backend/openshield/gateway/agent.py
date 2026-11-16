@@ -122,6 +122,9 @@ def _configured_openwrt_client(config: object) -> OpenWrtRPCClient | None:
     try:
         context = create_ssl_context(config.get("ca_bundle_path"), base_url)
         options = {"ssl_context": context} if context is not None else {}
+        firewall_zones = config.get("firewall_zones")
+        if firewall_zones is not None:
+            options["firewall_zones"] = firewall_zones
         return OpenWrtRPCClient(base_url, username, password, **options)
     except ValueError:
         logger.error("Node returned invalid OpenWrt connector configuration")
