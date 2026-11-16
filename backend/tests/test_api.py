@@ -604,6 +604,34 @@ def test_admin_auth_rate_limits_repeated_failures(monkeypatch) -> None:
     monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "false")
 
 
+def test_admin_auth_failure_tracking_expires_stale_entries(monkeypatch) -> None:
+    from openshield.api import main
+
+    monkeypatch.setattr(main.time, "monotonic", lambda: 1000.0)
+    with main._AUTH_FAILURES_LOCK:
+        main._AUTH_FAILURES.clear()
+        main._AUTH_FAILURES.update({"stale-ip": (900.0, 3), "active-ip": (950.0, 2)})
+        main._prune_auth_failures_locked(1000.0)
+        assert "stale-ip" not in main._AUTH_FAILURES
+        assert main._AUTH_FAILURES == {"active-ip": (950.0, 2)}
+
+
+def test_admin_auth_failure_tracking_has_bounded_lru_eviction(monkeypatch) -> None:
+    from openshield.api import main
+
+    monkeypatch.setattr(main, "_AUTH_FAILURE_MAX_ENTRIES", 2)
+    with main._AUTH_FAILURES_LOCK:
+        main._AUTH_FAILURES.clear()
+    main._record_auth_failure("first-ip", 1000.0)
+    main._record_auth_failure("second-ip", 1001.0)
+    main._record_auth_failure("first-ip", 1002.0)
+    main._record_auth_failure("third-ip", 1003.0)
+    with main._AUTH_FAILURES_LOCK:
+        assert list(main._AUTH_FAILURES) == ["first-ip", "third-ip"]
+        assert len(main._AUTH_FAILURES) <= main._AUTH_FAILURE_MAX_ENTRIES
+        main._AUTH_FAILURES.clear()
+
+
 def test_openwrt_credentials_can_be_rotated_and_revoked(monkeypatch) -> None:
     from cryptography.fernet import Fernet
 
