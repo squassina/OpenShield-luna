@@ -122,7 +122,11 @@ def normalize_dns_batch(
         client = raw.get("client") or raw.get("client_ip") or raw.get("client_name")
         if not isinstance(client, str) or len(client) > 255:
             client = None
-        timestamp = raw.get("timestamp") or raw.get("time")
+        timestamp = raw.get("timestamp")
+        if timestamp is None:
+            timestamp = raw.get("time")
+        if timestamp == "":
+            raise ValueError("Invalid DNS timestamp")
         if isinstance(timestamp, (int, float)):
             occurred_at = datetime.fromtimestamp(timestamp, UTC)
         elif isinstance(timestamp, str):
@@ -202,10 +206,10 @@ def normalize_dns_batch_resilient(
             except (TypeError, ValueError):
                 reason = "invalid_domain"
             else:
-                timestamp = raw.get("timestamp") or raw.get("time")
-                if isinstance(timestamp, str):
-                    reason = "invalid_timestamp"
-                elif isinstance(timestamp, (int, float)):
+                timestamp = raw.get("timestamp")
+                if timestamp is None:
+                    timestamp = raw.get("time")
+                if isinstance(timestamp, (int, float)):
                     reason = "timestamp_out_of_range"
                 elif timestamp is not None:
                     reason = "invalid_timestamp"
