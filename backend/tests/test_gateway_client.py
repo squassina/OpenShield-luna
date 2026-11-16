@@ -414,8 +414,9 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
     from openshield.gateway import agent
 
     class NodeClient:
-        unavailable = True
-        reports: list[tuple[str, str, dict[str, object]]] = []
+        def __init__(self) -> None:
+            self.unavailable = True
+            self.reports: list[tuple[str, str, dict[str, object]]] = []
 
         def report_command_result(
             self,
@@ -483,7 +484,8 @@ def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path
     from openshield.integrations.openwrt_rpc import OpenWrtRPCError
 
     class NodeClient:
-        reports: list[tuple[str, str, dict[str, object]]] = []
+        def __init__(self) -> None:
+            self.reports: list[tuple[str, str, dict[str, object]]] = []
 
         def report_command_result(
             self,
