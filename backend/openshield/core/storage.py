@@ -789,6 +789,18 @@ CREATE TABLE IF NOT EXISTS events (
             )
         return execution
 
+    @staticmethod
+    def _response_execution_from_row(row: tuple[object, ...]) -> dict[str, object]:
+        return {
+            "execution_id": row[0], "decision_id": row[1], "incident_id": row[2],
+            "policy_id": row[3], "integration_id": row[4], "action": row[5],
+            "indicator_type": row[6], "indicator_value": row[7], "direction": row[8],
+            "status": row[9], "ttl_seconds": row[10],
+            "expires_at": row[11].isoformat() if row[11] else None,
+            "adapter_result": row[12], "created_at": row[13].isoformat(),
+            "rolled_back_at": row[14].isoformat() if row[14] else None,
+        }
+
     def get_response_execution(self, execution_id: str) -> dict[str, object] | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -801,68 +813,37 @@ CREATE TABLE IF NOT EXISTS events (
                 (execution_id,),
             )
             row = cursor.fetchone()
-        if row is None:
-            return None
-        return {
-            "execution_id": row[0], "decision_id": row[1], "incident_id": row[2],
-            "policy_id": row[3], "integration_id": row[4], "action": row[5],
-            "indicator_type": row[6], "indicator_value": row[7], "direction": row[8],
-            "status": row[9], "ttl_seconds": row[10],
-            "expires_at": row[11].isoformat() if row[11] else None,
-            "adapter_result": row[12], "created_at": row[13].isoformat(),
-            "rolled_back_at": row[14].isoformat() if row[14] else None,
-        }
-
-    def update_response_execution(
-        self, execution_id: str, status: str,
-        adapter_result: dict[str, object] | None = None,
-        expires_at: datetime | None = None, rolled_back_at: datetime | None = None,
-    ) -> dict[str, object] | None:
-        with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE response_executions SET status = %s,
-                    adapter_result = COALESCE(%s, adapter_result),
-                    expires_at = COALESCE(%s, expires_at),
-                    rolled_back_at = COALESCE(%s, rolled_back_at)
-                WHERE execution_id = %s
-                """,
-                (
-                    status, Jsonb(adapter_result) if adapter_result is not None else None,
-                    expires_at, rolled_back_at, execution_id,
-                ),
-            )
-            if cursor.rowcount == 0:
-                return None
-            self._insert_audit(
-                cursor, "response.execution.status.updated", None, execution_id,
-                {"status": status, **(adapter_result or {})},
-            )
-        return self.get_response_execution(execution_id)
+        return self._response_execution_from_row(row) if row is not None else None
 
     def list_response_executions(self, limit: int = 100) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT execution_id FROM response_executions
+                SELECT execution_id, decision_id, incident_id, policy_id, integration_id,
+                       action, indicator_type, indicator_value, direction, status, ttl_seconds,
+                       expires_at, adapter_result, created_at, rolled_back_at
+                FROM response_executions
                 ORDER BY created_at DESC LIMIT %s
                 """,
                 (limit,),
             )
-            ids = [row[0] for row in cursor.fetchall()]
-        return [item for execution_id in ids if (item := self.get_response_execution(execution_id))]
+            rows = cursor.fetchall()
+        return [self._response_execution_from_row(row) for row in rows]
 
     def get_due_response_executions(self) -> list[dict[str, object]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT execution_id FROM response_executions
+                SELECT execution_id, decision_id, incident_id, policy_id, integration_id,
+                       action, indicator_type, indicator_value, direction, status, ttl_seconds,
+                       expires_at, adapter_result, created_at, rolled_back_at
+                FROM response_executions
                 WHERE status IN ('active', 'rollback_failed') AND expires_at IS NOT NULL AND expires_at <= NOW()
                 ORDER BY expires_at ASC LIMIT 50
                 """
             )
-            ids = [row[0] for row in cursor.fetchall()]
-        return [item for execution_id in ids if (item := self.get_response_execution(execution_id))]
+            rows = cursor.fetchall()
+        return [self._response_execution_from_row(row) for row in rows]
 
     def has_active_response_execution(
         self, indicator_type: str, indicator_value: str,
