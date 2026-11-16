@@ -114,7 +114,7 @@ The connector runs on a nearby Linux/Docker host. Configure the Node URL and, op
 - `OPENSHIELD_GATEWAY_SPOOL_PATH`
 - `OPENSHIELD_OPENWRT_URL`, `OPENSHIELD_OPENWRT_USERNAME`, `OPENSHIELD_OPENWRT_PASSWORD` (legacy environment-based fallback; prefer dashboard setup) (default `/var/lib/openshield/gateway-spool.sqlite3`)
 
-For dashboard-managed credentials, set `OPENSHIELD_SECRET_KEY` on Node and the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network.
+For dashboard-managed credentials, set `OPENSHIELD_SECRET_KEY` on Node and the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network. For safe Fernet key rotation, configure `OPENSHIELD_SECRET_KEY_PREVIOUS` on Node and follow the [secret key rotation runbook](docs/operations/secret-key-rotation.md).
 
 Start the optional connector profile:
 
