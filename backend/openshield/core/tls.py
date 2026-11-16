@@ -25,6 +25,8 @@ def resolve_ca_bundle_path(value: str | None) -> Path | None:
         raise CABundleError("CA bundle path must be an absolute file inside the certificate directory")
 
     root_value = os.getenv("OPENSHIELD_CA_BUNDLE_DIR", DEFAULT_CA_BUNDLE_DIR)
+    if not Path(root_value).is_absolute():
+        raise CABundleError("Configured CA bundle directory must be absolute")
     try:
         root = Path(root_value).resolve(strict=True)
         resolved = candidate.resolve(strict=True)
