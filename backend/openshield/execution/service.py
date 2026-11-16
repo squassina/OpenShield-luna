@@ -7,6 +7,7 @@ from openshield.core.storage import PostgresStore
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.policy.engine import enforcement_enabled, max_autonomy_level
+from openshield.privacy.lists import provider_privacy_lists
 from openshield.privacy.providers import DnsProviderError, sync_provider_lists
 
 logger = logging.getLogger("openshield.execution")
@@ -62,7 +63,7 @@ def execute_decision(
             raise ExecutionError("DNS enforcement integration is unavailable")
         existing = any(
             item.get("list_type") == "block" and item.get("domain") == indicator_value
-            for item in store.list_privacy_lists(integration_id)
+            for item in provider_privacy_lists(store, integration_id)
         )
         now = datetime.now(UTC)
         execution = {
@@ -81,7 +82,7 @@ def execute_decision(
                     integration_id, "block", indicator_value,
                     f"OpenShield managed execution {execution_id}",
                 )
-            sync_result = sync_provider_lists(integration, store.list_privacy_lists(integration_id))
+            sync_result = sync_provider_lists(integration, provider_privacy_lists(store, integration_id))
         except (DnsProviderError, ValueError) as exc:
             # Reconcile the provider against the authoritative local list. Remove
             # only the entry created by this execution; preserve manual entries.
@@ -92,7 +93,7 @@ def execute_decision(
                 )
             try:
                 compensation_result = sync_provider_lists(
-                    integration, store.list_privacy_lists(integration_id),
+                    integration, provider_privacy_lists(store, integration_id),
                 )
             except (DnsProviderError, ValueError) as compensation_error:
                 logger.error(
@@ -235,7 +236,7 @@ def expire_due_executions(
                         ),
                     )
                 result = sync_provider_lists(
-                    integration, store.list_privacy_lists(integration_id),
+                    integration, provider_privacy_lists(store, integration_id),
                 )
                 store.update_response_execution(
                     str(execution["execution_id"]), "failed",
@@ -292,7 +293,7 @@ def expire_due_executions(
                 )
                 if integration is None:
                     raise ExecutionError("DNS integration no longer exists")
-                result = sync_provider_lists(integration, store.list_privacy_lists(integration_id))
+                result = sync_provider_lists(integration, provider_privacy_lists(store, integration_id))
                 store.update_response_execution(
                     str(execution["execution_id"]), "rolled_back",
                     {"rollback": "dns_block_removed", "provider_result": result},

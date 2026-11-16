@@ -55,6 +55,7 @@ from openshield.policy.engine import (
 )
 from openshield.privacy.adapter import DnsPrivacyAdapter
 from openshield.privacy.dns import normalize_dns_batch, normalize_domain
+from openshield.privacy.lists import provider_privacy_lists
 from openshield.privacy.polling import (
     _record_poll_attempt,
     _record_poll_failure,
@@ -2457,7 +2458,7 @@ def sync_privacy_lists(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
-    entries = store.list_privacy_lists("openshield-local")
+    entries = provider_privacy_lists(store, integration_id)
     try:
         encrypted = store.get_integration_secret(integration_id)
         credentials = SecretStore(store).get(integration_id) if encrypted else None
