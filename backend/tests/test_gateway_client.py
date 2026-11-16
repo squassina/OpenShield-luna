@@ -661,6 +661,8 @@ def test_gateway_spool_health_compaction_keeps_state_transitions(
     assert any(event.event_id == "health-reachable-new" for event in spool.pending())
     assert spool.stats()["coalesced_health_events"] == 1
 
+
+
 def test_configured_openwrt_client_receives_firewall_zone_mapping(monkeypatch) -> None:
     from openshield.gateway import agent
 
