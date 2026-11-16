@@ -200,7 +200,7 @@ def normalize_dns_batch_resilient(
             events.extend(normalize_dns_batch(
                 kind, integration_id, [raw], classification_overrides,
             ))
-        except (TypeError, ValueError, OverflowError, OSError) as exc:
+        except (TypeError, ValueError, OverflowError, OSError):
             try:
                 normalize_domain(raw.get("domain") or raw.get("query"))
             except (TypeError, ValueError):
