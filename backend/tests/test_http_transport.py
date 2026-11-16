@@ -46,6 +46,7 @@ def test_safe_urlopen_rejects_redirects_without_forwarding_credentials(
         )
         with pytest.raises(HTTPError) as error:
             safe_urlopen(request, timeout=2)
+        error.value.close()
         assert error.value.code == status
         assert server.target_requests == 0
     finally:
