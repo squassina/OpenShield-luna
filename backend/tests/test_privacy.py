@@ -1122,7 +1122,7 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     }
     assert metrics.counts["openshield_events_ingested_total"] == 499
     assert metrics.counts["openshield_dns_records_rejected_total"] == 1
-    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    events = client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]
     assert len(events) == 499
     rejection_audit = next(
         item for item in client.get("/api/v1/audit").json()
@@ -1139,4 +1139,4 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     assert main.store.get_integration_poll_cursor("pihole-home") == {
         "offset": 501, "complete": True,
     }
-    assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 500
+    assert len(client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]) == 500
