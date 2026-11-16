@@ -236,12 +236,74 @@ def test_gateway_spool_requires_absolute_path() -> None:
         GatewayEventSpool("relative-spool.sqlite3")
 
 
-def test_gateway_spool_enforces_capacity(tmp_path: Path) -> None:
+def test_gateway_spool_enforces_capacity_without_evicting_security_events(
+    tmp_path: Path,
+) -> None:
     spool = GatewayEventSpool(str(tmp_path / "limited.sqlite3"), max_events=1)
-    spool.enqueue(sample_gateway_event("event-one"))
-    with pytest.raises(SpoolFullError, match="spool is full"):
-        spool.enqueue(sample_gateway_event("event-two"))
-    assert spool.pending_count() == 1
+    first = sample_gateway_event("event-one").model_copy(
+        update={"event_type": "security.audit", "severity": Severity.CRITICAL}
+    )
+    second = sample_gateway_event("event-two").model_copy(
+        update={"event_type": "security.audit", "severity": Severity.CRITICAL}
+    )
+    spool.enqueue(first)
+    with pytest.raises(SpoolFullError, match="protected events were retained"):
+        spool.enqueue(second)
+    assert spool.pending() == [first]
+    assert spool.stats() == {
+        "evicted_events": 0,
+        "coalesced_health_events": 0,
+        "dropped_events": 1,
+        "pending_events": 1,
+        "capacity": 1,
+    }
+
+
+def test_gateway_spool_evicts_oldest_low_priority_event_for_health(
+    tmp_path: Path,
+) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "priority.sqlite3"), max_events=1)
+    telemetry = sample_gateway_event("telemetry").model_copy(
+        update={"event_type": "gateway.discovery"}
+    )
+    health = sample_gateway_event("health")
+    spool.enqueue(telemetry)
+
+    assert spool.enqueue(health) is True
+    assert spool.pending() == [health]
+    assert spool.stats()["evicted_events"] == 1
+    assert spool.stats()["pending_events"] == 1
+
+
+def test_gateway_spool_compacts_duplicate_health_snapshots(
+    tmp_path: Path,
+) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "health.sqlite3"), max_events=1)
+    first = sample_gateway_event("health-old")
+    latest = sample_gateway_event("health-latest")
+    spool.enqueue(first)
+
+    assert spool.enqueue(latest) is True
+    assert spool.pending() == [latest]
+    assert spool.stats()["coalesced_health_events"] == 1
+
+
+def test_gateway_spool_never_evicts_security_events_for_health(
+    tmp_path: Path,
+) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "protected.sqlite3"), max_events=1)
+    security = sample_gateway_event("security-event").model_copy(
+        update={"event_type": "security.alert", "severity": Severity.HIGH}
+    )
+    changed_health = sample_gateway_event("health-event").model_copy(
+        update={"payload": {"status": "unavailable"}}
+    )
+    spool.enqueue(security)
+
+    with pytest.raises(SpoolFullError, match="protected events were retained"):
+        spool.enqueue(changed_health)
+    assert spool.pending() == [security]
+    assert spool.stats()["dropped_events"] == 1
 
 
 def test_agent_retains_event_when_node_delivery_fails(
@@ -576,3 +638,25 @@ def test_gateway_command_result_backoff_does_not_reorder_outbox(tmp_path: Path) 
         "command-first",
         "command-second",
     ]
+
+def test_gateway_spool_health_compaction_keeps_state_transitions(
+    tmp_path: Path,
+) -> None:
+    spool = GatewayEventSpool(str(tmp_path / "health-transition.sqlite3"), max_events=2)
+    reachable = sample_gateway_event("health-reachable")
+    unavailable = sample_gateway_event("health-unavailable").model_copy(
+        update={"payload": {"status": "unavailable"}}
+    )
+    newest_reachable = sample_gateway_event("health-reachable-new")
+
+    spool.enqueue(reachable)
+    spool.enqueue(unavailable)
+    # A matching snapshot may replace its older copy without losing the transition.
+    spool.enqueue(newest_reachable)
+
+    assert {event.payload["status"] for event in spool.pending()} == {
+        "reachable",
+        "unavailable",
+    }
+    assert any(event.event_id == "health-reachable-new" for event in spool.pending())
+    assert spool.stats()["coalesced_health_events"] == 1
