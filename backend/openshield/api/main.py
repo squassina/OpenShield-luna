@@ -141,8 +141,35 @@ def _gateway_openwrt_config(gateway_id: str) -> dict[str, object] | None:
     return credentials
 
 
+_AUTH_FAILURE_WINDOW_SECONDS = 60
+_AUTH_FAILURE_MAX_ENTRIES = 4096
 _AUTH_FAILURES: dict[str, tuple[float, int]] = {}
 _AUTH_FAILURES_LOCK = threading.Lock()
+
+
+def _prune_auth_failures_locked(now: float) -> None:
+    expired = [
+        remote
+        for remote, (window, _) in _AUTH_FAILURES.items()
+        if now - window >= _AUTH_FAILURE_WINDOW_SECONDS
+    ]
+    for remote in expired:
+        _AUTH_FAILURES.pop(remote, None)
+    while len(_AUTH_FAILURES) > _AUTH_FAILURE_MAX_ENTRIES:
+        _AUTH_FAILURES.pop(next(iter(_AUTH_FAILURES)))
+
+
+def _record_auth_failure(remote: str, now: float) -> None:
+    with _AUTH_FAILURES_LOCK:
+        _prune_auth_failures_locked(now)
+        window, failures = _AUTH_FAILURES.get(remote, (now, 0))
+        if now - window >= _AUTH_FAILURE_WINDOW_SECONDS:
+            window, failures = now, 0
+        if remote in _AUTH_FAILURES:
+            _AUTH_FAILURES.pop(remote)
+        elif len(_AUTH_FAILURES) >= _AUTH_FAILURE_MAX_ENTRIES:
+            _AUTH_FAILURES.pop(next(iter(_AUTH_FAILURES)))
+        _AUTH_FAILURES[remote] = (window, failures + 1)
 
 
 def _gateway_token_valid(request: Request) -> bool:
@@ -170,8 +197,9 @@ def _check_admin_auth(request: Request) -> Response | None:
     remote = request.client.host if request.client else "unknown"
     now = time.monotonic()
     with _AUTH_FAILURES_LOCK:
+        _prune_auth_failures_locked(now)
         window, failures = _AUTH_FAILURES.get(remote, (now, 0))
-        if now - window >= 60:
+        if now - window >= _AUTH_FAILURE_WINDOW_SECONDS:
             window, failures = now, 0
         if failures >= 5:
             return JSONResponse({"detail": "Too many authentication attempts"}, status_code=429)
@@ -187,11 +215,7 @@ def _check_admin_auth(request: Request) -> Response | None:
         except (ValueError, UnicodeDecodeError):
             valid = False
     if not valid:
-        with _AUTH_FAILURES_LOCK:
-            window, failures = _AUTH_FAILURES.get(remote, (now, 0))
-            if now - window >= 60:
-                window, failures = now, 0
-            _AUTH_FAILURES[remote] = (window, failures + 1)
+        _record_auth_failure(remote, now)
         return JSONResponse(
             {"detail": "Authentication required"},
             status_code=401,
