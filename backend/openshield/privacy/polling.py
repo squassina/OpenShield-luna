@@ -89,7 +89,7 @@ def _metric(
 ) -> None:
     try:
         metrics.increment(name, labels)
-    except Exception as exc:  # Metrics must not change polling or cursor semantics.
+    except (RuntimeError, TypeError, ValueError, AttributeError) as exc:  # Metrics are best-effort.
         logger.warning(
             "DNS polling metric update failed metric=%s error_type=%s",
             name, type(exc).__name__,
@@ -295,7 +295,7 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
                 "status": "error",
                 "category": "normalization_error",
             })
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - isolate unexpected per-integration failures.
             logger.error(
                 "DNS polling failed integration_id=%s category=unexpected_error error_type=%s",
                 integration_id, type(exc).__name__,
@@ -318,7 +318,7 @@ async def run_dns_polling_loop(registry: Any, store: Any, metrics: Any, interval
             raise
         except PollingDatabaseError:
             logger.error("DNS polling cycle aborted after a database persistence failure")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - keep the background worker alive.
             logger.error(
                 "Unexpected DNS polling cycle failure error_type=%s",
                 type(exc).__name__,
