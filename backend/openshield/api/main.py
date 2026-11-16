@@ -1579,7 +1579,11 @@ def save_openwrt_credentials(
             or parsed.username or parsed.password or parsed.query or parsed.fragment
         ):
             raise ValueError("OpenWrt URL must be an absolute HTTP(S) URL without credentials")
-        OpenWrtRPCClient(credentials.base_url, credentials.username, credentials.password)
+        OpenWrtRPCClient(
+            credentials.base_url,
+            credentials.username,
+            credentials.password.get_secret_value(),
+        )
         SecretStore(store).set(integration_id, {
             "base_url": credentials.base_url,
             "username": credentials.username,
