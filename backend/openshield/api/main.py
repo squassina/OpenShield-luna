@@ -1724,6 +1724,23 @@ def get_gateway_status(gateway_id: str) -> dict[str, object]:
     return gateway
 
 
+def _require_enabled_ingestion(
+    integration_id: str, enabled: bool, source: str,
+) -> None:
+    if enabled:
+        return
+    store.write_audit(
+        "integration.ingestion.rejected",
+        None,
+        integration_id,
+        {"source": source, "reason": "integration_disabled"},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Integration is disabled; new ingestion is rejected",
+    )
+
+
 @app.post("/api/v1/events", status_code=202, tags=["events"])
 def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
     if (
@@ -1736,6 +1753,7 @@ def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
         raise HTTPException(status_code=400, detail="Unknown source integration")
     if integration.kind != event.source.kind:
         raise HTTPException(status_code=400, detail="Event source kind does not match integration")
+    _require_enabled_ingestion(integration.integration_id, integration.enabled, "events")
     inserted = store.insert_event(event)
     if inserted:
         metrics.increment("openshield_events_ingested_total")
@@ -1783,8 +1801,9 @@ def ingest_sensor_events(
     if content_length and int(content_length) > 5 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Sensor batch body exceeds 5 MiB")
     integration = registry.get(integration_id)
-    if integration is None or integration.kind not in {"suricata", "zeek"} or not integration.enabled:
+    if integration is None or integration.kind not in {"suricata", "zeek"}:
         raise HTTPException(status_code=404, detail="Network sensor integration not found")
+    _require_enabled_ingestion(integration_id, integration.enabled, "sensor_events")
     try:
         events = normalize_sensor_batch(integration.kind, records, integration_id)
     except (ValueError, TypeError) as exc:
@@ -2152,6 +2171,7 @@ def ingest_dns_queries(
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
+    _require_enabled_ingestion(integration_id, integration.enabled, "dns_queries")
     try:
         events = normalize_dns_batch(
             integration.kind, integration_id, records,
@@ -2174,8 +2194,7 @@ def sync_privacy_source(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind not in {"pihole", "adguard"}:
         raise HTTPException(status_code=404, detail="DNS privacy integration not found")
-    if not integration.enabled:
-        raise HTTPException(status_code=409, detail="DNS privacy integration is disabled")
+    _require_enabled_ingestion(integration_id, integration.enabled, "dns_manual_sync")
     _record_poll_attempt(integration_id)
     try:
         encrypted = store.get_integration_secret(integration_id)
