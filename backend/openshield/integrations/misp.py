@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 
 class MispError(RuntimeError):
@@ -23,7 +24,10 @@ class MispClient:
     PAGE_SIZE = 250
     INDICATOR_TYPES = ("ip-src", "ip-dst", "domain", "hostname", "url")
 
-    def __init__(self, base_url: str, api_key: str, timeout: float = 10.0) -> None:
+    def __init__(
+        self, base_url: str, api_key: str, timeout: float = 10.0,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
         try:
             parsed = urlsplit(base_url)
             hostname = parsed.hostname
@@ -44,6 +48,7 @@ class MispClient:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
+        self._ssl_context = ssl_context
 
     def _request(self, path: str, method: str, body: bytes | None = None) -> object:
         if (path, method) not in {
@@ -60,7 +65,7 @@ class MispClient:
             headers["Content-Type"] = "application/json"
         request = Request(self._base_url + path, data=body, headers=headers, method=method)
         try:
-            with build_opener(_NoRedirectHandler()).open(request, timeout=self._timeout) as response:
+            with build_opener(_NoRedirectHandler(), HTTPSHandler(context=self._ssl_context)).open(request, timeout=self._timeout) as response:
                 raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
             if exc.code in {401, 403}:

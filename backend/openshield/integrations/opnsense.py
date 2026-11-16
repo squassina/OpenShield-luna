@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import ssl
 from typing import ClassVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -19,7 +20,8 @@ class OPNsenseClient:
     """Read-only OPNsense API client. Only GET endpoints are exposed."""
 
     def __init__(
-        self, base_url: str, api_key: str, api_secret: str, timeout: float = 8.0
+        self, base_url: str, api_key: str, api_secret: str, timeout: float = 8.0,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -35,6 +37,7 @@ class OPNsenseClient:
         token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode("ascii")
         self._authorization = f"Basic {token}"
         self._timeout = timeout
+        self._ssl_context = ssl_context
 
     def get(self, path: str) -> dict[str, object]:
         if not path.startswith("/api/") or ".." in path:
@@ -48,7 +51,10 @@ class OPNsenseClient:
             },
         )
         try:
-            with urlopen(request, timeout=self._timeout) as response:
+            with urlopen(
+                request, timeout=self._timeout,
+                **({"context": self._ssl_context} if self._ssl_context is not None else {}),
+            ) as response:
                 raw = response.read(1_048_577)
         except HTTPError as exc:
             if exc.code in {401, 403}:

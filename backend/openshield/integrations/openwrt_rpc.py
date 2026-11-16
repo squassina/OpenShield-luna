@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import re
+import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -40,6 +41,7 @@ class OpenWrtRPCClient:
         username: str,
         password: str,
         timeout: float = 5.0,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -59,6 +61,7 @@ class OpenWrtRPCClient:
         self._username = username
         self._password = password
         self._timeout = timeout
+        self._ssl_context = ssl_context
         self._session: str | None = None
 
     def _request(self, payload: list[object]) -> dict[str, object]:
@@ -69,7 +72,10 @@ class OpenWrtRPCClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self._timeout) as response:
+            with urlopen(
+                request, timeout=self._timeout,
+                **({"context": self._ssl_context} if self._ssl_context is not None else {}),
+            ) as response:
                 raw = response.read(1_048_577)
         except HTTPError as exc:
             raise OpenWrtRPCError(f"OpenWrt RPC returned HTTP {exc.code}") from exc

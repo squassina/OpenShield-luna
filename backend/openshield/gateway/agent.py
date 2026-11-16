@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from openshield.core.bootstrap import load_runtime_secrets
+from openshield.core.tls import create_ssl_context
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.gateway.client import GatewayConnectorClient, GatewayTransportError
 from openshield.gateway.spool import GatewayEventSpool, SpoolFullError
@@ -119,7 +120,9 @@ def _configured_openwrt_client(config: object) -> OpenWrtRPCClient | None:
         logger.error("Node returned incomplete OpenWrt connector configuration")
         return None
     try:
-        return OpenWrtRPCClient(base_url, username, password)
+        context = create_ssl_context(config.get("ca_bundle_path"), base_url)
+        options = {"ssl_context": context} if context is not None else {}
+        return OpenWrtRPCClient(base_url, username, password, **options)
     except ValueError:
         logger.error("Node returned invalid OpenWrt connector configuration")
         return None

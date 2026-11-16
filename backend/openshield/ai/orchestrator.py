@@ -13,6 +13,7 @@ from openshield.ai.providers import (
 )
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
+from openshield.core.tls import create_ssl_context
 from openshield.integrations.registry import IntegrationRegistry
 
 PROMPT_VERSION = "openshield.incident-investigation.v1"
@@ -163,7 +164,9 @@ def investigate_incident(
             "categories": ["indicator", "risk", "event_metadata", "normalized_threat_evidence"],
             "raw_event_payloads_sent": False,
         }
-        output = generate_ollama(base_url, model, SYSTEM_INSTRUCTIONS, context)
+        ssl_context = create_ssl_context(integration.config.get("ca_bundle_path"), base_url)
+        options = {"ssl_context": ssl_context} if ssl_context is not None else {}
+        output = generate_ollama(base_url, model, SYSTEM_INSTRUCTIONS, context, **options)
     else:
         if os.getenv("OPENSHIELD_CLOUD_AI_ENABLED", "false").lower() not in {"1", "true", "yes"}:
             raise ValueError("Cloud AI is disabled; set OPENSHIELD_CLOUD_AI_ENABLED=true to opt in")
@@ -180,7 +183,11 @@ def investigate_incident(
             "raw_event_payloads_sent": False,
             "identifiers_removed": True,
         }
-        output = generate_openai(api_key, model, SYSTEM_INSTRUCTIONS, context)
+        ssl_context = create_ssl_context(
+            integration.config.get("ca_bundle_path"), "https://api.openai.com"
+        )
+        options = {"ssl_context": ssl_context} if ssl_context is not None else {}
+        output = generate_openai(api_key, model, SYSTEM_INSTRUCTIONS, context, **options)
     try:
         validated = InvestigationResult.model_validate_json(output)
     except ValidationError as exc:

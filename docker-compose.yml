@@ -30,6 +30,7 @@ services:
       OPENSHIELD_ADGUARD_USERNAME: ${OPENSHIELD_ADGUARD_USERNAME:-}
       OPENSHIELD_ADGUARD_PASSWORD: ${OPENSHIELD_ADGUARD_PASSWORD:-}
       OPENSHIELD_RUNTIME_SECRETS_DIR: /run/openshield-secrets
+      OPENSHIELD_CA_BUNDLE_DIR: ${OPENSHIELD_CA_BUNDLE_DIR:-/run/openshield/ca}
       OPENSHIELD_SECRET_KEY: ${OPENSHIELD_SECRET_KEY:-}
       OPENSHIELD_SECRET_KEY_PREVIOUS: ${OPENSHIELD_SECRET_KEY_PREVIOUS:-}
       OPENSHIELD_API_AUTH_ENABLED: ${OPENSHIELD_API_AUTH_ENABLED:-false}
@@ -40,7 +41,7 @@ services:
       OPENSHIELD_ENFORCEMENT_ENABLED: ${OPENSHIELD_ENFORCEMENT_ENABLED:-false}
       OPENSHIELD_MAX_AUTONOMY_LEVEL: ${OPENSHIELD_MAX_AUTONOMY_LEVEL:-0}
     volumes:
-      - ./certs:/run/openshield/ca:ro
+      - ./certs:${OPENSHIELD_CA_BUNDLE_DIR:-/run/openshield/ca}:ro
       - openshield-runtime-secrets:/run/openshield-secrets
     depends_on:
       openshield-db:
@@ -107,7 +108,9 @@ services:
       OPENSHIELD_OPENWRT_USERNAME: ${OPENSHIELD_OPENWRT_USERNAME:-}
       OPENSHIELD_OPENWRT_PASSWORD: ${OPENSHIELD_OPENWRT_PASSWORD:-}
       OPENSHIELD_GATEWAY_SPOOL_PATH: ${OPENSHIELD_GATEWAY_SPOOL_PATH:-/var/lib/openshield/gateway-spool.sqlite3}
+      OPENSHIELD_CA_BUNDLE_DIR: ${OPENSHIELD_CA_BUNDLE_DIR:-/run/openshield/ca}
     volumes:
+      - ./certs:${OPENSHIELD_CA_BUNDLE_DIR:-/run/openshield/ca}:ro
       - openshield-gateway-spool:/var/lib/openshield
       - openshield-runtime-secrets:/run/openshield-secrets:ro
     restart: unless-stopped

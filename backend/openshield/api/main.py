@@ -23,6 +23,7 @@ from openshield.core.metrics import MetricsRegistry
 from openshield.core.request_limits import RequestBodyLimitMiddleware
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
+from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.events.models import EventEnvelope
 from openshield.execution.service import (
     ExecutionError,
@@ -112,6 +113,27 @@ app = FastAPI(
     lifespan=_dns_polling_lifespan,
 )
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=5 * 1024 * 1024)
+
+
+def _integration_ssl_context(integration, url: str):
+    try:
+        return create_ssl_context(integration.config.get("ca_bundle_path"), url)
+    except CABundleError as exc:
+        raise ValueError("Configured integration CA bundle is invalid") from exc
+
+
+def _integration_ssl_context_kwargs(integration, url: str) -> dict[str, object]:
+    context = _integration_ssl_context(integration, url)
+    return {"ssl_context": context} if context is not None else {}
+
+
+def _gateway_openwrt_config(gateway_id: str) -> dict[str, object] | None:
+    credentials = SecretStore(store).get(gateway_id)
+    integration = registry.get(gateway_id)
+    ca_bundle_path = integration.config.get("ca_bundle_path") if integration is not None else None
+    if credentials is not None and ca_bundle_path:
+        credentials["ca_bundle_path"] = ca_bundle_path
+    return credentials
 
 
 _AUTH_FAILURES: dict[str, tuple[float, int]] = {}
@@ -495,6 +517,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             client = OPNsenseClient(
                 str(credentials["base_url"]), str(credentials["api_key"]),
                 str(credentials["api_secret"]),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             )
             system = client.get("/api/diagnostics/system/system_information")
         except (KeyError, TypeError, ValueError) as exc:
@@ -508,7 +531,10 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if credentials is None:
             raise HTTPException(status_code=409, detail="pfSense API key is not configured")
         try:
-            client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+            client = PfSenseClient(
+                str(credentials["base_url"]), str(credentials["api_key"]),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
+            )
             system = client.get("/api/v2/status/system")
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
@@ -527,6 +553,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
                 str(credentials["base_url"]),
                 str(credentials["username"]),
                 str(credentials["password"]),
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -549,7 +576,9 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             if credentials is None:
                 raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
             diagnostics = PrometheusClient(
-                str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None
+                str(credentials["base_url"]),
+                str(credentials.get("bearer_token") or "") or None,
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -567,6 +596,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
             diagnostics = GrafanaClient(
                 str(credentials["base_url"]),
                 str(credentials.get("bearer_token") or "") or None,
+                **_integration_ssl_context_kwargs(item, str(credentials["base_url"])),
             ).diagnostics()
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -613,6 +643,7 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
                     secret["bouncer_api_key"],
                     str(secret.get("machine_id") or "") or None,
                     str(secret.get("machine_password") or "") or None,
+                    **_integration_ssl_context_kwargs(item, str(secret["base_url"])),
                 ).diagnostics()
             except (KeyError, TypeError, ValueError) as exc:
                 raise HTTPException(status_code=422, detail="Stored CrowdSec credentials are invalid") from exc
@@ -628,8 +659,11 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if not isinstance(api_key, str) or not api_key:
             raise HTTPException(status_code=409, detail="CrowdSec API key is not configured")
         try:
-            result = lookup_crowdsec("8.8.8.8", api_key)
-        except ThreatIntelProviderError as exc:
+            result = lookup_crowdsec(
+                "8.8.8.8", api_key,
+                **_integration_ssl_context_kwargs(item, "https://cti.api.crowdsec.net"),
+            )
+        except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "status": "connected", "integration_id": integration_id, "provider": "crowdsec",
@@ -648,8 +682,11 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if not isinstance(base_url, str):
             raise HTTPException(status_code=422, detail="MISP base URL is not configured")
         try:
-            result = lookup_misp(base_url, api_key, "ip", "192.0.2.1")
-        except ThreatIntelProviderError as exc:
+            result = lookup_misp(
+                base_url, api_key, "ip", "192.0.2.1",
+                **_integration_ssl_context_kwargs(item, base_url),
+            )
+        except (ThreatIntelProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {
             "status": "connected", "integration_id": integration_id, "provider": "misp",
@@ -661,7 +698,9 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if not isinstance(base_url, str):
             raise HTTPException(status_code=422, detail="Ollama base URL is invalid")
         try:
-            models = test_ollama(base_url)
+            models = test_ollama(
+                base_url, **_integration_ssl_context_kwargs(item, base_url)
+            )
         except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         configured_model = item.config.get("model")
@@ -684,8 +723,10 @@ def test_integration_connection(integration_id: str) -> dict[str, object]:
         if not isinstance(api_key, str) or not api_key:
             raise HTTPException(status_code=409, detail="OpenAI API key is not configured")
         try:
-            models = test_openai(api_key)
-        except AIProviderError as exc:
+            models = test_openai(
+                api_key, **_integration_ssl_context_kwargs(item, "https://api.openai.com")
+            )
+        except (AIProviderError, ValueError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         configured_model = item.config.get("model")
         if not isinstance(configured_model, str) or configured_model not in models:
@@ -754,6 +795,7 @@ def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
         client = OPNsenseClient(
             str(credentials["base_url"]), str(credentials["api_key"]),
             str(credentials["api_secret"]),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
@@ -809,7 +851,10 @@ def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
         credentials = SecretStore(store).get(integration_id)
         if credentials is None:
             raise HTTPException(status_code=409, detail="pfSense API key is not configured")
-        client = PfSenseClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        client = PfSenseClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+        )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -895,6 +940,7 @@ def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
             str(credentials["bouncer_api_key"]),
             str(credentials.get("machine_id") or "") or None,
             str(credentials.get("machine_password") or "") or None,
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -955,7 +1001,10 @@ def misp_diagnostics(integration_id: str) -> dict[str, object]:
         credentials = SecretStore(store).get(integration_id)
         if credentials is None:
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
-        client = MispClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        client = MispClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+        )
         return {
             "status": "connected",
             "integration_id": integration_id,
@@ -982,7 +1031,10 @@ def sync_misp_indicators(
         credentials = SecretStore(store).get(integration_id)
         if credentials is None:
             raise HTTPException(status_code=409, detail="MISP credentials are not configured")
-        client = MispClient(str(credentials["base_url"]), str(credentials["api_key"]))
+        client = MispClient(
+            str(credentials["base_url"]), str(credentials["api_key"]),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+        )
         indicators = client.search_indicators(limit)
         complete_snapshot = len(indicators) < limit
         sync_result = store.sync_threat_indicators(
@@ -1133,6 +1185,7 @@ def wazuh_diagnostics(integration_id: str) -> dict[str, object]:
             str(credentials["base_url"]),
             str(credentials["username"]),
             str(credentials["password"]),
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -1193,7 +1246,8 @@ def prometheus_diagnostics(integration_id: str) -> dict[str, object]:
         if credentials is None:
             raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
         client = PrometheusClient(
-            str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None
+            str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None,
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
     except SecretConfigurationError as exc:
@@ -1260,6 +1314,7 @@ def grafana_diagnostics(integration_id: str) -> dict[str, object]:
         client = GrafanaClient(
             str(credentials["base_url"]),
             str(credentials.get("bearer_token") or "") or None,
+            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
         )
         return {
             "status": "connected",
@@ -1629,7 +1684,7 @@ def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object
     if integration is None or integration.kind != "openwrt":
         raise HTTPException(status_code=404, detail="Gateway integration not found")
     try:
-        credentials = SecretStore(store).get(gateway_id)
+        credentials = _gateway_openwrt_config(gateway_id)
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"gateway_id": gateway_id, "openwrt_config": credentials}
@@ -1659,7 +1714,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
     connection = gateway_connections.connect(request)
     metrics.increment("openshield_gateway_connections_total")
     try:
-        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
@@ -1683,7 +1738,7 @@ def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -
         raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
     metrics.increment("openshield_gateway_heartbeats_total")
     try:
-        openwrt_config = SecretStore(store).get(connection.gateway_id) if encrypted_secret else None
+        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
     except SecretConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
