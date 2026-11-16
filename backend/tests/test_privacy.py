@@ -424,7 +424,8 @@ def test_background_dns_polling_ingests_enabled_sources_and_skips_disabled(monke
     assert calls == ["pihole-home"]
     assert outcomes == [{
         "integration_id": "pihole-home", "status": "ok",
-        "received": 1, "accepted": 1, "duplicates": 0, "pages": 1, "complete": True,
+        "received": 1, "accepted": 1, "duplicates": 0, "rejected": 0,
+        "pages": 1, "complete": True,
     }]
     events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
     assert len(events) == 1
@@ -462,7 +463,8 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     outcomes = polling.poll_dns_sources_once(main.registry, main.store, Metrics())
     assert calls == ["adguard-home", "pihole-home"]
     assert outcomes == [
-        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0, "pages": 1, "complete": True},
+        {"integration_id": "adguard-home", "status": "ok", "received": 0, "accepted": 0, "duplicates": 0,
+         "rejected": 0, "pages": 1, "complete": True},
         {"integration_id": "pihole-home", "status": "error"},
     ]
     audit = client.get("/api/v1/audit").json()
@@ -1046,3 +1048,95 @@ def test_dns_provider_credentials_are_encrypted_per_integration_and_never_return
     assert "pihole-password-a" not in client.get("/api/v1/integrations").text
     assert client.delete("/api/v1/integrations/pihole-a/dns-provider-credentials").status_code == 204
     assert SecretStore(main.store).get("pihole-a") is None
+
+
+def test_resilient_dns_normalization_isolates_bad_records() -> None:
+    from openshield.privacy.dns import normalize_dns_batch_resilient
+
+    events, rejected = normalize_dns_batch_resilient("pihole", "pihole-home", [
+        {"domain": "valid.example", "timestamp": "2026-11-15T12:00:00Z"},
+        {"domain": "invalid domain", "timestamp": "2026-11-15T12:00:01Z"},
+        {"domain": "bad-time.example", "timestamp": "not-a-timestamp"},
+        None,
+    ])
+
+    assert len(events) == 1
+    assert events[0].payload["domain"] == "valid.example"
+    assert rejected == [
+        {"record_index": 1, "reason": "invalid_domain"},
+        {"record_index": 2, "reason": "invalid_timestamp"},
+        {"record_index": 3, "reason": "invalid_record_shape"},
+    ]
+    assert all("domain" not in item and "value" not in item for item in rejected)
+
+
+def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle(
+    monkeypatch,
+) -> None:
+    from openshield.api import main
+    from openshield.privacy import polling
+
+    register_dns()
+    valid_records = [
+        {
+            "domain": f"host-{index}.example",
+            "timestamp": datetime(2026, 11, 15, 12, 0, index % 60, tzinfo=UTC).isoformat(),
+            "status": "allowed",
+        }
+        for index in range(499)
+    ]
+    records = valid_records + [{
+        "domain": "invalid domain",
+        "timestamp": datetime(2026, 11, 15, 12, 1, tzinfo=UTC).isoformat(),
+    }]
+    fetch_cursors = []
+
+    def fake_fetch_page(integration, cursor):
+        fetch_cursors.append(cursor)
+        if cursor is None:
+            return records, {"offset": 500, "complete": False}, False
+        assert cursor == {"offset": 500, "complete": False}
+        return [{
+            "domain": "next-page.example",
+            "timestamp": datetime(2026, 11, 15, 12, 2, tzinfo=UTC).isoformat(),
+        }], {"offset": 501, "complete": True}, True
+
+    monkeypatch.setattr(polling, "fetch_dns_records_page", fake_fetch_page)
+
+    class Metrics:
+        def __init__(self):
+            self.counts = {}
+
+        def increment(self, name):
+            self.counts[name] = self.counts.get(name, 0) + 1
+
+    metrics = Metrics()
+    first = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert first == [{
+        "integration_id": "pihole-home", "status": "ok", "received": 500,
+        "accepted": 499, "duplicates": 0, "rejected": 1, "pages": 1,
+        "complete": False,
+    }]
+    assert main.store.get_integration_poll_cursor("pihole-home") == {
+        "offset": 500, "complete": False,
+    }
+    assert metrics.counts["openshield_events_ingested_total"] == 499
+    assert metrics.counts["openshield_dns_records_rejected_total"] == 1
+    events = client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]
+    assert len(events) == 499
+    rejection_audit = next(
+        item for item in client.get("/api/v1/audit").json()
+        if item["action"] == "privacy.provider_poll.records_rejected"
+    )
+    assert rejection_audit["details"]["count"] == 1
+    assert rejection_audit["details"]["reasons"] == {"invalid_domain": 1}
+    assert "invalid domain" not in str(rejection_audit["details"])
+
+    second = polling.poll_dns_sources_once(main.registry, main.store, metrics)
+    assert fetch_cursors[1] == {"offset": 500, "complete": False}
+    assert second[0]["received"] == second[0]["accepted"] == 1
+    assert second[0]["rejected"] == 0
+    assert main.store.get_integration_poll_cursor("pihole-home") == {
+        "offset": 501, "complete": True,
+    }
+    assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 500
