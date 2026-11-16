@@ -47,7 +47,12 @@ class RequestBodyLimitMiddleware:
             if not raw_length or not raw_length.isdigit():
                 await self._reject(send, 400, "Invalid Content-Length header")
                 return
-            if int(raw_length) > self.max_body_bytes:
+            try:
+                declared_length = int(raw_length)
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length header")
+                return
+            if declared_length > self.max_body_bytes:
                 await self._reject(send, 413, "Request body exceeds 5 MiB")
                 return
 
