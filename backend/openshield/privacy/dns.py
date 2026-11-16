@@ -116,11 +116,17 @@ def normalize_dns_batch(
         raise ValueError("DNS batch must contain between 1 and 500 records")
     result = []
     for raw in records:
+        if not isinstance(raw, dict):
+            raise TypeError("DNS record must be an object")
         domain = normalize_domain(raw.get("domain") or raw.get("query"))
         client = raw.get("client") or raw.get("client_ip") or raw.get("client_name")
         if not isinstance(client, str) or len(client) > 255:
             client = None
-        timestamp = raw.get("timestamp") or raw.get("time")
+        timestamp = raw.get("timestamp")
+        if timestamp is None:
+            timestamp = raw.get("time")
+        if timestamp == "":
+            raise ValueError("Invalid DNS timestamp")
         if isinstance(timestamp, (int, float)):
             occurred_at = datetime.fromtimestamp(timestamp, UTC)
         elif isinstance(timestamp, str):
@@ -129,8 +135,10 @@ def normalize_dns_batch(
                 occurred_at = occurred_at.replace(tzinfo=UTC)
             else:
                 occurred_at = occurred_at.astimezone(UTC)
-        else:
+        elif timestamp is None:
             occurred_at = datetime.now(UTC)
+        else:
+            raise ValueError("Invalid DNS timestamp")
         raw_status = str(raw.get("status") or raw.get("reply") or "unknown").lower()
         blocked = any(word in raw_status for word in ("block", "deny", "filtered", "nxdomain"))
         override = None
@@ -170,3 +178,42 @@ def normalize_dns_batch(
             payload=payload,
         ))
     return result
+
+
+def normalize_dns_batch_resilient(
+    kind: str, integration_id: str, records: list[object],
+    classification_overrides: dict[str, dict[str, object]] | None = None,
+) -> tuple[list[EventEnvelope], list[dict[str, object]]]:
+    """Normalize records independently, returning sanitized rejection diagnostics."""
+    if kind not in {"pihole", "adguard"}:
+        raise ValueError("Unsupported DNS integration")
+    if len(records) > 500:
+        raise ValueError("DNS batch cannot contain more than 500 records")
+
+    events: list[EventEnvelope] = []
+    rejected: list[dict[str, object]] = []
+    for index, raw in enumerate(records):
+        if not isinstance(raw, dict):
+            rejected.append({"record_index": index, "reason": "invalid_record_shape"})
+            continue
+        try:
+            events.extend(normalize_dns_batch(
+                kind, integration_id, [raw], classification_overrides,
+            ))
+        except (TypeError, ValueError, OverflowError, OSError):
+            try:
+                normalize_domain(raw.get("domain") or raw.get("query"))
+            except (TypeError, ValueError):
+                reason = "invalid_domain"
+            else:
+                timestamp = raw.get("timestamp")
+                if timestamp is None:
+                    timestamp = raw.get("time")
+                if isinstance(timestamp, (int, float)):
+                    reason = "timestamp_out_of_range"
+                elif timestamp is not None:
+                    reason = "invalid_timestamp"
+                else:
+                    reason = "invalid_record"
+            rejected.append({"record_index": index, "reason": reason})
+    return events, rejected

@@ -6,7 +6,7 @@ from threading import Lock
 from typing import Any
 
 from openshield.core.secrets import SecretConfigurationError, SecretStore
-from openshield.privacy.dns import normalize_dns_batch
+from openshield.privacy.dns import normalize_dns_batch_resilient
 from openshield.privacy.providers import (
     DnsProviderCursorExpired,
     DnsProviderError,
@@ -15,6 +15,7 @@ from openshield.privacy.providers import (
 
 logger = logging.getLogger(__name__)
 DNS_PROVIDER_KINDS = {"pihole", "adguard"}
+MAX_PAGES_PER_POLL = 1
 _STATUS_LOCK = Lock()
 _POLL_STATUS: dict[str, dict[str, object]] = {}
 
@@ -28,13 +29,16 @@ def _record_poll_attempt(integration_id: str) -> None:
         }
 
 
-def _record_poll_success(integration_id: str, accepted: int, duplicates: int) -> None:
+def _record_poll_success(
+    integration_id: str, accepted: int, duplicates: int, rejected: int = 0,
+) -> None:
     now = datetime.now(UTC).isoformat()
     with _STATUS_LOCK:
         _POLL_STATUS[integration_id] = {
             **_POLL_STATUS.get(integration_id, {}),
             "status": "healthy", "last_attempt_at": now, "last_success_at": now,
-            "last_imported": accepted, "last_duplicates": duplicates, "last_error": None,
+            "last_imported": accepted, "last_duplicates": duplicates,
+            "last_rejected": rejected, "last_error": None,
         }
 
 
@@ -71,37 +75,63 @@ def poll_dns_sources_once(registry: Any, store: Any, metrics: Any) -> list[dict[
             except SecretConfigurationError as exc:
                 raise DnsProviderError("DNS provider credentials could not be loaded") from exc
             cursor = store.get_integration_poll_cursor(integration.integration_id)
-            accepted = duplicates = received = pages = 0
+            accepted = duplicates = received = rejected = pages = 0
+            rejection_reasons: dict[str, int] = {}
             complete = False
-            while pages < 10 and not complete:
+            # Checkpoint one page per cycle so each page's ingestion/rejections are durable
+            # before the next provider request begins on the following cycle.
+            while pages < MAX_PAGES_PER_POLL and not complete:
                 if credentials is None:
                     records, next_cursor, complete = fetch_dns_records_page(integration, cursor)
                 else:
                     records, next_cursor, complete = fetch_dns_records_page(integration, cursor, credentials=credentials)
-                events = normalize_dns_batch(
+                events, rejections = normalize_dns_batch_resilient(
                     integration.kind, integration.integration_id, records,
                     store.list_privacy_classification_overrides(),
-                ) if records else []
+                ) if records else ([], [])
                 for event in events:
                     if store.insert_event(event):
                         accepted += 1
                         metrics.increment("openshield_events_ingested_total")
                     else:
                         duplicates += 1
-                received += len(events)
+                if rejections:
+                    page_reasons: dict[str, int] = {}
+                    for rejection in rejections:
+                        reason = str(rejection["reason"])
+                        page_reasons[reason] = page_reasons.get(reason, 0) + 1
+                        rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+                        metrics.increment("openshield_dns_records_rejected_total")
+                    rejected += len(rejections)
+                    # Persist sanitized diagnostics before moving the provider cursor.
+                    store.write_audit(
+                        "privacy.provider_poll.records_rejected", None,
+                        integration.integration_id,
+                        {
+                            "provider": integration.kind,
+                            "count": len(rejections),
+                            "reasons": page_reasons,
+                            "record_indexes": [
+                                int(item["record_index"]) for item in rejections[:20]
+                            ],
+                            "record_indexes_truncated": len(rejections) > 20,
+                        },
+                    )
+                received += len(records)
                 store.set_integration_poll_cursor(integration.integration_id, integration.kind, next_cursor)
                 cursor = next_cursor
                 pages += 1
-            _record_poll_success(integration.integration_id, accepted, duplicates)
+            _record_poll_success(integration.integration_id, accepted, duplicates, rejected)
             store.write_audit(
                 "privacy.provider_poll.completed", None, integration.integration_id,
                 {"provider": integration.kind, "received": received,
-                 "accepted": accepted, "duplicates": duplicates, "pages": pages,
+                 "accepted": accepted, "duplicates": duplicates, "rejected": rejected,
+                 "rejection_reasons": rejection_reasons, "pages": pages,
                  "complete": complete},
             )
             outcomes.append({"integration_id": integration.integration_id, "status": "ok",
                              "received": received, "accepted": accepted, "duplicates": duplicates,
-                             "pages": pages, "complete": complete})
+                             "rejected": rejected, "pages": pages, "complete": complete})
         except DnsProviderCursorExpired:
             logger.warning("DNS provider cursor expired for integration %s", integration.integration_id)
             _record_poll_failure(
