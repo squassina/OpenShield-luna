@@ -2,6 +2,7 @@ import ipaddress
 import json
 import re
 import ssl
+import threading
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -30,6 +31,10 @@ def _valid_ip(value: object, version: int) -> bool:
 
 class OpenWrtRPCError(RuntimeError):
     """Safe, credential-free OpenWrt RPC failure."""
+
+
+class _OpenWrtSessionExpired(OpenWrtRPCError):
+    """Ubus rejected a call because its session is no longer authorized."""
 
 
 class OpenWrtRPCClient:
@@ -63,8 +68,11 @@ class OpenWrtRPCClient:
         self._timeout = timeout
         self._ssl_context = ssl_context
         self._session: str | None = None
+        self._session_lock = threading.Lock()
 
-    def _request(self, payload: list[object]) -> dict[str, object]:
+    def _request(
+        self, payload: list[object], *, session_call: bool = False
+    ) -> dict[str, object]:
         request = Request(
             self._endpoint,
             data=json.dumps(payload).encode("utf-8"),
@@ -87,16 +95,15 @@ class OpenWrtRPCClient:
             result = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise OpenWrtRPCError("OpenWrt RPC returned invalid JSON") from exc
-        if (
-            not isinstance(result, list)
-            or len(result) != 2
-            or result[0] != 0
-            or not isinstance(result[1], dict)
-        ):
+        if not isinstance(result, list) or len(result) != 2:
+            raise OpenWrtRPCError("OpenWrt RPC rejected the request or returned an invalid payload")
+        if result[0] == 6 and session_call:
+            raise _OpenWrtSessionExpired("OpenWrt RPC session is no longer authorized")
+        if result[0] != 0 or not isinstance(result[1], dict):
             raise OpenWrtRPCError("OpenWrt RPC rejected the request or returned an invalid payload")
         return result[1]
 
-    def login(self) -> None:
+    def _login(self) -> None:
         result = self._request(
             [
                 "00000000000000000000000000000000",
@@ -110,15 +117,35 @@ class OpenWrtRPCClient:
             raise OpenWrtRPCError("OpenWrt RPC authentication response was invalid")
         self._session = session
 
+    def login(self) -> None:
+        with self._session_lock:
+            self._login()
+
     def call(
         self,
         object_name: str,
         method: str,
         params: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        if self._session is None:
-            self.login()
-        return self._request([self._session, object_name, method, params or {}])
+        with self._session_lock:
+            if self._session is None:
+                self._login()
+            session = self._session
+
+        payload = [session, object_name, method, params or {}]
+        try:
+            return self._request(payload, session_call=True)
+        except _OpenWrtSessionExpired:
+            with self._session_lock:
+                if self._session == session:
+                    self._session = None
+                    self._login()
+                renewed_session = self._session
+
+            return self._request(
+                [renewed_session, object_name, method, params or {}],
+                session_call=True,
+            )
 
     @staticmethod
     def _parse_devices(
