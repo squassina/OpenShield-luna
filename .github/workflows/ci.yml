@@ -34,7 +34,7 @@ jobs:
       - name: Smoke-test non-root Node and Gateway Connector startup
         run: |
           trap 'docker compose down' EXIT
-          docker compose --profile gateway up -d openshield-node openshield-gateway-connector
+          docker compose up -d openshield-node
           for attempt in $(seq 1 30); do
             status="$(docker inspect --format '{{.State.Health.Status}}' openshield-luna-node)"
             if [ "$status" = "healthy" ]; then
@@ -47,5 +47,6 @@ jobs:
             sleep 2
           done
           test "$(docker inspect --format '{{.State.Health.Status}}' openshield-luna-node)" = "healthy"
+          docker compose --profile gateway up -d openshield-gateway-connector
           test "$(docker exec openshield-luna-node id -u)" = "10001"
           test "$(docker exec openshield-luna-gateway-connector id -u)" = "10001"
