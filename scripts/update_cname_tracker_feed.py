@@ -5,8 +5,8 @@ import json
 import os
 import re
 from datetime import datetime
+from http.client import IncompleteRead
 from pathlib import Path
-from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,7 +43,10 @@ def download(url: str, limit: int) -> bytes:
         chunks = []
         total = 0
         while True:
-            chunk = response.read(min(64 * 1024, limit - total + 1))
+            try:
+                chunk = response.read(min(64 * 1024, limit - total + 1))
+            except IncompleteRead as exc:
+                raise RuntimeError("Upstream response was truncated") from exc
             if not chunk:
                 break
             total += len(chunk)
