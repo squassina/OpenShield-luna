@@ -17,7 +17,6 @@ from openshield.integrations.wazuh import WazuhClient, WazuhError
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records
 from openshield.threat_intel.providers import ThreatIntelProviderError, lookup_misp
 
-
 SSLContextKwargs = Callable[[Integration, str], dict[str, object]]
 
 
