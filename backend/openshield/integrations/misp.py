@@ -89,6 +89,70 @@ class MispClient:
             raise MispError("MISP version endpoint returned an unexpected response")
         return {"version": payload["version"], "api": "connected"}
 
+    @staticmethod
+    def _is_to_ids(value: object) -> bool:
+        return (
+            value is True
+            or (isinstance(value, int) and not isinstance(value, bool) and value == 1)
+            or (isinstance(value, str) and value.casefold() in {"1", "true"})
+        )
+
+    def search_indicator_attributes(
+        self, indicator_type: str, indicator_value: str, limit: int = 50,
+    ) -> list[dict[str, object]]:
+        if indicator_type not in {"ip", "domain"}:
+            raise ValueError("MISP indicator type must be ip or domain")
+        if not isinstance(indicator_value, str) or not indicator_value.strip() or len(indicator_value) > 2048:
+            raise ValueError("MISP indicator value must contain 1 to 2048 characters")
+        if not 1 <= limit <= 50:
+            raise ValueError("MISP lookup limit must be between 1 and 50")
+
+        body = json.dumps({
+            "returnFormat": "json",
+            "value": indicator_value,
+            "limit": limit,
+            "page": 1,
+        }).encode("utf-8")
+        payload = self._request("/attributes/restSearch", "POST", body)
+        response = payload.get("response", payload) if isinstance(payload, dict) else payload
+        if isinstance(response, dict):
+            attributes = response.get("Attribute", response.get("attributes", []))
+            if not attributes and isinstance(response.get("response"), list):
+                attributes = response["response"]
+        else:
+            attributes = response
+        if not isinstance(attributes, list):
+            raise MispError("MISP attribute search returned an unexpected response")
+
+        normalized: list[dict[str, object]] = []
+        for item in attributes[:limit]:
+            if not isinstance(item, dict):
+                continue
+            attribute = item.get("Attribute") if isinstance(item.get("Attribute"), dict) else item
+            event = item.get("Event") if isinstance(item.get("Event"), dict) else {}
+            tags = attribute.get("Tag") or event.get("Tag") or []
+            tag_names = [
+                tag.get("name") for tag in tags
+                if isinstance(tag, dict) and isinstance(tag.get("name"), str)
+            ] if isinstance(tags, list) else []
+            try:
+                threat_level_id = int(event.get("threat_level_id", 4))
+            except (TypeError, ValueError):
+                threat_level_id = 4
+            normalized.append({
+                "attribute_id": str(attribute.get("id", "")),
+                "type": str(attribute.get("type", "")),
+                "value": str(attribute.get("value", indicator_value)),
+                "to_ids": self._is_to_ids(attribute.get("to_ids")),
+                "category": str(attribute.get("category", "")),
+                "event_id": str(event.get("id", attribute.get("event_id", ""))),
+                "event_info": str(event.get("info", ""))[:256],
+                "threat_level_id": threat_level_id,
+                "tags": tag_names[:20],
+                "timestamp": str(attribute.get("timestamp", event.get("timestamp", ""))),
+            })
+        return normalized
+
     def search_indicators(self, limit: int = 1000) -> list[dict[str, object]]:
         if not 1 <= limit <= self.MAX_INDICATORS:
             raise ValueError("MISP indicator limit must be between 1 and 1000")
@@ -113,8 +177,7 @@ class MispClient:
             for item in attributes:
                 if not isinstance(item, dict):
                     continue
-                to_ids = item.get("to_ids")
-                if not (to_ids is True or to_ids == 1 or to_ids == "1" or to_ids == "true"):
+                if not self._is_to_ids(item.get("to_ids")):
                     continue
                 indicator_type = item.get("type")
                 value = item.get("value")
