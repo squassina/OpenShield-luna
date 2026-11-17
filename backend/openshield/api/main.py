@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import os
 import secrets
 import threading
@@ -26,6 +27,7 @@ from openshield.api.routers.openwrt_diagnostics import create_openwrt_diagnostic
 from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.privacy import create_privacy_router
 from openshield.api.routers.reports import create_reports_router
+from openshield.api.routers.sensor_credentials import create_sensor_credentials_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.api.schemas import (
     AdGuardCredentials,
@@ -179,6 +181,22 @@ def _gateway_token_valid(request: Request) -> bool:
     ))
 
 
+
+def _sensor_token_valid(integration_id: str, request: Request) -> bool:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        return False
+    token = authorization[7:]
+    if not token:
+        return False
+    credentials = SecretStore(store).get(integration_id)
+    expected_hash = credentials.get("sensor_token_sha256") if credentials else None
+    if not isinstance(expected_hash, str):
+        return False
+    supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return secrets.compare_digest(supplied_hash, expected_hash)
+
+
 def _api_auth_enabled() -> bool:
     return os.getenv("OPENSHIELD_API_AUTH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 
@@ -307,6 +325,7 @@ app.include_router(
         metrics=metrics,
         gateway_openwrt_config=_gateway_openwrt_config,
         gateway_token_valid=_gateway_token_valid,
+        sensor_token_valid=_sensor_token_valid,
     )
 )
 adapters = {
@@ -415,3 +434,5 @@ app.include_router(
         gateway_connections=gateway_connections,
     )
 )
+
+app.include_router(create_sensor_credentials_router(store=store, registry=registry))
