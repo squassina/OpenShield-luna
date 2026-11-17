@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 _MAX_BODY_PATH = re.compile(
-    r"/api/v1/(?:sensors/[^/]+/events|dns/[^/]+/queries)/?"
+    r"/api/v1/(?:events|sensors/[^/]+/events|dns/[^/]+/queries)/?"
 )
 
 
