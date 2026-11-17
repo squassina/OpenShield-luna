@@ -292,6 +292,37 @@ def test_persisted_state_survives_store_recreation() -> None:
         restarted_store.close()
 
 
+def test_event_occurrence_timestamp_is_stored_as_timestamptz() -> None:
+    register_integration()
+    event = sample_event()
+    event["occurred_at"] = "2026-01-01T14:00:00+02:00"
+
+    response = client.post("/api/v1/events", json=event)
+    assert response.status_code == 202
+
+    from openshield.api import main
+
+    with main.store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT occurred_at FROM events WHERE event_id = %s",
+            (event["event_id"],),
+        )
+        row = cursor.fetchone()
+        cursor.execute(
+            """
+            SELECT indexdef FROM pg_indexes
+            WHERE tablename = 'events'
+              AND indexname = 'events_event_type_occurred_at_idx'
+            """
+        )
+        index = cursor.fetchone()
+
+    assert row is not None
+    assert row[0] == datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    assert index is not None
+    assert "occurred_at DESC" in index[0]
+
+
 def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
     register_integration()
     event = sample_event()
