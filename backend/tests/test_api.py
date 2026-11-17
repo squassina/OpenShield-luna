@@ -423,13 +423,21 @@ def test_event_endpoint_rejects_invalid_cursor() -> None:
     assert client.get("/api/v1/events?cursor=invalid").status_code == 422
 
 
-def test_disabled_sensor_rejects_ingestion() -> None:
+def test_disabled_sensor_rejects_ingestion(monkeypatch) -> None:
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     response = client.post("/api/v1/integrations", json={
         "integration_id": "sensor-disabled", "kind": "zeek", "display_name": "Disabled sensor",
     })
     assert response.status_code == 201
+    token = client.put("/api/v1/sensors/sensor-disabled/credentials").json()["token"]
     assert client.patch("/api/v1/integrations/sensor-disabled", json={"enabled": False}).status_code == 200
-    response = client.post("/api/v1/sensors/sensor-disabled/events", json=[{}])
+    response = client.post(
+        "/api/v1/sensors/sensor-disabled/events",
+        headers={"Authorization": f"Bearer {token}"},
+        json=[{"_path": "conn", "ts": 1760000000}],
+    )
     assert response.status_code == 409
     assert client.get("/api/v1/events").json()["items"] == []
     assert any(
