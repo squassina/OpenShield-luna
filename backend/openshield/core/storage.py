@@ -518,9 +518,16 @@ CREATE TABLE IF NOT EXISTS events (
                 ON events ((payload->>'event_type'), occurred_at DESC)
                 """,
             )
+            threat_intel_cache_migration = (
+                """
+                CREATE INDEX IF NOT EXISTS threat_intel_cache_expires_at_idx
+                ON threat_intel_cache (expires_at)
+                """,
+            )
             migrations = (
                 (1, "initial schema", statements),
                 (2, "typed event occurrence timestamps", event_timestamp_migration),
+                (3, "threat intelligence cache expiry index", threat_intel_cache_migration),
             )
             with (
                 psycopg.connect(self._dsn, connect_timeout=5) as connection,
@@ -1108,6 +1115,31 @@ CREATE TABLE IF NOT EXISTS events (
                 """,
                 (provider, indicator_type, indicator_value, Jsonb(result), ttl_seconds),
             )
+
+    def expire_threat_intel_cache(self, limit: int = 500) -> int:
+        if not 1 <= limit <= 10000:
+            raise ValueError("Threat intelligence cache cleanup limit must be between 1 and 10000")
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                WITH expired AS (
+                    SELECT provider, indicator_type, indicator_value
+                    FROM threat_intel_cache
+                    WHERE expires_at <= NOW()
+                    ORDER BY expires_at
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                DELETE FROM threat_intel_cache AS cache
+                USING expired
+                WHERE cache.provider = expired.provider
+                  AND cache.indicator_type = expired.indicator_type
+                  AND cache.indicator_value = expired.indicator_value
+                RETURNING 1
+                """,
+                (limit,),
+            )
+            return cursor.rowcount
 
     def upsert_incident(
         self, incident: dict[str, object], event_ids: list[str],
