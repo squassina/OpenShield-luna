@@ -220,7 +220,6 @@ def test_integration_credentials_router_is_independently_testable() -> None:
     assert response.status_code == 404
 
 
-
 def test_incidents_router_is_independently_testable() -> None:
     class IncidentStore(FakeStore):
         def list_incidents(self, *, limit: int, status: str | None = None):
