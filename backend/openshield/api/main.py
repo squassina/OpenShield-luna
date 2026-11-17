@@ -17,7 +17,7 @@ from psycopg_pool import PoolTimeout
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from openshield.ai.orchestrator import investigate_incident
-from openshield.ai.providers import AIProviderError, test_ollama, test_openai
+from openshield.ai.providers import AIProviderError
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
 from openshield.api.routers.integrations import create_integrations_router
@@ -70,10 +70,6 @@ from openshield.privacy.polling import (
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.threat_intel.engine import enrich_events
-from openshield.threat_intel.providers import (
-    ThreatIntelProviderError,
-    lookup_misp,
-)
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
