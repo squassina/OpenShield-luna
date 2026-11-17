@@ -335,11 +335,6 @@ adapters = {
     "openai": AIProviderAdapter("openai"),
 }
 
-app.include_router(
-    create_integrations_router(store=store, registry=registry, adapters=adapters)
-)
-
-
 class PrivacyListEntry(BaseModel):
     list_type: str = Field(pattern=r"^(allow|block)$")
     domain: str = Field(min_length=3, max_length=253)
@@ -472,6 +467,11 @@ def dashboard() -> FileResponse:
     if not DASHBOARD_PATH.is_file():
         raise HTTPException(status_code=404, detail="Dashboard asset not found")
     return FileResponse(DASHBOARD_PATH, media_type="text/html")
+
+
+app.include_router(
+    create_integrations_router(store=store, registry=registry, adapters=adapters)
+)
 
 
 @app.post("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
