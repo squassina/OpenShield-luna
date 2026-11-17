@@ -91,7 +91,7 @@ def create_integration_credentials_router(
             client = OPNsenseClient(
                 str(credentials["base_url"]), str(credentials["api_key"]),
                 str(credentials["api_secret"]),
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
         except SecretConfigurationError as exc:
@@ -146,7 +146,7 @@ def create_integration_credentials_router(
                 raise HTTPException(status_code=409, detail="pfSense API key is not configured")
             client = PfSenseClient(
                 str(credentials["base_url"]), str(credentials["api_key"]),
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
         except SecretConfigurationError as exc:
@@ -230,7 +230,7 @@ def create_integration_credentials_router(
                 str(credentials["bouncer_api_key"]),
                 str(credentials.get("machine_id") or "") or None,
                 str(credentials.get("machine_password") or "") or None,
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {
                 "status": "connected",
@@ -290,7 +290,7 @@ def create_integration_credentials_router(
                 raise HTTPException(status_code=409, detail="MISP credentials are not configured")
             client = MispClient(
                 str(credentials["base_url"]), str(credentials["api_key"]),
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {
                 "status": "connected",
@@ -356,7 +356,7 @@ def create_integration_credentials_router(
                 str(credentials["base_url"]),
                 str(credentials["username"]),
                 str(credentials["password"]),
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {
                 "status": "connected",
@@ -415,7 +415,7 @@ def create_integration_credentials_router(
                 raise HTTPException(status_code=409, detail="Prometheus configuration is not saved")
             client = PrometheusClient(
                 str(credentials["base_url"]), str(credentials.get("bearer_token") or "") or None,
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {"status": "connected", "integration_id": integration_id, **client.diagnostics()}
         except SecretConfigurationError as exc:
@@ -479,7 +479,7 @@ def create_integration_credentials_router(
             client = GrafanaClient(
                 str(credentials["base_url"]),
                 str(credentials.get("bearer_token") or "") or None,
-                **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
+                **ssl_context_kwargs(integration, str(credentials["base_url"])),
             )
             return {
                 "status": "connected",
