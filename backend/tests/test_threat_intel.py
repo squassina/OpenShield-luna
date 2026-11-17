@@ -1,6 +1,6 @@
 import asyncio
-import logging
 import json
+import logging
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -250,7 +250,6 @@ def test_enrichment_limits_unique_indicators_to_fifty(monkeypatch) -> None:
     assert result["indicators_considered"] == 50
     assert result["indicators_truncated"] == 10
     assert len(calls) == 50
-
 
 
 def test_expired_threat_intel_cache_is_deleted_in_bounded_batches() -> None:
