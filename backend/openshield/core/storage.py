@@ -494,7 +494,34 @@ CREATE TABLE IF NOT EXISTS events (
                 ON audit_records (occurred_at DESC)
                 """,
             ]
-            migrations = ((1, "initial schema", statements),)
+            event_timestamp_migration = (
+                """
+                ALTER TABLE events
+                ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ
+                """,
+                """
+                UPDATE events
+                SET occurred_at = CASE
+                    WHEN pg_input_is_valid(
+                        payload->>'occurred_at', 'timestamp with time zone'
+                    )
+                    THEN occurred_at
+                    ELSE received_at
+                END
+                WHERE occurred_at IS NULL
+                """,
+                "ALTER TABLE events ALTER COLUMN occurred_at SET DEFAULT NOW()",
+                "ALTER TABLE events ALTER COLUMN occurred_at SET NOT NULL",
+                "DROP INDEX IF EXISTS events_event_type_idx",
+                """
+                CREATE INDEX IF NOT EXISTS events_event_type_occurred_at_idx
+                ON events ((payload->>'event_type'), occurred_at DESC)
+                """,
+            )
+            migrations = (
+                (1, "initial schema", statements),
+                (2, "typed event occurrence timestamps", event_timestamp_migration),
+            )
             with (
                 psycopg.connect(self._dsn, connect_timeout=5) as connection,
                 connection.cursor() as cursor,
@@ -1427,12 +1454,16 @@ CREATE TABLE IF NOT EXISTS events (
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO events (event_id, payload)
-                VALUES (%s, %s)
+                INSERT INTO events (event_id, payload, occurred_at)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (event_id) DO NOTHING
                 RETURNING event_id
                 """,
-                (event.event_id, Jsonb(event.model_dump(mode="json"))),
+                (
+                    event.event_id,
+                    Jsonb(event.model_dump(mode="json")),
+                    event.occurred_at,
+                ),
             )
             if cursor.fetchone() is None:
                 return False
