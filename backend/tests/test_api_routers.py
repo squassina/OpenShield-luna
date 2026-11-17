@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -380,10 +380,9 @@ def test_threat_intel_router_is_independently_testable() -> None:
     assert enriched.json() == {"event_ids": ["event-1", "event-2"]}
 
 
-
 def test_inventory_router_is_independently_testable() -> None:
     now = datetime.now(UTC)
-    first_seen = now.replace(year=now.year - 1)
+    first_seen = now - timedelta(days=365)
 
     class InventoryStore(FakeStore):
         def list_gateway_discovery_snapshots(self):
