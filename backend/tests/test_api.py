@@ -942,7 +942,10 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
             assert path == "/api/v2/status/system"
             return {"hostname": "pfsense"}
 
+    from openshield.api.routers import integration_tests
+
     monkeypatch.setattr(main, "PfSenseClient", FakePfSenseClient)
+    monkeypatch.setattr(integration_tests, "PfSenseClient", FakePfSenseClient)
     diagnostics = client.get("/api/v1/integrations/pfsense-home/pfsense-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.json()["status"] == "connected"
@@ -1026,7 +1029,10 @@ def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
                 },
             }
 
+    from openshield.api.routers import integration_tests
+
     monkeypatch.setattr(main, "CrowdSecClient", FakeCrowdSecClient)
+    monkeypatch.setattr(integration_tests, "CrowdSecClient", FakeCrowdSecClient)
     diagnostics = client.get(
         "/api/v1/integrations/crowdsec-home/crowdsec-diagnostics"
     )
@@ -1142,7 +1148,10 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
                 },
             }
 
+    from openshield.api.routers import integration_tests
+
     monkeypatch.setattr(main, "WazuhClient", FakeWazuhClient)
+    monkeypatch.setattr(integration_tests, "WazuhClient", FakeWazuhClient)
     diagnostics = client.get("/api/v1/integrations/wazuh-home/wazuh-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
