@@ -78,6 +78,7 @@ Ensure the `conn.log`, `dns.log`, `http.log`, and `ssl.log` files are emitted as
 curl --fail-with-body -X POST \
   http://openshield-node:8000/api/v1/sensors/zeek-home/events \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $SENSOR_TOKEN" \
   --data-binary '[
     {
       "_path": "conn",
