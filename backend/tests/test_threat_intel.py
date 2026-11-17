@@ -91,7 +91,9 @@ def test_crowdsec_rejects_private_and_invalid_addresses() -> None:
         providers.lookup_crowdsec("not-an-ip", "key")
 
 
-def test_misp_lookup_uses_rest_search_and_extracts_actionable_ioc(monkeypatch) -> None:
+def test_misp_lookup_reuses_validated_client_and_shared_attribute_parser(monkeypatch) -> None:
+    from openshield.integrations.misp import MispClient
+
     payload = {
         "response": [{
             "Attribute": {
@@ -104,17 +106,26 @@ def test_misp_lookup_uses_rest_search_and_extracts_actionable_ioc(monkeypatch) -
     }
     requests = []
 
-    def fake_urlopen(request, timeout):
-        requests.append(request)
-        return _response(payload)
+    def fake_request(self, path, method, body=None):
+        requests.append({
+            "base_url": self._base_url,
+            "api_key": self._api_key,
+            "path": path,
+            "method": method,
+            "body": json.loads(body) if body else None,
+        })
+        return payload
 
-    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    monkeypatch.setattr(MispClient, "_request", fake_request)
     result = providers.lookup_misp("https://misp.example", "misp-test-key", "ip", "8.8.8.8")
-    assert requests[0].full_url == "https://misp.example/attributes/restSearch"
-    assert requests[0].get_header("Authorization") == "misp-test-key"
-    assert json.loads(requests[0].data) == {
-        "returnFormat": "json", "value": "8.8.8.8", "limit": 50, "page": 1,
-    }
+
+    assert requests == [{
+        "base_url": "https://misp.example",
+        "api_key": "misp-test-key",
+        "path": "/attributes/restSearch",
+        "method": "POST",
+        "body": {"returnFormat": "json", "value": "8.8.8.8", "limit": 50, "page": 1},
+    }]
     assert result["matched"] is True
     assert result["attributes"][0]["to_ids"] is True
     assert result["attributes"][0]["threat_level_id"] == 1
