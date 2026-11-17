@@ -25,7 +25,6 @@ from openshield.policy.engine import (
     max_autonomy_level,
 )
 
-
 PolicyCreator = Callable[
     [PostgresStore, IntegrationRegistry, dict[str, object]], dict[str, object]
 ]
