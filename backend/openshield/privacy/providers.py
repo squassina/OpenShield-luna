@@ -65,49 +65,17 @@ def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = 
 
 
 def _pihole_records(base_url: str, integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
-    password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_PIHOLE_PASSWORD", "")
-    headers = {"Accept": "application/json"}
-    sid = None
-    if password:
-        auth = _request(
-            f"{base_url}/api/auth", method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            body=json.dumps({"password": password}).encode(), integration=integration,
-        )
-        sid = auth.get("session", {}).get("sid") if isinstance(auth, dict) else None
-        if not isinstance(sid, str) or not sid:
-            raise DnsProviderError("Pi-hole authentication did not return a session")
-        headers["X-FTL-SID"] = sid
-    try:
-        result = _request(f"{base_url}/api/queries?{urlencode({'length': 500})}", headers=headers, integration=integration)
-    finally:
-        if sid:
-            try:
-                _request(f"{base_url}/api/auth", method="DELETE", headers=headers, integration=integration)
-            except DnsProviderError:
-                pass
+    result = _pihole_request_with_credentials(
+        base_url, f"/api/queries?{urlencode({'length': 500})}",
+        integration=integration, credentials=credentials,
+    )
     records = result.get("queries", result.get("data", [])) if isinstance(result, dict) else result
     if not isinstance(records, list):
         raise DnsProviderError("Pi-hole query-log response has no query list")
-    normalized = []
-    for item in records:
-        if not isinstance(item, dict):
-            continue
-        cname_targets = item.get("cname_targets") or item.get("cname") or []
-        if isinstance(cname_targets, str):
-            cname_targets = [cname_targets]
-        normalized.append({
-            "domain": item.get("domain") or item.get("name"),
-            "client": item.get("client") or item.get("client_ip"),
-            "timestamp": item.get("timestamp") or item.get("time"),
-            "status": item.get("status") or item.get("reply") or item.get("type"),
-            "type": item.get("type") or item.get("query_type"),
-            "cname_targets": cname_targets if isinstance(cname_targets, list) else [],
-        })
-    return normalized
+    return _normalize_pihole_records(records)
 
 
-def _adguard_records(base_url: str, integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
+def _adguard_headers(credentials: dict[str, str] | None) -> dict[str, str]:
     headers = {"Accept": "application/json"}
     username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
     password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
@@ -116,30 +84,18 @@ def _adguard_records(base_url: str, integration: Integration, credentials: dict[
     if username:
         token = base64.b64encode(f"{username}:{password}".encode()).decode()
         headers["Authorization"] = f"Basic {token}"
-    result = _request(f"{base_url}/control/querylog?{urlencode({'limit': 500})}", headers=headers, integration=integration)
+    return headers
+
+
+def _adguard_records(base_url: str, integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
+    result = _request(
+        f"{base_url}/control/querylog?{urlencode({'limit': 500})}",
+        headers=_adguard_headers(credentials), integration=integration,
+    )
     records = result.get("data", []) if isinstance(result, dict) else result
     if not isinstance(records, list):
         raise DnsProviderError("AdGuard query-log response has no data list")
-    normalized = []
-    for item in records:
-        if not isinstance(item, dict):
-            continue
-        question = item.get("question") if isinstance(item.get("question"), dict) else {}
-        answer = item.get("answer") or item.get("Answer") or []
-        cname_targets = [
-            entry.get("value") or entry.get("data")
-            for entry in answer
-            if isinstance(entry, dict) and str(entry.get("type", "")).upper() in {"CNAME", "5"}
-        ] if isinstance(answer, list) else []
-        normalized.append({
-            "domain": question.get("host") or item.get("domain"),
-            "client": item.get("client") or item.get("IP"),
-            "timestamp": item.get("time") or item.get("timestamp"),
-            "status": item.get("reason") or item.get("status"),
-            "type": question.get("type") or item.get("type"),
-            "cname_targets": cname_targets,
-        })
-    return normalized
+    return _normalize_adguard_records(records)
 
 
 def fetch_dns_records(integration: Integration, credentials: dict[str, str] | None = None) -> list[dict]:
@@ -249,14 +205,7 @@ def sync_provider_lists(integration: Integration, entries: list[dict[str, object
 
     if integration.kind == "adguard":
         base_url = _base_url(integration)
-        headers = {"Accept": "application/json"}
-        username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
-        password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
-        if bool(username) != bool(password):
-            raise DnsProviderError("AdGuard username and password must be configured together")
-        if username:
-            token = base64.b64encode(f"{username}:{password}".encode()).decode()
-            headers["Authorization"] = f"Basic {token}"
+        headers = _adguard_headers(credentials)
         current = _request(f"{base_url}/control/filtering/status", headers=headers, integration=integration)
         rules = current.get("user_rules", []) if isinstance(current, dict) else []
         if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
@@ -398,14 +347,7 @@ def fetch_dns_records_page(
         params = {"limit": page_size}
         if state.get("older_than"):
             params["older_than"] = state["older_than"]
-        headers = {"Accept": "application/json"}
-        username = (credentials or {}).get("username") or os.getenv("OPENSHIELD_ADGUARD_USERNAME", "")
-        password = (credentials or {}).get("password") or os.getenv("OPENSHIELD_ADGUARD_PASSWORD", "")
-        if bool(username) != bool(password):
-            raise DnsProviderError("AdGuard username and password must be configured together")
-        if username:
-            token = base64.b64encode(f"{username}:{password}".encode()).decode()
-            headers["Authorization"] = f"Basic {token}"
+        headers = _adguard_headers(credentials)
         result = _request(f"{base_url}/control/querylog?{urlencode(params)}", headers=headers, integration=integration)
         records = result.get("data", []) if isinstance(result, dict) else []
         if not isinstance(records, list):
