@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import ipaddress
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query
