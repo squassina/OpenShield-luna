@@ -38,7 +38,6 @@ from openshield.api.schemas import (
     PiHoleCredentials,
     PrometheusCredentials,
     ThreatIntelCredentials,
-    ThreatIntelEnrichRequest,
     WazuhCredentials,
 )
 from openshield.core.bootstrap import load_runtime_secrets
