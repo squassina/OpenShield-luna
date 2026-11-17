@@ -350,7 +350,7 @@ def main() -> None:
     openwrt_url = os.getenv("OPENSHIELD_OPENWRT_URL", "").strip()
     openwrt_username = os.getenv("OPENSHIELD_OPENWRT_USERNAME", "")
     openwrt_password = os.getenv("OPENSHIELD_OPENWRT_PASSWORD", "")
-    integration_id = gateway_id
+    integration_id: str | None = None
     openwrt_values = (openwrt_url, openwrt_username, openwrt_password)
     if any(openwrt_values) and not all(openwrt_values):
         raise SystemExit(
