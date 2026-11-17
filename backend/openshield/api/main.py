@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from psycopg_pool import PoolTimeout
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, Field
 
 from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError
@@ -30,8 +30,8 @@ from openshield.api.schemas import (
     CrowdSecCredentials,
     GrafanaCredentials,
     MispCredentials,
-    OPNsenseCredentials,
     OpenWrtCredentials,
+    OPNsenseCredentials,
     PfSenseCredentials,
     PiHoleCredentials,
     PrometheusCredentials,
@@ -85,7 +85,7 @@ from openshield.threat_intel.engine import enrich_events
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
-__all__ = ["AdGuardCredentials","AIProviderCredentials","CrowdSecCredentials","GrafanaCredentials","MispCredentials","OPNsenseCredentials","OpenWrtCredentials","PfSenseCredentials","PiHoleCredentials","PrometheusCredentials","ThreatIntelCredentials","WazuhCredentials"]
+__all__ = ["AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
 
 load_runtime_secrets(create=True)
 configure_logging()
