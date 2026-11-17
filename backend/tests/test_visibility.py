@@ -180,7 +180,7 @@ def test_inventory_ignores_invalid_unspecified_and_multicast_addresses() -> None
 def test_event_filters_and_limit_are_applied_before_results_are_loaded() -> None:
     register_sensor("sensor-suricata", "suricata")
     for event_type, source_ip in [("alert", "192.0.2.1"), ("flow", "192.0.2.2")]:
-        response = client.post("/api/v1/sensors/sensor-suricata/events", json=[{
+        response = client.post("/api/v1/sensors/sensor-suricata/events", headers=sensor_headers("sensor-suricata"), json=[{
             "timestamp": "2026-01-01T12:00:00Z",
             "event_type": event_type,
             "src_ip": source_ip,
