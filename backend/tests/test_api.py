@@ -894,6 +894,7 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
     from cryptography.fernet import Fernet
 
     from openshield.api import main
+    from openshield.api.routers import integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -943,6 +944,7 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
             return {"hostname": "pfsense"}
 
     monkeypatch.setattr(main, "PfSenseClient", FakePfSenseClient)
+    monkeypatch.setattr(integration_tests, "PfSenseClient", FakePfSenseClient)
     diagnostics = client.get("/api/v1/integrations/pfsense-home/pfsense-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.json()["status"] == "connected"
@@ -966,6 +968,7 @@ def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
     from cryptography.fernet import Fernet
 
     from openshield.api import main
+    from openshield.api.routers import integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -1027,6 +1030,7 @@ def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
             }
 
     monkeypatch.setattr(main, "CrowdSecClient", FakeCrowdSecClient)
+    monkeypatch.setattr(integration_tests, "CrowdSecClient", FakeCrowdSecClient)
     diagnostics = client.get(
         "/api/v1/integrations/crowdsec-home/crowdsec-diagnostics"
     )
@@ -1080,6 +1084,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
     from cryptography.fernet import Fernet
 
     from openshield.api import main
+    from openshield.api.routers import integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -1143,6 +1148,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
             }
 
     monkeypatch.setattr(main, "WazuhClient", FakeWazuhClient)
+    monkeypatch.setattr(integration_tests, "WazuhClient", FakeWazuhClient)
     diagnostics = client.get("/api/v1/integrations/wazuh-home/wazuh-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"

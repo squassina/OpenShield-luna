@@ -6,9 +6,14 @@ from fastapi.testclient import TestClient
 
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
-from openshield.integrations.models import Integration
+from openshield.integrations.models import (
+    Integration,
+    IntegrationRegistration,
+    IntegrationUpdate,
+)
 from openshield.integrations.registry import IntegrationRegistry
 
 
@@ -169,3 +174,32 @@ def test_integrations_router_is_independently_testable() -> None:
     assert client.patch("/api/v1/integrations/dns-home", json={}).status_code == 422
     assert client.delete("/api/v1/integrations/dns-home").status_code == 204
     assert client.get("/api/v1/integrations/dns-home/probe").status_code == 404
+
+
+def test_integration_connection_router_is_independently_testable() -> None:
+    registry = IntegrationRegistry()
+    registry.register(IntegrationRegistration(
+        integration_id="sensor-lab",
+        kind="suricata",
+        display_name="Lab sensor",
+    ))
+    app = FastAPI()
+    app.include_router(create_integration_test_router(
+        store=FakeStore(),
+        registry=registry,
+        ssl_context_kwargs=lambda _integration, _url: {},
+    ))
+    client = TestClient(app)
+
+    response = client.post("/api/v1/integrations/sensor-lab/test")
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "configured",
+        "integration_id": "sensor-lab",
+        "mode": "push",
+        "ingestion_endpoint": "/api/v1/sensors/sensor-lab/events",
+    }
+
+    registry.update("sensor-lab", IntegrationUpdate(enabled=False))
+    assert client.post("/api/v1/integrations/sensor-lab/test").status_code == 409
+    assert client.post("/api/v1/integrations/missing/test").status_code == 404

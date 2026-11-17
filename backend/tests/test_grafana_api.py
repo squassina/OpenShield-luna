@@ -2,6 +2,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api import main
+from openshield.api.routers import integration_tests
 from openshield.core.secrets import SecretStore
 
 client = TestClient(main.app)
@@ -53,6 +54,7 @@ def test_grafana_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
             }
 
     monkeypatch.setattr(main, "GrafanaClient", FakeGrafanaClient)
+    monkeypatch.setattr(integration_tests, "GrafanaClient", FakeGrafanaClient)
     diagnostics = client.get("/api/v1/integrations/grafana-home/grafana-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
