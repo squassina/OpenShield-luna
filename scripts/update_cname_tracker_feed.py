@@ -17,7 +17,7 @@ MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 DEFAULT_DOWNLOAD_BYTES = 2 * 1024 * 1024
 MIN_TRACKER_DOMAINS = 50
 DOMAIN_RE = re.compile(
-    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$"
+    r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$"
 )
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
