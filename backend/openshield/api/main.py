@@ -25,11 +25,11 @@ from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.schemas import (
     AIInvestigationRequest,
-    AdGuardCredentials,
-    IncidentStatusRequest,
     AIProviderCredentials,
+    AdGuardCredentials,
     CrowdSecCredentials,
     GrafanaCredentials,
+    IncidentStatusRequest,
     MispCredentials,
     OpenWrtCredentials,
     OPNsenseCredentials,
