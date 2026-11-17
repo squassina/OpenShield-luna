@@ -7,13 +7,13 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from psycopg_pool import PoolTimeout
 
+from openshield.api.routers.audit import create_audit_router
 from openshield.api.routers.events import create_events_router
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
@@ -453,11 +453,7 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
 app.include_router(create_privacy_router(store=store, registry=registry, metrics=metrics))
 
 
-@app.get("/api/v1/audit", tags=["audit"])
-def list_audit_records(
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
-) -> list[dict[str, object]]:
-    return store.list_audit(limit)
+app.include_router(create_audit_router(store=store))
 
 app.include_router(
     create_reports_router(
