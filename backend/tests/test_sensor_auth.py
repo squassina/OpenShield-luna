@@ -136,3 +136,36 @@ def test_generic_event_ingestion_cannot_bypass_sensor_authentication() -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     assert accepted.status_code == 202
+
+
+def test_business_admin_auth_protects_sensor_enrollment_and_credential_management(
+    monkeypatch,
+) -> None:
+    import base64
+
+    register_sensor("sensor-lab")
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
+
+    assert client.post("/api/v1/integrations", json={
+        "integration_id": "sensor-other",
+        "kind": "zeek",
+        "display_name": "Other sensor",
+    }).status_code == 401
+    assert client.put("/api/v1/sensors/sensor-lab/credentials").status_code == 401
+
+    credentials = base64.b64encode(b"admin:strong-test-password").decode()
+    admin_headers = {"Authorization": f"Basic {credentials}"}
+    rotated = client.put(
+        "/api/v1/sensors/sensor-lab/credentials",
+        headers=admin_headers,
+    )
+    assert rotated.status_code == 200
+
+    # Admin credentials do not substitute for the sensor's integration-scoped token.
+    assert client.post(
+        "/api/v1/sensors/sensor-lab/events",
+        headers=admin_headers,
+        json=[sensor_record()],
+    ).status_code == 401
