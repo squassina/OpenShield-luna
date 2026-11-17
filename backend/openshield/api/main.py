@@ -12,12 +12,15 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse
 from psycopg_pool import PoolTimeout
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
+from openshield.api.routers.gateway import create_gateway_router
+from openshield.api.routers.health import create_health_router
+from openshield.api.routers.metrics import create_metrics_router
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
@@ -29,11 +32,9 @@ from openshield.events.models import EventEnvelope
 from openshield.execution.service import (
     ExecutionError,
     approve_decision,
-    process_gateway_command_result,
     reject_decision,
 )
 from openshield.execution.worker import run_expiration_loop
-from openshield.gateway.models import GatewayConnectRequest, GatewayHeartbeatRequest
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
 from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
@@ -303,6 +304,19 @@ store = PostgresStore(
 registry = IntegrationRegistry(store)
 gateway_connections = GatewayConnectionRegistry(store)
 metrics = MetricsRegistry()
+
+app.include_router(create_health_router(store))
+app.include_router(create_metrics_router(metrics))
+app.include_router(
+    create_gateway_router(
+        store=store,
+        registry=registry,
+        gateway_connections=gateway_connections,
+        metrics=metrics,
+        gateway_openwrt_config=_gateway_openwrt_config,
+        gateway_token_valid=_gateway_token_valid,
+    )
+)
 adapters = {
     "openwrt": OpenWrtAdapter(),
     "opnsense": OPNsenseAdapter(),
@@ -409,11 +423,6 @@ class AIInvestigationRequest(BaseModel):
     provider_id: str = Field(min_length=2, max_length=64)
 
 
-class GatewayCommandResultRequest(BaseModel):
-    status: Literal["completed", "failed"]
-    result: dict[str, Any] = Field(default_factory=dict)
-
-
 class PolicyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
@@ -458,18 +467,6 @@ def dashboard() -> FileResponse:
     if not DASHBOARD_PATH.is_file():
         raise HTTPException(status_code=404, detail="Dashboard asset not found")
     return FileResponse(DASHBOARD_PATH, media_type="text/html")
-
-
-@app.get("/health/live", tags=["health"])
-def liveness() -> dict[str, str]:
-    return {"status": "alive"}
-
-
-@app.get("/health/ready", tags=["health"])
-def readiness() -> dict[str, str]:
-    if not store.is_ready():
-        raise HTTPException(status_code=503, detail="Database is not ready")
-    return {"status": "ready"}
 
 
 @app.post("/api/v1/integrations", status_code=201, tags=["integrations"])
@@ -1700,112 +1697,6 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
     }
 
 
-@app.get("/api/v1/gateway/config/{gateway_id}", tags=["gateway"])
-def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object]:
-    if not _gateway_token_valid(request):
-        raise HTTPException(status_code=401, detail="Gateway authentication required")
-    integration = registry.get(gateway_id)
-    if integration is None or integration.kind != "openwrt":
-        raise HTTPException(status_code=404, detail="Gateway integration not found")
-    try:
-        credentials = _gateway_openwrt_config(gateway_id)
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"gateway_id": gateway_id, "openwrt_config": credentials}
-
-
-@app.post("/api/v1/gateway/connect", status_code=201, tags=["gateway"])
-def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> dict[str, object]:
-    # Residential mode: first connection provisions the local gateway integration.
-    integration = registry.get(request.gateway_id)
-    if integration is None:
-        try:
-            integration = registry.register(
-                IntegrationRegistration(
-                    integration_id=request.gateway_id,
-                    kind=request.gateway_type,
-                    display_name="Home gateway",
-                )
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-    elif integration.kind != request.gateway_type:
-        raise HTTPException(status_code=409, detail="Gateway integration kind mismatch")
-
-    encrypted_secret = store.get_integration_secret(request.gateway_id)
-    if encrypted_secret and not _gateway_token_valid(http_request):
-        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
-    connection = gateway_connections.connect(request)
-    metrics.increment("openshield_gateway_connections_total")
-    try:
-        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {
-        "status": "connected",
-        "gateway_id": connection.gateway_id,
-        "integration_id": integration.integration_id,
-        "protocol_version": connection.protocol_version,
-        "accepted_capabilities": [item.value for item in connection.capabilities],
-        "connected_at": connection.connected_at.isoformat(),
-        "openwrt_config": openwrt_config,
-        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
-    }
-
-
-@app.post("/api/v1/gateway/heartbeat", tags=["gateway"])
-def gateway_heartbeat(request: GatewayHeartbeatRequest, http_request: Request) -> dict[str, object]:
-    connection = gateway_connections.heartbeat(request.gateway_id)
-    if connection is None:
-        raise HTTPException(status_code=409, detail="Gateway must connect before sending heartbeat")
-    encrypted_secret = store.get_integration_secret(connection.gateway_id)
-    if encrypted_secret and not _gateway_token_valid(http_request):
-        raise HTTPException(status_code=401, detail="Gateway authentication required to receive router credentials")
-    metrics.increment("openshield_gateway_heartbeats_total")
-    try:
-        openwrt_config = _gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {
-        "status": "acknowledged",
-        "gateway_id": connection.gateway_id,
-        "last_seen_at": connection.last_seen_at.isoformat(),
-        "openwrt_config": openwrt_config,
-        "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
-    }
-
-
-@app.post("/api/v1/gateway/commands/{gateway_id}/{command_id}/result", tags=["gateway"])
-def report_gateway_command_result(
-    gateway_id: str, command_id: str, request: GatewayCommandResultRequest,
-    http_request: Request,
-) -> dict[str, object]:
-    command = store.get_gateway_command(command_id)
-    if command is None or command["gateway_id"] != gateway_id:
-        raise HTTPException(status_code=404, detail="Gateway command not found")
-    if store.get_integration_secret(gateway_id) and not _gateway_token_valid(http_request):
-        raise HTTPException(status_code=401, detail="Gateway authentication required")
-    try:
-        return process_gateway_command_result(
-            store, command_id, request.status, request.result,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/gateways", tags=["gateway"])
-def list_gateways() -> list[dict[str, object]]:
-    return gateway_connections.list_status()
-
-
-@app.get("/api/v1/gateways/{gateway_id}", tags=["gateway"])
-def get_gateway_status(gateway_id: str) -> dict[str, object]:
-    gateway = gateway_connections.get_status(gateway_id)
-    if gateway is None:
-        raise HTTPException(status_code=404, detail="Gateway not found")
-    return gateway
-
-
 def _require_enabled_ingestion(
     integration_id: str, enabled: bool, source: str,
 ) -> None:
@@ -2560,8 +2451,3 @@ def list_audit_records(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ) -> list[dict[str, object]]:
     return store.list_audit(limit)
-
-
-@app.get("/metrics", response_class=PlainTextResponse, tags=["metrics"], include_in_schema=False)
-def prometheus_metrics() -> PlainTextResponse:
-    return PlainTextResponse(metrics.render(), media_type="text/plain; version=0.0.4")
