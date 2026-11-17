@@ -56,15 +56,12 @@ def test_health_endpoints_are_public_and_readiness_checks_database() -> None:
 
 
 def test_all_credential_and_diagnostics_routes_disable_caching() -> None:
-    from fastapi.routing import APIRoute
-
     sensitive_routes = [
-        (method, route.path)
-        for route in app.routes
-        if isinstance(route, APIRoute)
-        and route.path.endswith(("-credentials", "-diagnostics"))
-        for method in route.methods or ()
-        if method in {"GET", "PUT", "PATCH", "POST", "DELETE"}
+        (method.upper(), path)
+        for path, operations in app.openapi()["paths"].items()
+        if path.endswith(("-credentials", "-diagnostics"))
+        for method in operations
+        if method.upper() in {"GET", "PUT", "PATCH", "POST", "DELETE"}
     ]
     assert sensitive_routes
 
