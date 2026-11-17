@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from openshield.api.routers.gateway import create_gateway_router
-from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
@@ -204,7 +204,6 @@ def test_integration_connection_router_is_independently_testable() -> None:
     registry.update("sensor-lab", IntegrationUpdate(enabled=False))
     assert client.post("/api/v1/integrations/sensor-lab/test").status_code == 409
     assert client.post("/api/v1/integrations/missing/test").status_code == 404
-
 
 
 def test_integration_credentials_router_is_independently_testable() -> None:
