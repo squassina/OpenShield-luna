@@ -19,7 +19,11 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError
 from openshield.api.routers.gateway import create_gateway_router
+from openshield.api.routers.health import create_health_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
+from openshield.api.routers.integration_tests import create_integration_test_router
+from openshield.api.routers.integrations import create_integrations_router
+from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.schemas import (
     AdGuardCredentials as AdGuardCredentials,
     AIProviderCredentials as AIProviderCredentials,
@@ -34,10 +38,6 @@ from openshield.api.schemas import (
     ThreatIntelCredentials as ThreatIntelCredentials,
     WazuhCredentials as WazuhCredentials,
 )
-from openshield.api.routers.health import create_health_router
-from openshield.api.routers.integration_tests import create_integration_test_router
-from openshield.api.routers.integrations import create_integrations_router
-from openshield.api.routers.metrics import create_metrics_router
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
@@ -54,18 +54,15 @@ from openshield.execution.service import (
 from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
-from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
-from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
+from openshield.integrations.grafana import GrafanaAdapter
 from openshield.integrations.misp import MispClient, MispError
-from openshield.integrations.models import IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
-from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
-from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
-from openshield.integrations.pfsense import PfSenseAdapter, PfSenseClient, PfSenseError
-from openshield.integrations.prometheus import PrometheusAdapter, PrometheusClient, PrometheusError
+from openshield.integrations.opnsense import OPNsenseAdapter
+from openshield.integrations.pfsense import PfSenseAdapter
+from openshield.integrations.prometheus import PrometheusAdapter
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.integrations.threat_intel import ThreatIntelAdapter
-from openshield.integrations.wazuh import WazuhAdapter, WazuhClient, WazuhError
+from openshield.integrations.wazuh import WazuhAdapter
 from openshield.policy.engine import (
     create_policy,
     enforcement_enabled,
