@@ -6,6 +6,7 @@ from openshield.core.request_limits import RequestBodyLimitMiddleware
 
 MAX_BODY_BYTES = 5 * 1024 * 1024
 INGESTION_PATHS = [
+    "/api/v1/events",
     "/api/v1/sensors/sensor-lab/events",
     "/api/v1/dns/pihole-lab/queries",
 ]
