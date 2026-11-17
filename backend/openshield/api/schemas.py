@@ -79,3 +79,40 @@ class IncidentStatusRequest(BaseModel):
 
 class ThreatIntelEnrichRequest(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+
+class PolicyCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    enabled: bool = True
+    indicator_type: Literal["ip", "domain"]
+    indicator_value: str = Field(min_length=3, max_length=253)
+    action: Literal["block_ip", "block_domain"]
+    integration_id: str = Field(min_length=2, max_length=64)
+    min_risk_score: int = Field(ge=0, le=100)
+    autonomy_level: int = Field(ge=0, le=3, default=0)
+    ttl_seconds: int = Field(ge=60, le=86400, default=3600)
+    require_approval: bool = True
+    direction: Literal["source", "destination"] = "destination"
+
+
+class PolicyUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
+    min_risk_score: int | None = Field(default=None, ge=0, le=100)
+    autonomy_level: int | None = Field(default=None, ge=0, le=3)
+    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
+    require_approval: bool | None = None
+    direction: Literal["source", "destination"] | None = None
+
+
+class PolicyEvaluationRequest(BaseModel):
+    policy_id: str = Field(min_length=2, max_length=64)
+
+
+class PolicyDecisionRejectionRequest(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class EmergencyStopRequest(BaseModel):
+    active: bool
