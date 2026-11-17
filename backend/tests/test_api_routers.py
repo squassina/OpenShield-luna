@@ -14,6 +14,7 @@ from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.inventory import create_inventory_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.routers.policy_execution import create_policy_execution_router
+from openshield.api.routers.privacy import create_privacy_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.integrations.models import (
     Integration,
@@ -579,3 +580,116 @@ def test_events_router_is_independently_testable() -> None:
         "openshield_events_ingested_total",
         "openshield_events_ingested_total",
     ]
+
+
+
+def test_privacy_router_is_independently_testable() -> None:
+    class PrivacyStore(FakeStore):
+        def __init__(self) -> None:
+            self.events = []
+            self.audits = []
+            self.overrides = {}
+            self.privacy_lists = []
+
+        def write_audit(self, action, actor_id, target_id, details):
+            self.audits.append((action, actor_id, target_id, details))
+
+        def list_privacy_classification_overrides(self):
+            return dict(self.overrides)
+
+        def insert_event(self, event):
+            if any(item.event_id == event.event_id for item in self.events):
+                return False
+            self.events.append(event)
+            return True
+
+        def privacy_source_stats(self):
+            return {}
+
+        def privacy_domain_stats(self, days, limit):
+            assert days == 30
+            assert limit == 100
+            return []
+
+        def privacy_client_stats(self, days, limit):
+            assert days == 30
+            assert limit == 100
+            return []
+
+        def privacy_trends(self, days):
+            assert days == 30
+            return []
+
+        def upsert_privacy_classification_override(self, domain, action, reason):
+            self.overrides[domain] = {
+                "domain": domain, "action": action, "reason": reason,
+            }
+
+        def delete_privacy_classification_override(self, domain):
+            return self.overrides.pop(domain, None) is not None
+
+        def list_privacy_lists(self, integration_id=None):
+            return [
+                item for item in self.privacy_lists
+                if integration_id is None or item["integration_id"] == integration_id
+            ]
+
+        def upsert_privacy_list(self, integration_id, list_type, domain, comment):
+            self.privacy_lists.append({
+                "integration_id": integration_id, "list_type": list_type,
+                "domain": domain, "comment": comment,
+            })
+
+        def delete_privacy_list_item(self, integration_id, list_type, domain):
+            before = len(self.privacy_lists)
+            self.privacy_lists = [
+                item for item in self.privacy_lists
+                if (item["integration_id"], item["list_type"], item["domain"])
+                != (integration_id, list_type, domain)
+            ]
+            return len(self.privacy_lists) != before
+
+    store = PrivacyStore()
+    registry = IntegrationRegistry()
+    registry.register(IntegrationRegistration(
+        integration_id="pihole-home",
+        kind="pihole",
+        display_name="Home DNS",
+    ))
+    app = FastAPI()
+    app.include_router(create_privacy_router(
+        store=store,
+        registry=registry,
+        metrics=FakeMetrics(),
+    ))
+    client = TestClient(app)
+
+    ingested = client.post("/api/v1/dns/pihole-home/queries", json=[{
+        "timestamp": datetime.now(UTC).isoformat(),
+        "domain": "ads.doubleclick.net",
+        "client": "192.168.1.20",
+        "status": "blocked",
+    }])
+    assert ingested.status_code == 202
+    assert ingested.json() == {"accepted": 1, "duplicates": 0, "received": 1}
+    assert client.get("/api/v1/privacy/sources").json()[0]["status"] == "no_data"
+    assert client.get("/api/v1/privacy/analytics/domains?days=30").json() == []
+    assert client.get("/api/v1/privacy/analytics/domains?days=0").status_code == 422
+
+    override = client.put(
+        "/api/v1/privacy/classifications/overrides/example.com",
+        json={"action": "allow", "reason": "trusted"},
+    )
+    assert override.status_code == 200
+    assert override.json()["action"] == "allow"
+    assert client.get("/api/v1/privacy/classifications/overrides").json()["example.com"]["reason"] == "trusted"
+    assert client.delete("/api/v1/privacy/classifications/overrides/example.com").status_code == 204
+
+    added = client.post("/api/v1/privacy/lists", json={
+        "list_type": "block", "domain": "Ads.DoubleClick.NET.", "comment": "tracker",
+    })
+    assert added.status_code == 201
+    assert added.json()["domain"] == "ads.doubleclick.net"
+    assert client.get("/api/v1/privacy/lists").json()[0]["list_type"] == "block"
+    assert client.delete("/api/v1/privacy/lists/block/ads.doubleclick.net").status_code == 204
+    assert client.delete("/api/v1/privacy/lists/block/ads.doubleclick.net").status_code == 404
