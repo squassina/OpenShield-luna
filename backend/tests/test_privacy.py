@@ -1375,3 +1375,27 @@ def test_dns_database_failure_aborts_cycle_and_replays_without_cursor_loss(
     }
     assert retry[1]["status"] == "ok"
     assert len(client.get("/api/v1/events?event_type=privacy.dns.query").json()["items"]) == 1
+
+ 
+ 
+def test_cname_tracker_classification_uses_label_suffix_membership(monkeypatch) -> None:
+    from openshield.privacy import dns
+
+    class MembershipOnlySet(set):
+        def __iter__(self):
+            raise AssertionError("classification must not scan the tracker feed")
+
+    monkeypatch.setattr(dns, "CNAME_TRACKERS", MembershipOnlySet({"tracker.example"}))
+
+    exact = dns.classify_domain_metadata(
+        "site.example", cname_targets=["tracker.example"],
+    )
+    nested = dns.classify_domain_metadata(
+        "site.example", cname_targets=["edge.eu.tracker.example"],
+    )
+    unrelated = dns.classify_domain_metadata(
+        "site.example", cname_targets=["nottracker.example"],
+    )
+
+    assert exact["category"] == nested["category"] == "tracker"
+    assert unrelated["category"] == "unclassified"
