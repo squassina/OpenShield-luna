@@ -14,6 +14,7 @@ from openshield.api.routers.integration_tests import create_integration_test_rou
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.inventory import create_inventory_router
 from openshield.api.routers.metrics import create_metrics_router
+from openshield.api.routers.openwrt_diagnostics import create_openwrt_diagnostics_router
 from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.privacy import create_privacy_router
 from openshield.api.routers.reports import create_reports_router
@@ -772,3 +773,66 @@ def test_audit_router_is_independently_testable() -> None:
     assert store.requested_limits[-1] == 100
     assert client.get("/api/v1/audit?limit=0").status_code == 422
     assert client.get("/api/v1/audit?limit=501").status_code == 422
+
+
+
+def test_openwrt_diagnostics_router_is_independently_testable() -> None:
+    now = datetime.now(UTC)
+
+    class OpenWrtStore(FakeStore):
+        def __init__(self) -> None:
+            self.events = {}
+
+        def list_events(self, integration_id, event_type, *, limit):
+            assert integration_id == "router-1"
+            assert limit == 1
+            return self.events.get(event_type, [])
+
+    class OpenWrtRegistry:
+        def __init__(self, *, rpc_configured=True):
+            self.item = SimpleNamespace(
+                integration_id="router-1",
+                kind="openwrt",
+                config={"rpc_configured": rpc_configured},
+            )
+
+        def get(self, integration_id):
+            return self.item if integration_id == "router-1" else None
+
+    store = OpenWrtStore()
+    connections = FakeGatewayConnections()
+    app = FastAPI()
+    app.include_router(create_openwrt_diagnostics_router(
+        store=store,
+        registry=OpenWrtRegistry(),
+        gateway_connections=connections,
+    ))
+    client = TestClient(app)
+
+    assert client.get("/api/v1/integrations/missing/test").status_code == 404
+    assert client.get("/api/v1/integrations/router-1/test").json()["status"] == "connector_disconnected"
+
+    store.events["gateway.health"] = [SimpleNamespace(
+        observed_at=now, payload={"status": "reachable"},
+    )]
+    store.events["gateway.discovery"] = [SimpleNamespace(
+        observed_at=now, payload={"board": {"hostname": "router"}},
+    )]
+    connected = client.get("/api/v1/integrations/router-1/test")
+    assert connected.status_code == 200
+    assert connected.json()["status"] == "router_rpc_connected"
+    assert connected.json()["router"]["board"]["hostname"] == "router"
+    assert connected.json()["last_rpc_check_age_seconds"] <= 90
+
+    store.events["gateway.health"] = [SimpleNamespace(
+        observed_at=now - timedelta(minutes=5), payload={"status": "reachable"},
+    )]
+    assert client.get("/api/v1/integrations/router-1/test").json()["status"] == "router_rpc_stale"
+
+    store.events["gateway.health"] = [SimpleNamespace(
+        observed_at=now, payload={"status": "unavailable"},
+    )]
+    assert client.get("/api/v1/integrations/router-1/test").json()["status"] == "router_rpc_failed"
+
+    store.events["gateway.health"] = []
+    assert client.get("/api/v1/integrations/router-1/test").json()["status"] == "connector_connected"
