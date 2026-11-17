@@ -20,8 +20,8 @@ from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
-from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.integration_tests import create_integration_test_router
+from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
