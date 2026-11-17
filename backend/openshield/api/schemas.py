@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
@@ -70,5 +72,5 @@ class AIInvestigationRequest(BaseModel):
 
 
 class IncidentStatusRequest(BaseModel):
-    status: str = Field(pattern=r"^(open|acknowledged|closed|false_positive)$")
+    status: Literal["open", "acknowledged", "closed", "false_positive"]
     reason: str = Field(default="", max_length=500)
