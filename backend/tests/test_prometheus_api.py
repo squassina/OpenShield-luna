@@ -2,6 +2,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api import main
+from openshield.api.routers import integration_tests
 from openshield.core.secrets import SecretStore
 
 client = TestClient(main.app)
@@ -54,8 +55,6 @@ def test_prometheus_credentials_are_encrypted_and_diagnostics_are_read_only(monk
                     "targets_down": 0, "targets_limit": 100,
                 },
             }
-
-    from openshield.api.routers import integration_tests
 
     monkeypatch.setattr(main, "PrometheusClient", FakePrometheusClient)
     monkeypatch.setattr(integration_tests, "PrometheusClient", FakePrometheusClient)
