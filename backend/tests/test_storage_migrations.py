@@ -149,7 +149,8 @@ def test_upgrade_from_v1_backfills_typed_event_timestamps_and_indexes(
         for item in statements
     )
     assert any(
-        "pg_input_is_valid(payload->>'occurred_at'" in item
+        "pg_input_is_valid(" in item
+        and "payload->>'occurred_at'" in item
         and "ELSE received_at" in item
         for item in statements
     )
