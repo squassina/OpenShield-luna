@@ -154,6 +154,8 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <p id="integration-dialog-kind"></p>
       <label>Display name<input id="edit-display-name" required maxlength="120"></label>
       <label id="edit-url-label">Service URL<input id="edit-base-url" type="url"></label>
+      <label id="edit-model-label" hidden>AI model<input id="edit-model" maxlength="120" autocomplete="off"></label>
+      <label id="edit-cloud-label" hidden><input id="edit-cloud-enabled" type="checkbox"> Allow sanitized cloud data (explicit consent)</label>
       <label id="edit-ca-bundle-label" hidden>Custom CA bundle path (inside Node container)<input id="edit-ca-bundle-path" placeholder="/run/openshield/ca/pihole-ca.pem" autocomplete="off"></label>
       <label id="edit-dns-username-label" hidden>AdGuard username<input id="edit-dns-username" autocomplete="username"></label>
       <label id="edit-dns-password-label" hidden>Provider password<input id="edit-dns-password" type="password" autocomplete="new-password"></label>
@@ -471,11 +473,18 @@ function editIntegration(item) {
   editingIntegrationId=item.integration_id;
   $("integration-dialog-kind").textContent=item.kind+" · "+item.integration_id;
   $("edit-display-name").value=item.display_name;
-  const hasUrl=["pihole","adguard"].includes(item.kind);
+  const hasUrl=["pihole","adguard","misp","ollama"].includes(item.kind);
   $("edit-url-label").hidden=!hasUrl;
   $("edit-base-url").required=hasUrl;
   $("edit-base-url").value=(item.config&&item.config.base_url)||"";
-  $("edit-ca-bundle-label").hidden=!hasUrl;
+  const hasModel=["ollama","openai"].includes(item.kind);
+  $("edit-model-label").hidden=!hasModel;
+  $("edit-model").required=hasModel;
+  $("edit-model").value=(item.config&&item.config.model)||"";
+  const hasCloudConsent=item.kind==="openai";
+  $("edit-cloud-label").hidden=!hasCloudConsent;
+  $("edit-cloud-enabled").checked=hasCloudConsent && item.config&&item.config.cloud_enabled===true;
+  $("edit-ca-bundle-label").hidden=!["pihole","adguard"].includes(item.kind);
   $("edit-ca-bundle-path").value=(item.config&&item.config.ca_bundle_path)||"";
   const isDns=["pihole","adguard"].includes(item.kind);
   $("edit-dns-username-label").hidden=item.kind!=="adguard";
@@ -962,11 +971,18 @@ $("integration-edit-form").addEventListener("submit",async event=>{
   const item=(await api("/api/v1/integrations")).find(x=>x.integration_id===editingIntegrationId);
   if(!item){showNotice("Integration no longer exists.",true);$("integration-dialog").close();return;}
   const payload={display_name:$("edit-display-name").value.trim()};
+  const hasUrl=["pihole","adguard","misp","ollama"].includes(item.kind);
+  const hasModel=["ollama","openai"].includes(item.kind);
+  if(hasUrl || hasModel || item.kind==="openai") {
+    payload.config={...(item.config||{})};
+    if(hasUrl) payload.config.base_url=$("edit-base-url").value.trim();
+    if(hasModel) payload.config.model=$("edit-model").value.trim();
+    if(item.kind==="openai") payload.config.cloud_enabled=$("edit-cloud-enabled").checked;
+  }
   if(["pihole","adguard"].includes(item.kind)) {
-    payload.config={...item.config,base_url:$("edit-base-url").value.trim()};
     const caBundlePath=$("edit-ca-bundle-path").value.trim();
-    if(caBundlePath) payload.config.ca_bundle_path=caBundlePath;
-    else delete payload.config.ca_bundle_path;
+    if(caBundlePath) payload.config={...(payload.config||item.config||{}),ca_bundle_path:caBundlePath};
+    else if(payload.config) delete payload.config.ca_bundle_path;
   }
   const button=event.submitter;button.disabled=true;
   try {
@@ -1006,7 +1022,7 @@ $("service-kind").addEventListener("change",()=>{
       :needsKey
         ?"Enter the provider API key. It is encrypted at rest and never returned by integration APIs. MISP also requires its base URL."
         :needsUrl
-          ?"Enter the DNS provider base URL. Provider credentials remain in server environment variables."
+          ?"Enter the DNS provider base URL. Credentials can be stored encrypted in the dashboard."
           :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
 });
 $("service-kind").dispatchEvent(new Event("change"));
