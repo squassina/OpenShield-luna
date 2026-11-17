@@ -178,7 +178,7 @@ def test_provider_sync_endpoint_ingests_pulled_records() -> None:
         "timestamp": datetime.now(UTC).isoformat(),
         "status": "blocked",
     }
-    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
+    with patch("openshield.api.routers.integration_tests.fetch_dns_records", return_value=[record]):
         response = client.post("/api/v1/privacy/sources/pihole-home/sync")
     assert response.status_code == 202
     assert response.json() == {"accepted": 1, "duplicates": 0, "received": 1}
@@ -386,7 +386,7 @@ def test_dns_integration_connection_test_does_not_ingest_records() -> None:
     register_dns()
     record = {"domain": "example.org", "client": "192.168.1.20",
               "timestamp": datetime.now(UTC).isoformat(), "status": "allowed"}
-    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
+    with patch("openshield.api.routers.integration_tests.fetch_dns_records", return_value=[record]):
         response = client.post("/api/v1/integrations/pihole-home/test")
     assert response.status_code == 200
     assert response.json() == {
@@ -399,7 +399,7 @@ def test_dns_integration_connection_test_does_not_ingest_records() -> None:
 def test_dns_integration_connection_test_reports_provider_failure() -> None:
     from openshield.privacy.providers import DnsProviderError
     register_dns()
-    with patch("openshield.api.main.fetch_dns_records", side_effect=DnsProviderError("unreachable")):
+    with patch("openshield.api.routers.integration_tests.fetch_dns_records", side_effect=DnsProviderError("unreachable")):
         response = client.post("/api/v1/integrations/pihole-home/test")
     assert response.status_code == 502
     assert response.json()["detail"] == "unreachable"
