@@ -460,6 +460,7 @@ def test_openwrt_credentials_unwrap_secret_before_rpc_validation(monkeypatch, ca
     from cryptography.fernet import Fernet
 
     from openshield.api import main
+    from openshield.api.routers import integration_credentials
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
     monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "connector-test-token")
@@ -470,7 +471,7 @@ def test_openwrt_credentials_unwrap_secret_before_rpc_validation(monkeypatch, ca
         received.update(base_url=base_url, username=username, password=password)
         return object()
 
-    monkeypatch.setattr(main, "OpenWrtRPCClient", fake_rpc_client)
+    monkeypatch.setattr(integration_credentials, "OpenWrtRPCClient", fake_rpc_client)
     secret = "router-secret-value"
     response = client.put(
         "/api/v1/integrations/home-gateway/openwrt-credentials",
@@ -837,6 +838,7 @@ def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
     from cryptography.fernet import Fernet
 
     from openshield.api import main
+    from openshield.api.routers import integration_credentials
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -879,7 +881,7 @@ def test_opnsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
                 "arp": {"rows": []},
             }
 
-    monkeypatch.setattr(main, "OPNsenseClient", FakeOPNsenseClient)
+    monkeypatch.setattr(integration_credentials, "OPNsenseClient", FakeOPNsenseClient)
     diagnostics = client.get("/api/v1/integrations/opnsense-home/opnsense-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.json()["status"] == "connected"
@@ -894,7 +896,7 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
     from cryptography.fernet import Fernet
 
     from openshield.api import main
-    from openshield.api.routers import integration_tests
+    from openshield.api.routers import integration_credentials, integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -943,7 +945,7 @@ def test_pfsense_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
             assert path == "/api/v2/status/system"
             return {"hostname": "pfsense"}
 
-    monkeypatch.setattr(main, "PfSenseClient", FakePfSenseClient)
+    monkeypatch.setattr(integration_credentials, "PfSenseClient", FakePfSenseClient)
     monkeypatch.setattr(integration_tests, "PfSenseClient", FakePfSenseClient)
     diagnostics = client.get("/api/v1/integrations/pfsense-home/pfsense-diagnostics")
     assert diagnostics.status_code == 200
@@ -968,7 +970,7 @@ def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
     from cryptography.fernet import Fernet
 
     from openshield.api import main
-    from openshield.api.routers import integration_tests
+    from openshield.api.routers import integration_credentials, integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -1029,7 +1031,7 @@ def test_crowdsec_credentials_are_encrypted_and_diagnostics_are_read_only(monkey
                 },
             }
 
-    monkeypatch.setattr(main, "CrowdSecClient", FakeCrowdSecClient)
+    monkeypatch.setattr(integration_credentials, "CrowdSecClient", FakeCrowdSecClient)
     monkeypatch.setattr(integration_tests, "CrowdSecClient", FakeCrowdSecClient)
     diagnostics = client.get(
         "/api/v1/integrations/crowdsec-home/crowdsec-diagnostics"
@@ -1084,7 +1086,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
     from cryptography.fernet import Fernet
 
     from openshield.api import main
-    from openshield.api.routers import integration_tests
+    from openshield.api.routers import integration_credentials, integration_tests
     from openshield.core.secrets import SecretStore
 
     monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
@@ -1147,7 +1149,7 @@ def test_wazuh_credentials_are_encrypted_and_diagnostics_are_read_only(monkeypat
                 },
             }
 
-    monkeypatch.setattr(main, "WazuhClient", FakeWazuhClient)
+    monkeypatch.setattr(integration_credentials, "WazuhClient", FakeWazuhClient)
     monkeypatch.setattr(integration_tests, "WazuhClient", FakeWazuhClient)
     diagnostics = client.get("/api/v1/integrations/wazuh-home/wazuh-diagnostics")
     assert diagnostics.status_code == 200
