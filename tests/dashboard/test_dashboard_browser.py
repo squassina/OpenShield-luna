@@ -199,6 +199,7 @@ def test_integration_editor_exposes_misp_ollama_and_openai_settings(
     expect(page.locator("#edit-model-label")).to_be_hidden()
     page.locator("#edit-base-url").fill("https://misp-new.example")
     page.locator("#integration-edit-form").get_by_role("button", name="Save changes").click()
+    expect(page.locator("#notice")).to_contain_text("Integration updated.")
     expect(integrations).to_contain_text("MISP")
     misp = next(item for item in mock["state"]["integrations"] if item["integration_id"] == "misp-home")
     assert misp["config"] == {"base_url": "https://misp-new.example", "region": "local"}
@@ -211,6 +212,7 @@ def test_integration_editor_exposes_misp_ollama_and_openai_settings(
     page.locator("#edit-base-url").fill("http://ollama-new.lan:11434")
     page.locator("#edit-model").fill("qwen3")
     page.locator("#integration-edit-form").get_by_role("button", name="Save changes").click()
+    expect(page.locator("#notice")).to_contain_text("Integration updated.")
     ollama = next(item for item in mock["state"]["integrations"] if item["integration_id"] == "ollama-home")
     assert ollama["config"]["base_url"] == "http://ollama-new.lan:11434"
     assert ollama["config"]["model"] == "qwen3"
@@ -222,6 +224,7 @@ def test_integration_editor_exposes_misp_ollama_and_openai_settings(
     expect(page.locator("#edit-cloud-enabled")).not_to_be_checked()
     page.locator("#edit-model").fill("gpt-4.1")
     page.locator("#integration-edit-form").get_by_role("button", name="Save changes").click()
+    expect(page.locator("#notice")).to_contain_text("Integration updated.")
     openai = next(item for item in mock["state"]["integrations"] if item["integration_id"] == "openai-home")
     assert openai["config"]["model"] == "gpt-4.1"
     assert openai["config"]["cloud_enabled"] is False
@@ -229,5 +232,6 @@ def test_integration_editor_exposes_misp_ollama_and_openai_settings(
     openai_row.get_by_role("button", name="Edit").click()
     page.locator("#edit-cloud-enabled").check()
     page.locator("#integration-edit-form").get_by_role("button", name="Save changes").click()
+    expect(page.locator("#notice")).to_contain_text("Integration updated.")
     assert openai["config"]["cloud_enabled"] is True
     assert page.page_errors == []
