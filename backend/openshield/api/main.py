@@ -394,7 +394,7 @@ app.include_router(
 )
 
 
-@app.get("/api/v1/integrations//{integration_id}/test", tags=["integrations"])
+@app.get("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
 def test_openwrt_connector(integration_id: str) -> dict[str, object]:
     integration = registry.get(integration_id)
     if integration is None or integration.kind != "openwrt":
