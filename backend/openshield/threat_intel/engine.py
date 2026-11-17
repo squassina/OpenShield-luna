@@ -11,6 +11,7 @@ from openshield.integrations.models import Integration
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.privacy.dns import normalize_domain
 from openshield.threat_intel.providers import (
+    ThreatIntelIndicatorError,
     ThreatIntelProviderError,
     lookup_crowdsec,
     lookup_misp,
@@ -210,11 +211,18 @@ def enrich_events(
                     store, integration, secret, indicator_type, indicator_value,
                 )
                 lookups += 1
+            except ThreatIntelIndicatorError:
+                errors.append({
+                    "integration_id": integration.integration_id,
+                    "error": "invalid_indicator",
+                    "scope": "indicator",
+                })
             except (ThreatIntelProviderError, ValueError):
                 failed_providers.add(integration.integration_id)
                 errors.append({
                     "integration_id": integration.integration_id,
                     "error": "provider_lookup_failed",
+                    "scope": "provider",
                 })
         if not any(_matched(item) for item in evidence.values()):
             continue
