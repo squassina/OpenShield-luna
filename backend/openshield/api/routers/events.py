@@ -18,6 +18,7 @@ def create_events_router(
     registry: IntegrationRegistry,
     metrics: MetricsRegistry,
     gateway_token_valid: Callable[[Request], bool],
+    sensor_token_valid: Callable[[str, Request], bool],
 ) -> APIRouter:
     router = APIRouter()
 
@@ -90,10 +91,19 @@ def create_events_router(
     def ingest_sensor_events(
         integration_id: str,
         records: Annotated[list[dict[str, Any]], Body()],
+        request: Request,
     ) -> dict[str, object]:
         integration = registry.get(integration_id)
         if integration is None or integration.kind not in {"suricata", "zeek"}:
             raise HTTPException(status_code=404, detail="Network sensor integration not found")
+        if not sensor_token_valid(integration_id, request):
+            store.write_audit(
+                "sensor.ingestion.authentication_failed",
+                None,
+                integration_id,
+                {"source": "sensor_events"},
+            )
+            raise HTTPException(status_code=401, detail="Sensor authentication required")
         require_enabled_ingestion(integration_id, integration.enabled, "sensor_events")
         try:
             events = normalize_sensor_batch(integration.kind, records, integration_id)
