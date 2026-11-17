@@ -1,6 +1,4 @@
 import hashlib
-import os
-
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
