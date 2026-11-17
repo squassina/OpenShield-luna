@@ -10,12 +10,12 @@ from openshield.api.schemas import (
     PolicyEvaluationRequest,
     PolicyUpdateRequest,
 )
-from openshield.core.storage import PostgresStore
 from openshield.execution.service import (
     ExecutionError,
     approve_decision,
     reject_decision,
 )
+from openshield.core.storage import PostgresStore
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.policy.engine import (
