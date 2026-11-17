@@ -47,26 +47,26 @@ def test_download_reads_complete_body_in_bounded_chunks(monkeypatch) -> None:
 
 def test_download_rejects_oversized_body_while_streaming(monkeypatch) -> None:
     response = FakeResponse(b"x" * 11)
-    monkeypatch.setitem(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
 
     with pytest.raises(RuntimeError, match="exceeds the configured size limit"):
-        FEED_UPDATER["download"]("https://feed.example/data", 10)
+        FEED_UPDATER.download("https://feed.example/data", 10)
 
 
 def test_download_rejects_truncated_content_length(monkeypatch) -> None:
     response = FakeResponse(b"short", {"Content-Length": "10"})
-    monkeypatch.setitem(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
 
     with pytest.raises(RuntimeError, match="truncated"):
-        FEED_UPDATER["download"]("https://feed.example/data", 100)
+        FEED_UPDATER.download("https://feed.example/data", 100)
 
 
 def test_download_rejects_oversized_content_length_before_reading(monkeypatch) -> None:
     response = FakeResponse(b"", {"Content-Length": "101"})
-    monkeypatch.setitem(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
 
     with pytest.raises(RuntimeError, match="exceeds the configured size limit"):
-        FEED_UPDATER["download"]("https://feed.example/data", 100)
+        FEED_UPDATER.download("https://feed.example/data", 100)
     assert response.read_sizes == []
 
 
@@ -98,7 +98,7 @@ def test_feed_parser_requires_complete_metadata_and_minimum_valid_domains() -> N
 )
 def test_feed_parser_rejects_incomplete_or_malformed_payloads(payload: bytes) -> None:
     with pytest.raises(RuntimeError):
-        FEED_UPDATER["_parse_feed"](payload)
+        FEED_UPDATER._parse_feed(payload)
 
 
 def test_download_limit_is_configurable_and_bounded(monkeypatch) -> None:
@@ -107,8 +107,8 @@ def test_download_limit_is_configurable_and_bounded(monkeypatch) -> None:
 
     monkeypatch.setenv("OPENSHIELD_CNAME_TRACKER_MAX_BYTES", "not-a-number")
     with pytest.raises(RuntimeError, match="must be an integer"):
-        FEED_UPDATER["_download_limit"]()
+        FEED_UPDATER._download_limit()
 
     monkeypatch.setenv("OPENSHIELD_CNAME_TRACKER_MAX_BYTES", "999999999")
     with pytest.raises(RuntimeError, match="between 1024"):
-        FEED_UPDATER["_download_limit"]()
+        FEED_UPDATER._download_limit()
