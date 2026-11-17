@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import os
 import secrets
 import threading
@@ -414,6 +415,21 @@ app.include_router(
         gateway_token_valid=_gateway_token_valid,
     )
 )
+
+
+def _require_enabled_ingestion(integration_id: str, enabled: bool, source: str) -> None:
+    if enabled:
+        return
+    store.write_audit(
+        "integration.ingestion.rejected",
+        None,
+        integration_id,
+        {"source": source, "reason": "integration_disabled"},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Integration is disabled; new ingestion is rejected",
+    )
 
 
 @app.get("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
