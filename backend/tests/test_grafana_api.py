@@ -52,7 +52,10 @@ def test_grafana_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
                 "summary": {"dashboards_returned": 1, "dashboards_limit": 100},
             }
 
+    from openshield.api.routers import integration_tests
+
     monkeypatch.setattr(main, "GrafanaClient", FakeGrafanaClient)
+    monkeypatch.setattr(integration_tests, "GrafanaClient", FakeGrafanaClient)
     diagnostics = client.get("/api/v1/integrations/grafana-home/grafana-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
