@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from openshield.api.routers.audit import create_audit_router
 from openshield.api.routers.events import create_events_router
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
@@ -743,3 +744,31 @@ def test_reports_router_is_independently_testable() -> None:
     assert report["audit"] == {"recent_records": 1, "limit": 25}
     assert report["generated_at"]
     assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
+
+
+
+def test_audit_router_is_independently_testable() -> None:
+    class AuditStore(FakeStore):
+        def __init__(self) -> None:
+            self.requested_limits = []
+
+        def list_audit(self, limit):
+            self.requested_limits.append(limit)
+            return [{"action": "integration.created"}, {"action": "event.ingested"}]
+
+    store = AuditStore()
+    app = FastAPI()
+    app.include_router(create_audit_router(store=store))
+    client = TestClient(app)
+
+    response = client.get("/api/v1/audit?limit=25")
+    assert response.status_code == 200
+    assert response.json() == [
+        {"action": "integration.created"},
+        {"action": "event.ingested"},
+    ]
+    assert store.requested_limits == [25]
+    assert client.get("/api/v1/audit").status_code == 200
+    assert store.requested_limits[-1] == 100
+    assert client.get("/api/v1/audit?limit=0").status_code == 422
+    assert client.get("/api/v1/audit?limit=501").status_code == 422
