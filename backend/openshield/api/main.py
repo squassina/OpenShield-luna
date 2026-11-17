@@ -328,7 +328,6 @@ app.include_router(
         metrics=metrics,
         gateway_openwrt_config=_gateway_openwrt_config,
         gateway_token_valid=_gateway_token_valid,
-        sensor_token_valid=_sensor_token_valid,
     )
 )
 adapters = {
@@ -413,6 +412,7 @@ app.include_router(
         registry=registry,
         metrics=metrics,
         gateway_token_valid=_gateway_token_valid,
+        sensor_token_valid=_sensor_token_valid,
     )
 )
 
