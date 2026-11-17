@@ -1,4 +1,4 @@
-import runpy
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -7,7 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if not (ROOT / "scripts").is_dir():
     ROOT = ROOT.parent
 SCRIPT = ROOT / "scripts" / "update_cname_tracker_feed.py"
-FEED_UPDATER = runpy.run_path(str(SCRIPT))
+SPEC = importlib.util.spec_from_file_location("update_cname_tracker_feed", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+FEED_UPDATER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(FEED_UPDATER)
 
 
 class FakeResponse:
@@ -33,9 +36,9 @@ class FakeResponse:
 def test_download_reads_complete_body_in_bounded_chunks(monkeypatch) -> None:
     payload = b"x" * 150_000
     response = FakeResponse(payload, {"Content-Length": str(len(payload))})
-    monkeypatch.setitem(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(FEED_UPDATER, "urlopen", lambda *_args, **_kwargs: response)
 
-    result = FEED_UPDATER["download"]("https://feed.example/data", 200_000)
+    result = FEED_UPDATER.download("https://feed.example/data", 200_000)
 
     assert result == payload
     assert len(response.read_sizes) > 1
@@ -75,7 +78,7 @@ def test_feed_parser_requires_complete_metadata_and_minimum_valid_domains() -> N
         + "\n".join(domains)
     ).encode()
 
-    parsed, updated_at = FEED_UPDATER["_parse_feed"](payload)
+    parsed, updated_at = FEED_UPDATER._parse_feed(payload)
 
     assert parsed == sorted(domains)
     assert len(parsed) == 60
@@ -100,7 +103,7 @@ def test_feed_parser_rejects_incomplete_or_malformed_payloads(payload: bytes) ->
 
 def test_download_limit_is_configurable_and_bounded(monkeypatch) -> None:
     monkeypatch.setenv("OPENSHIELD_CNAME_TRACKER_MAX_BYTES", "4096")
-    assert FEED_UPDATER["_download_limit"]() == 4096
+    assert FEED_UPDATER._download_limit() == 4096
 
     monkeypatch.setenv("OPENSHIELD_CNAME_TRACKER_MAX_BYTES", "not-a-number")
     with pytest.raises(RuntimeError, match="must be an integer"):
