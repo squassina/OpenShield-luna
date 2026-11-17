@@ -1727,13 +1727,13 @@ CREATE TABLE IF NOT EXISTS events (
                 WITH observations AS (
                     SELECT
                         COALESCE(payload #>> '{payload,src_ip}', payload #>> '{payload,id.orig_h}') AS address,
-                        occurred_at AS occurred_at,
+                        occurred_at,
                         COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
                     FROM events
                     UNION ALL
                     SELECT
                         COALESCE(payload #>> '{payload,dest_ip}', payload #>> '{payload,id.resp_h}') AS address,
-                        occurred_at AS occurred_at,
+                        occurred_at,
                         COALESCE(payload #>> '{payload,proto}', payload #>> '{payload,app_proto}', 'unknown') AS protocol
                     FROM events
                 )
@@ -1777,7 +1777,7 @@ CREATE TABLE IF NOT EXISTS events (
                         ) AS protocol,
                         payload #>> '{source,integration_id}' AS integration_id,
                         payload->>'event_type' AS event_type,
-                        occurred_at AS occurred_at
+                        occurred_at
                     FROM events
                 )
                 SELECT source, target, protocol, COUNT(*),
@@ -1824,7 +1824,7 @@ CREATE TABLE IF NOT EXISTS events (
                         COALESCE(payload #>> '{payload,proto}', 'unknown') AS protocol,
                         payload #>> '{source,integration_id}' AS integration_id,
                         payload->>'event_type' AS event_type,
-                        occurred_at AS occurred_at
+                        occurred_at
                     FROM events
                     UNION ALL
                     SELECT
@@ -1839,7 +1839,7 @@ CREATE TABLE IF NOT EXISTS events (
                         COALESCE(payload #>> '{payload,proto}', 'unknown') AS protocol,
                         payload #>> '{source,integration_id}' AS integration_id,
                         payload->>'event_type' AS event_type,
-                        occurred_at AS occurred_at
+                        occurred_at
                     FROM events
                 )
                 SELECT original, translated, protocol, COUNT(*),
