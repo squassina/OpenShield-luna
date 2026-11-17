@@ -1215,7 +1215,9 @@ def test_misp_credentials_are_encrypted_and_sync_indicators(monkeypatch):
         "indicator_type": "domain",
         "value": "stale.example",
     }])
-    monkeypatch.setattr(main.MispClient, "search_indicators", lambda self, limit: indicators)
+    from openshield.api.routers import threat_intel as threat_intel_router
+
+    monkeypatch.setattr(threat_intel_router.MispClient, "search_indicators", lambda self, limit: indicators)
     synced = client.post("/api/v1/integrations/misp-lab/misp-sync?limit=50")
     assert synced.status_code == 200
     assert synced.json()["stored"] == 1

@@ -74,3 +74,8 @@ class AIInvestigationRequest(BaseModel):
 class IncidentStatusRequest(BaseModel):
     status: Literal["open", "acknowledged", "closed", "false_positive"]
     reason: str = Field(default="", max_length=500)
+
+
+
+class ThreatIntelEnrichRequest(BaseModel):
+    event_ids: list[str] = Field(min_length=1, max_length=100)

@@ -11,6 +11,7 @@ from openshield.api.routers.integration_credentials import create_integration_cr
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
+from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.integrations.models import (
     Integration,
     IntegrationRegistration,
@@ -251,3 +252,36 @@ def test_incidents_router_is_independently_testable() -> None:
         json={"status": "closed", "reason": "test"},
     ).status_code == 404
     assert client.get("/api/v1/incidents?status=invalid").status_code == 422
+
+
+
+def test_threat_intel_router_is_independently_testable() -> None:
+    class ThreatIntelStore(FakeStore):
+        def list_threat_indicators(self, *, integration_id=None, limit=200):
+            assert integration_id == "misp-lab"
+            assert limit == 25
+            return [{"indicator_id": "ioc-1", "value": "198.51.100.1"}]
+
+    app = FastAPI()
+    app.include_router(create_threat_intel_router(
+        store=ThreatIntelStore(),
+        registry=FakeRegistry(),
+        ssl_context_kwargs=lambda _integration, _url: {},
+        enrich=lambda _store, _registry, event_ids: {"event_ids": event_ids},
+    ))
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/threat-intel/indicators?integration_id=misp-lab&limit=25"
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{"indicator_id": "ioc-1", "value": "198.51.100.1"}],
+        "count": 1,
+    }
+    enriched = client.post(
+        "/api/v1/threat-intel/enrich",
+        json={"event_ids": ["event-1", "event-1", "event-2"]},
+    )
+    assert enriched.status_code == 200
+    assert enriched.json() == {"event_ids": ["event-1", "event-2"]}
