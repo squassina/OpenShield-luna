@@ -1,5 +1,6 @@
-import os
 from collections.abc import Callable
+
+import os
 
 from fastapi import APIRouter, HTTPException
 
