@@ -69,7 +69,6 @@ def create_integration_credentials_router(
         }))
         return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
 
-
     @router.delete("/api/v1/integrations/{integration_id}/opnsense-credentials", tags=["integrations"])
     def delete_opnsense_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -80,7 +79,6 @@ def create_integration_credentials_router(
             **integration.config, "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/opnsense-diagnostics", tags=["integrations"])
     def opnsense_diagnostics(integration_id: str) -> dict[str, object]:
@@ -103,7 +101,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=422, detail="Stored OPNsense credentials are invalid") from exc
         except OPNsenseError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-
 
     @router.put("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
     def save_pfsense_credentials(
@@ -128,7 +125,6 @@ def create_integration_credentials_router(
         }))
         return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
 
-
     @router.delete("/api/v1/integrations/{integration_id}/pfsense-credentials", tags=["integrations"])
     def delete_pfsense_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -139,7 +135,6 @@ def create_integration_credentials_router(
             **integration.config, "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/pfsense-diagnostics", tags=["integrations"])
     def pfsense_diagnostics(integration_id: str) -> dict[str, object]:
@@ -161,7 +156,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=422, detail="Stored pfSense credentials are invalid") from exc
         except PfSenseError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-
 
     @router.put("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
     def save_crowdsec_credentials(
@@ -210,7 +204,6 @@ def create_integration_credentials_router(
             "alerts_auth_configured": bool(machine_id),
         }
 
-
     @router.delete("/api/v1/integrations/{integration_id}/crowdsec-credentials", tags=["integrations"])
     def delete_crowdsec_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -223,7 +216,6 @@ def create_integration_credentials_router(
             "alerts_auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/crowdsec-diagnostics", tags=["integrations"])
     def crowdsec_diagnostics(integration_id: str) -> dict[str, object]:
@@ -253,7 +245,6 @@ def create_integration_credentials_router(
         except CrowdSecError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-
     @router.put("/api/v1/integrations/{integration_id}/misp-credentials", tags=["integrations"])
     def save_misp_credentials(
         integration_id: str, credentials: MispCredentials
@@ -278,7 +269,6 @@ def create_integration_credentials_router(
         }))
         return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
 
-
     @router.delete("/api/v1/integrations/{integration_id}/misp-credentials", tags=["integrations"])
     def delete_misp_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -289,7 +279,6 @@ def create_integration_credentials_router(
             **integration.config, "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/misp-diagnostics", tags=["integrations"])
     def misp_diagnostics(integration_id: str) -> dict[str, object]:
@@ -315,7 +304,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=422, detail="Stored MISP credentials are invalid") from exc
         except MispError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-
 
     @router.put("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
     def save_wazuh_credentials(
@@ -344,7 +332,6 @@ def create_integration_credentials_router(
         }))
         return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted"}
 
-
     @router.delete("/api/v1/integrations/{integration_id}/wazuh-credentials", tags=["integrations"])
     def delete_wazuh_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -356,7 +343,6 @@ def create_integration_credentials_router(
             "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/wazuh-diagnostics", tags=["integrations"])
     def wazuh_diagnostics(integration_id: str) -> dict[str, object]:
@@ -385,7 +371,6 @@ def create_integration_credentials_router(
         except WazuhError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-
     @router.put("/api/v1/integrations/{integration_id}/prometheus-credentials", tags=["integrations"])
     def save_prometheus_credentials(
         integration_id: str, credentials: PrometheusCredentials
@@ -409,7 +394,6 @@ def create_integration_credentials_router(
         return {"status": "saved", "integration_id": integration_id, "secret_storage": "encrypted",
                 "authentication": "bearer" if token else "none"}
 
-
     @router.delete("/api/v1/integrations/{integration_id}/prometheus-credentials", tags=["integrations"])
     def delete_prometheus_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -420,7 +404,6 @@ def create_integration_credentials_router(
             **integration.config, "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/prometheus-diagnostics", tags=["integrations"])
     def prometheus_diagnostics(integration_id: str) -> dict[str, object]:
@@ -442,7 +425,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=422, detail="Stored Prometheus configuration is invalid") from exc
         except PrometheusError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-
 
     @router.put("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
     def save_grafana_credentials(
@@ -474,7 +456,6 @@ def create_integration_credentials_router(
             "authentication": "bearer" if token else "none",
         }
 
-
     @router.delete("/api/v1/integrations/{integration_id}/grafana-credentials", tags=["integrations"])
     def delete_grafana_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -486,7 +467,6 @@ def create_integration_credentials_router(
             "auth_configured": False,
         }))
         return Response(status_code=204)
-
 
     @router.get("/api/v1/integrations/{integration_id}/grafana-diagnostics", tags=["integrations"])
     def grafana_diagnostics(integration_id: str) -> dict[str, object]:
@@ -514,7 +494,6 @@ def create_integration_credentials_router(
         except GrafanaError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-
     @router.put("/api/v1/integrations/{integration_id}/ai-credentials", tags=["integrations"])
     def save_ai_credentials(
         integration_id: str, credentials: AIProviderCredentials
@@ -539,7 +518,6 @@ def create_integration_credentials_router(
             "credentials_configured": True, "secret_storage": "encrypted",
         }
 
-
     @router.delete("/api/v1/integrations/{integration_id}/ai-credentials", status_code=204, tags=["integrations"])
     def delete_ai_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -547,7 +525,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=404, detail="OpenAI integration not found")
         store.delete_integration_secret(integration_id)
         return Response(status_code=204)
-
 
     @router.put("/api/v1/integrations/{integration_id}/threat-intel-credentials", tags=["integrations"])
     def save_threat_intel_credentials(
@@ -579,7 +556,6 @@ def create_integration_credentials_router(
             "credentials_configured": True, "secret_storage": "encrypted",
         }
 
-
     @router.delete("/api/v1/integrations/{integration_id}/threat-intel-credentials", status_code=204, tags=["integrations"])
     def delete_threat_intel_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -587,7 +563,6 @@ def create_integration_credentials_router(
             raise HTTPException(status_code=404, detail="Threat intelligence integration not found")
         store.delete_integration_secret(integration_id)
         return Response(status_code=204)
-
 
     @router.put("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
     def save_openwrt_credentials(
@@ -638,7 +613,6 @@ def create_integration_credentials_router(
             "message": "Credentials are encrypted at rest and delivered only to the authenticated gateway connector.",
         }
 
-
     @router.delete("/api/v1/integrations/{integration_id}/openwrt-credentials", tags=["integrations"])
     def delete_openwrt_credentials(integration_id: str) -> Response:
         integration = registry.get(integration_id)
@@ -653,7 +627,6 @@ def create_integration_credentials_router(
             }),
         )
         return Response(status_code=204)
-
 
     @router.put("/api/v1/integrations/{integration_id}/dns-provider-credentials", tags=["integrations"])
     def save_dns_provider_credentials(integration_id: str, credentials: PiHoleCredentials | AdGuardCredentials) -> dict[str, object]:
@@ -671,7 +644,6 @@ def create_integration_credentials_router(
         except SecretConfigurationError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"status": "saved", "integration_id": integration_id, "credentials_configured": True, "secret_storage": "encrypted"}
-
 
     @router.delete("/api/v1/integrations/{integration_id}/dns-provider-credentials", status_code=204, tags=["integrations"])
     def delete_dns_provider_credentials(integration_id: str) -> Response:
