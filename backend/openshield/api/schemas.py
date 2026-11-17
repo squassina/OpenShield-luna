@@ -81,7 +81,6 @@ class ThreatIntelEnrichRequest(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=100)
 
 
-
 class PolicyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
