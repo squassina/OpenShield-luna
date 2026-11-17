@@ -1,6 +1,6 @@
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
