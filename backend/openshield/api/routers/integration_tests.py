@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import os
+from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException
 
