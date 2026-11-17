@@ -435,7 +435,6 @@ app.include_router(
     create_incidents_router(
         store=store,
         registry=registry,
-        investigate=investigate_incident,
     )
 )
 
