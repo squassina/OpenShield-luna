@@ -112,7 +112,7 @@ def test_failed_migration_does_not_record_version_or_mark_schema_ready(
 
     database.fail_on = None
     store.ensure_schema()
-    assert database.version == 1
+    assert database.version == 2
     assert store._schema_ready is True
 
 
@@ -125,7 +125,7 @@ def test_legacy_database_without_migration_history_runs_baseline(
 
     store.ensure_schema()
 
-    assert database.version == 1
+    assert database.version == 2
     assert any(
         "CREATE TABLE IF NOT EXISTS integrations" in item
         for item in database.applied_statements
