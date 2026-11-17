@@ -24,9 +24,9 @@ from openshield.api.routers.integration_tests import create_integration_test_rou
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.schemas import (
+    AdGuardCredentials,
     AIInvestigationRequest,
     AIProviderCredentials,
-    AdGuardCredentials,
     CrowdSecCredentials,
     GrafanaCredentials,
     IncidentStatusRequest,
