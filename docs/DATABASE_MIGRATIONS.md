@@ -18,6 +18,12 @@ creates `schema_migrations`, runs the baseline `CREATE TABLE/INDEX IF NOT EXISTS
 statements, and records version 1. Existing rows and persistent volumes are not
 deleted or recreated.
 
+Migration version 2 adds `events.occurred_at TIMESTAMPTZ`, backfills it from
+the event payload (falling back to `received_at` for invalid legacy values), and
+replaces the standalone event-type index with a composite event-type/occurrence-time
+index. New event writes populate the typed column directly; privacy analytics use
+typed timestamp predicates instead of casting JSONB values.
+
 Do not delete the PostgreSQL volume to upgrade the schema. Back up the database
 using the normal PostgreSQL backup procedure before upgrading production systems.
 
