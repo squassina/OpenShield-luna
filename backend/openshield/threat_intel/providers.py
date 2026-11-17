@@ -3,10 +3,11 @@ import json
 import ssl
 from datetime import UTC, datetime
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 from urllib.request import Request
 
 from openshield.core.http import safe_urlopen as urlopen
+from openshield.integrations.misp import MispClient, MispError
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
@@ -109,68 +110,23 @@ def lookup_misp(
     base_url: str, api_key: str, indicator_type: str, indicator_value: str,
     ssl_context: ssl.SSLContext | None = None,
 ) -> dict[str, object]:
-    parsed = urlsplit(base_url)
-    if (
-        parsed.scheme not in {"http", "https"} or not parsed.netloc
-        or parsed.username or parsed.password or parsed.query or parsed.fragment
-    ):
-        raise ValueError("MISP base URL must be an absolute HTTP(S) URL without credentials")
     if not api_key:
         raise ThreatIntelProviderError("MISP API key is not configured")
-    result = _request(
-        f"{base_url.rstrip('/')}/attributes/restSearch",
-        method="POST",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": api_key,
-        },
-        body={"returnFormat": "json", "value": indicator_value, "limit": 50, "page": 1},
-        ssl_context=ssl_context,
-    )
-    response = result.get("response", result) if isinstance(result, dict) else result
-    if isinstance(response, dict):
-        attributes = response.get("Attribute", response.get("attributes", []))
-        if not attributes and isinstance(response.get("response"), list):
-            attributes = response["response"]
-    else:
-        attributes = response
-    if not isinstance(attributes, list):
-        attributes = []
-    normalized = []
-    for item in attributes[:50]:
-        if not isinstance(item, dict):
-            continue
-        attribute = item.get("Attribute") if isinstance(item.get("Attribute"), dict) else item
-        event = item.get("Event") if isinstance(item.get("Event"), dict) else {}
-        tags = attribute.get("Tag") or event.get("Tag") or []
-        tag_names = [
-            tag.get("name") for tag in tags
-            if isinstance(tag, dict) and isinstance(tag.get("name"), str)
-        ] if isinstance(tags, list) else []
-        to_ids = attribute.get("to_ids") in {True, "1", "true"}
-        try:
-            threat_level_id = int(event.get("threat_level_id", 4))
-        except (TypeError, ValueError):
-            threat_level_id = 4
-        normalized.append({
-            "attribute_id": str(attribute.get("id", "")),
-            "type": str(attribute.get("type", "")),
-            "value": str(attribute.get("value", indicator_value)),
-            "to_ids": to_ids,
-            "category": str(attribute.get("category", "")),
-            "event_id": str(event.get("id", attribute.get("event_id", ""))),
-            "event_info": str(event.get("info", ""))[:256],
-            "threat_level_id": threat_level_id,
-            "tags": tag_names[:20],
-            "timestamp": str(attribute.get("timestamp", event.get("timestamp", ""))),
-        })
+    try:
+        client = MispClient(
+            base_url, api_key, timeout=8, ssl_context=ssl_context,
+        )
+        attributes = client.search_indicator_attributes(
+            indicator_type, indicator_value, limit=50,
+        )
+    except MispError as exc:
+        raise ThreatIntelProviderError("MISP lookup failed") from exc
     return {
         "provider": "misp",
         "indicator_type": indicator_type,
         "indicator_value": indicator_value,
-        "matched": bool(normalized),
-        "attributes": normalized,
+        "matched": bool(attributes),
+        "attributes": attributes,
         "source": "MISP REST API",
         "source_url": f"{base_url.rstrip('/')}/attributes/restSearch",
         "fetched_at": datetime.now(UTC).isoformat(),
