@@ -230,6 +230,11 @@ def test_incidents_router_is_independently_testable() -> None:
         def get_incident(self, _incident_id: str):
             return None
 
+        def update_incident_status(
+            self, _incident_id: str, _status: str, _reason: str = ""
+        ):
+            return None
+
     app = FastAPI()
     app.include_router(create_incidents_router(
         store=IncidentStore(),
