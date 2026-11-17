@@ -52,6 +52,11 @@ def normalize_domain(value: Any) -> str:
     raise ValueError("DNS query domain cannot be an IP address")
 
 
+def _is_cname_tracker(target: str) -> bool:
+    labels = target.split(".")
+    return any(".".join(labels[index:]) in CNAME_TRACKERS for index in range(len(labels)))
+
+
 def classify_domain_metadata(
     domain: str, override: dict[str, object] | None = None,
     cname_targets: list[str] | None = None,
@@ -73,7 +78,7 @@ def classify_domain_metadata(
     matched_cname = next(
         (
             target for target in (cname_targets or [])
-            if any(target == suffix or target.endswith("." + suffix) for suffix in CNAME_TRACKERS)
+            if _is_cname_tracker(target)
         ),
         None,
     )
