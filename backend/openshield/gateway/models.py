@@ -52,3 +52,9 @@ class GatewayConnection(BaseModel):
             connected_at=now,
             last_seen_at=now,
         )
+
+
+
+class GatewayCommandResultRequest(BaseModel):
+    status: Literal["completed", "failed"]
+    result: dict[str, object] = Field(default_factory=dict)
