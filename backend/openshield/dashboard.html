@@ -13,7 +13,7 @@ h1{font-size:22px;margin:0}h2{font-size:16px;margin:0 0 14px}p{margin:4px 0;colo
 .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}.metric{font-size:28px;font-weight:700;margin-top:5px}.metric-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
 .columns{display:grid;grid-template-columns:1.2fr .8fr;gap:14px;margin:14px 0}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}td{font-size:13px}.empty{color:var(--muted);padding:12px 0}.status{display:inline-block;padding:2px 8px;border-radius:20px;background:var(--panel2);font-size:12px}.healthy{color:var(--good)}.stale,.warning{color:var(--warn)}.error{color:var(--bad)}
 .bars{height:150px;display:flex;align-items:end;gap:5px;padding-top:10px}.bar-col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:end}.bar{width:100%;max-width:30px;background:#3288c8;border-radius:4px 4px 0 0;min-height:2px}.bar-label{font-size:10px;color:var(--muted)}
-form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline input{flex:1;min-width:150px}.actions{display:flex;gap:6px}.danger{border-color:#784848;color:var(--bad)}dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:min(460px,calc(100% - 32px));padding:20px}dialog::backdrop{background:#0009}dialog form{display:grid;gap:12px}dialog label{display:grid;gap:5px;color:var(--muted)}dialog input{width:100%}.notice{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.notice.error{border-color:#784848;color:var(--bad)}.notice[hidden]{display:none}
+form.inline{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}form.inline input{flex:1;min-width:150px}.actions{display:flex;gap:6px}.danger{border-color:#784848;color:var(--bad)}dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;width:min(460px,calc(100% - 32px));padding:20px}dialog::backdrop{background:#0009}dialog form{display:grid;gap:12px}dialog label{display:grid;gap:5px;color:var(--muted)}dialog label[hidden]{display:none}dialog input{width:100%}.notice{margin:12px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;color:var(--muted)}.notice.error{border-color:#784848;color:var(--bad)}.notice[hidden]{display:none}
 footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-size:12px}
 @media(max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.columns{grid-template-columns:1fr}}@media(max-width:520px){.grid{grid-template-columns:1fr 1fr}.metric{font-size:23px}header{align-items:flex-start}}
 .topology-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
@@ -154,6 +154,8 @@ footer{max-width:1240px;margin:auto;padding:0 20px 24px;color:var(--muted);font-
       <p id="integration-dialog-kind"></p>
       <label>Display name<input id="edit-display-name" required maxlength="120"></label>
       <label id="edit-url-label">Service URL<input id="edit-base-url" type="url"></label>
+      <label id="edit-model-label" hidden>AI model<input id="edit-model" maxlength="120" autocomplete="off"></label>
+      <label id="edit-cloud-label" hidden><input id="edit-cloud-enabled" type="checkbox"> Allow sanitized cloud data (explicit consent)</label>
       <label id="edit-ca-bundle-label" hidden>Custom CA bundle path (inside Node container)<input id="edit-ca-bundle-path" placeholder="/run/openshield/ca/pihole-ca.pem" autocomplete="off"></label>
       <label id="edit-dns-username-label" hidden>AdGuard username<input id="edit-dns-username" autocomplete="username"></label>
       <label id="edit-dns-password-label" hidden>Provider password<input id="edit-dns-password" type="password" autocomplete="new-password"></label>
@@ -471,11 +473,18 @@ function editIntegration(item) {
   editingIntegrationId=item.integration_id;
   $("integration-dialog-kind").textContent=item.kind+" · "+item.integration_id;
   $("edit-display-name").value=item.display_name;
-  const hasUrl=["pihole","adguard"].includes(item.kind);
+  const hasUrl=["pihole","adguard","misp","ollama"].includes(item.kind);
   $("edit-url-label").hidden=!hasUrl;
   $("edit-base-url").required=hasUrl;
   $("edit-base-url").value=(item.config&&item.config.base_url)||"";
-  $("edit-ca-bundle-label").hidden=!hasUrl;
+  const hasModel=["ollama","openai"].includes(item.kind);
+  $("edit-model-label").hidden=!hasModel;
+  $("edit-model").required=hasModel;
+  $("edit-model").value=(item.config&&item.config.model)||"";
+  const hasCloudConsent=item.kind==="openai";
+  $("edit-cloud-label").hidden=!hasCloudConsent;
+  $("edit-cloud-enabled").checked=hasCloudConsent && item.config&&item.config.cloud_enabled===true;
+  $("edit-ca-bundle-label").hidden=!["pihole","adguard"].includes(item.kind);
   $("edit-ca-bundle-path").value=(item.config&&item.config.ca_bundle_path)||"";
   const isDns=["pihole","adguard"].includes(item.kind);
   $("edit-dns-username-label").hidden=item.kind!=="adguard";
@@ -962,11 +971,18 @@ $("integration-edit-form").addEventListener("submit",async event=>{
   const item=(await api("/api/v1/integrations")).find(x=>x.integration_id===editingIntegrationId);
   if(!item){showNotice("Integration no longer exists.",true);$("integration-dialog").close();return;}
   const payload={display_name:$("edit-display-name").value.trim()};
+  const hasUrl=["pihole","adguard","misp","ollama"].includes(item.kind);
+  const hasModel=["ollama","openai"].includes(item.kind);
+  if(hasUrl || hasModel || item.kind==="openai") {
+    payload.config={...(item.config||{})};
+    if(hasUrl) payload.config.base_url=$("edit-base-url").value.trim();
+    if(hasModel) payload.config.model=$("edit-model").value.trim();
+    if(item.kind==="openai") payload.config.cloud_enabled=$("edit-cloud-enabled").checked;
+  }
   if(["pihole","adguard"].includes(item.kind)) {
-    payload.config={...item.config,base_url:$("edit-base-url").value.trim()};
     const caBundlePath=$("edit-ca-bundle-path").value.trim();
-    if(caBundlePath) payload.config.ca_bundle_path=caBundlePath;
-    else delete payload.config.ca_bundle_path;
+    if(caBundlePath) payload.config={...(payload.config||item.config||{}),ca_bundle_path:caBundlePath};
+    else if(payload.config) delete payload.config.ca_bundle_path;
   }
   const button=event.submitter;button.disabled=true;
   try {
@@ -1006,7 +1022,7 @@ $("service-kind").addEventListener("change",()=>{
       :needsKey
         ?"Enter the provider API key. It is encrypted at rest and never returned by integration APIs. MISP also requires its base URL."
         :needsUrl
-          ?"Enter the DNS provider base URL. Provider credentials remain in server environment variables."
+          ?"Enter the DNS provider base URL. Credentials can be stored encrypted in the dashboard."
           :"This sensor sends JSON events to OpenShield. Configure its exporter to use the endpoint shown after registration.";
 });
 $("service-kind").dispatchEvent(new Event("change"));
