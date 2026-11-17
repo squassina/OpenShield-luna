@@ -9,18 +9,17 @@ description = "OpenShield network security and privacy intelligence node"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115,<1.0",
-  "starlette>=0.46,<1.0",
-  "anyio>=4.1,<4.15",
+  "starlette>=1.3.1,<2.0",
   "uvicorn[standard]>=0.30,<1.0",
   "pydantic>=2.8,<3.0",
   "psycopg[binary,pool]>=3.2,<4.0",
-  "cryptography>=43,<47",
+  "cryptography>=50.0.0,<51.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.3,<9.0",
-  "httpx>=0.27,<1.0",
+  "pytest>=9.0.3,<10.0",
+  "httpx2>=2.0,<3.0",
   "ruff>=0.6,<1.0",
   "html5lib>=1.1,<2.0",
   "playwright>=1.49,<2.0",
