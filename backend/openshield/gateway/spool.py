@@ -51,7 +51,20 @@ class GatewayEventSpool:
             )
             connection.executemany(
                 "INSERT OR IGNORE INTO gateway_spool_counters (name, value) VALUES (?, 0)",
-                (("evicted_events",), ("coalesced_health_events",), ("dropped_events",)),
+                (
+                    ("evicted_events",),
+                    ("coalesced_health_events",),
+                    ("dropped_events",),
+                    ("pending_events",),
+                ),
+            )
+            # Reconcile once at startup so restarts recover the transactional count.
+            connection.execute(
+                """
+                UPDATE gateway_spool_counters
+                SET value = (SELECT COUNT(*) FROM pending_events)
+                WHERE name = 'pending_events'
+                """
             )
             connection.execute(
                 """
@@ -127,12 +140,21 @@ class GatewayEventSpool:
             (name,),
         )
 
+    @staticmethod
+    def _adjust_pending_count(connection: sqlite3.Connection, delta: int) -> None:
+        connection.execute(
+            "UPDATE gateway_spool_counters SET value = value + ? WHERE name = 'pending_events'",
+            (delta,),
+        )
+
     def enqueue(self, event: EventEnvelope) -> bool:
         payload_dict = event.model_dump(mode="json")
         payload = json.dumps(payload_dict, separators=(",", ":"))
         created_at = datetime.now(UTC).isoformat()
         full = False
         with self._connection() as connection:
+            # Serialize capacity checks with inserts/deletes across threads and processes.
+            connection.execute("BEGIN IMMEDIATE")
             if connection.execute(
                 "SELECT 1 FROM pending_events WHERE event_id = ?",
                 (event.event_id,),
@@ -140,7 +162,7 @@ class GatewayEventSpool:
                 return False
 
             count = int(connection.execute(
-                "SELECT COUNT(*) FROM pending_events"
+                "SELECT value FROM gateway_spool_counters WHERE name = 'pending_events'"
             ).fetchone()[0])
             if count >= self._max_events:
                 rows = connection.execute(
@@ -158,6 +180,7 @@ class GatewayEventSpool:
                         "DELETE FROM pending_events WHERE event_id = ?", (evict_id,)
                     )
                     self._increment_counter(connection, "evicted_events")
+                    self._adjust_pending_count(connection, -1)
                 else:
                     incoming_key = self._health_compaction_key(payload_dict)
                     compact_id = None
@@ -172,6 +195,7 @@ class GatewayEventSpool:
                             "DELETE FROM pending_events WHERE event_id = ?", (compact_id,)
                         )
                         self._increment_counter(connection, "coalesced_health_events")
+                        self._adjust_pending_count(connection, -1)
                     else:
                         self._increment_counter(connection, "dropped_events")
                         full = True
@@ -184,6 +208,7 @@ class GatewayEventSpool:
                     """,
                     (event.event_id, payload, created_at),
                 )
+                self._adjust_pending_count(connection, 1)
         if full:
             raise SpoolFullError(
                 "Gateway event spool is full; protected events were retained"
@@ -209,10 +234,13 @@ class GatewayEventSpool:
 
     def acknowledge(self, event_id: str) -> None:
         with self._connection() as connection:
-            connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
                 "DELETE FROM pending_events WHERE event_id = ?",
                 (event_id,),
             )
+            if cursor.rowcount:
+                self._adjust_pending_count(connection, -1)
 
     def enqueue_command_result(
         self, command_id: str, status: str, result: dict[str, object],
