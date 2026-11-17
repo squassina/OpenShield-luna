@@ -261,6 +261,4 @@ def create_integration_test_router(
             }
         raise HTTPException(status_code=400, detail="Connection test is not supported for this integration kind")
 
-
-
     return router
