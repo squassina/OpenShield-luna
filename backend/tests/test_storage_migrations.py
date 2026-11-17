@@ -85,7 +85,7 @@ def test_initial_schema_is_recorded_and_not_reapplied(
     store._schema_ready = False
     store.ensure_schema()
 
-    assert database.version == 1
+    assert database.version == 2
     assert migration_statements
     assert [
         statement
@@ -112,7 +112,7 @@ def test_failed_migration_does_not_record_version_or_mark_schema_ready(
 
     database.fail_on = None
     store.ensure_schema()
-    assert database.version == 1
+    assert database.version == 2
     assert store._schema_ready is True
 
 
@@ -125,18 +125,68 @@ def test_legacy_database_without_migration_history_runs_baseline(
 
     store.ensure_schema()
 
-    assert database.version == 1
+    assert database.version == 2
     assert any(
         "CREATE TABLE IF NOT EXISTS integrations" in item
         for item in database.applied_statements
     )
 
 
+def test_upgrade_from_v1_backfills_typed_event_timestamps_and_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 1
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    store.ensure_schema()
+
+    assert database.version == 2
+    statements = database.applied_statements
+    assert any(
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ" in item
+        for item in statements
+    )
+    assert any(
+        "pg_input_is_valid(" in item
+        and "payload->>'occurred_at'" in item
+        and "ELSE received_at" in item
+        for item in statements
+    )
+    assert any(
+        "ALTER TABLE events ALTER COLUMN occurred_at SET NOT NULL" in item
+        for item in statements
+    )
+    assert "DROP INDEX IF EXISTS events_event_type_idx" in statements
+    assert any(
+        "events_event_type_occurred_at_idx" in item
+        and "occurred_at DESC" in item
+        for item in statements
+    )
+
+
+def test_failed_timestamp_migration_rolls_back_version_and_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 1
+    database.fail_on = "ALTER TABLE events ADD COLUMN"
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    with pytest.raises(RuntimeError, match="simulated migration failure"):
+        store.ensure_schema()
+
+    assert database.version == 1
+    assert store._schema_ready is False
+
+
 def test_database_newer_than_application_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = FakeDatabase()
-    database.version = 2
+    database.version = 3
     install_fake_database(monkeypatch, database)
     store = storage.PostgresStore("postgresql://test")
 
