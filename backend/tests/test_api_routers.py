@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
 from openshield.api.routers.incidents import create_incidents_router
+from openshield.api.routers.events import create_events_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
@@ -471,3 +472,110 @@ def test_inventory_router_is_independently_testable() -> None:
     assert topology.json()["edges"][0]["direction"] == "outbound"
     assert topology.json()["relationships"][0]["relationship"] == "network_segment_membership"
     assert client.get("/api/v1/inventory/devices?limit=0").status_code == 422
+
+
+
+def test_events_router_is_independently_testable() -> None:
+    now = datetime.now(UTC)
+
+    class EventsStore(FakeStore):
+        def __init__(self) -> None:
+            self.events = []
+            self.audits = []
+            self.discovery = []
+
+        def write_audit(self, action, actor_id, target_id, details):
+            self.audits.append({
+                "action": action, "actor_id": actor_id,
+                "target_id": target_id, "details": details,
+            })
+
+        def insert_event(self, event):
+            if any(item.event_id == event.event_id for item in self.events):
+                return False
+            self.events.append(event)
+            return True
+
+        def record_gateway_discovery(self, integration_id, payload, observed_at):
+            self.discovery.append((integration_id, payload, observed_at))
+
+        def list_events_page(self, *, integration_id, event_type, severity, limit, cursor):
+            items = [
+                item for item in self.events
+                if (integration_id is None or item.source.integration_id == integration_id)
+                and (event_type is None or item.event_type == event_type)
+                and (severity is None or item.severity.value == severity)
+            ]
+            return items[:limit], None
+
+        def sensor_event_stats(self):
+            return {"sensor-1": {"last_observed_at": now, "events_seen": len(self.events)}}
+
+    class EventsRegistry(FakeRegistry):
+        def __init__(self) -> None:
+            super().__init__()
+            self.integrations = {
+                "router-1": SimpleNamespace(
+                    integration_id="router-1", kind="openwrt", enabled=True,
+                ),
+                "sensor-1": SimpleNamespace(
+                    integration_id="sensor-1", kind="suricata", enabled=True,
+                    display_name="Lab sensor",
+                ),
+            }
+
+        def get(self, integration_id):
+            return self.integrations.get(integration_id)
+
+        def list_all(self):
+            return list(self.integrations.values())
+
+    store = EventsStore()
+    registry = EventsRegistry()
+    metrics = FakeMetrics()
+    app = FastAPI()
+    app.include_router(create_events_router(
+        store=store,
+        registry=registry,
+        metrics=metrics,
+        gateway_token_valid=lambda request: request.headers.get("Authorization") == "Bearer gateway",
+    ))
+    client = TestClient(app)
+
+    event = {
+        "schema_version": "openshield.event.v1",
+        "event_id": "event-1",
+        "source": {"integration_id": "router-1", "kind": "openwrt"},
+        "event_type": "gateway.discovery",
+        "occurred_at": now.isoformat(),
+        "observed_at": now.isoformat(),
+        "severity": "info",
+        "payload": {"board": {"hostname": "router"}},
+    }
+    assert client.post("/api/v1/events", json=event).status_code == 401
+    accepted = client.post(
+        "/api/v1/events", json=event, headers={"Authorization": "Bearer gateway"},
+    )
+    assert accepted.status_code == 202
+    assert accepted.json() == {"status": "accepted", "event_id": "event-1"}
+    assert store.discovery[0][0] == "router-1"
+    assert client.post(
+        "/api/v1/events", json=event, headers={"Authorization": "Bearer gateway"},
+    ).json()["status"] == "duplicate"
+    assert client.get("/api/v1/events?integration_id=router-1").json()["items"][0]["event_id"] == "event-1"
+    assert client.get("/api/v1/events?cursor=invalid").status_code == 422
+
+    sensor = client.post("/api/v1/sensors/sensor-1/events", json=[{
+        "event_type": "flow", "timestamp": now.isoformat(),
+        "src_ip": "192.0.2.10", "dest_ip": "198.51.100.20",
+    }])
+    assert sensor.status_code == 202
+    assert sensor.json() == {"accepted": 1, "duplicates": 0, "received": 1}
+    health = client.get("/api/v1/sensors")
+    assert health.status_code == 200
+    assert health.json()[0]["status"] == "healthy"
+    assert health.json()[0]["events_seen"] == 2
+    assert metrics.counters == [
+        "openshield_events_ingested_total",
+        "openshield_events_ingested_total",
+    ]
