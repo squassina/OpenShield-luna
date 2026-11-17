@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -248,3 +250,67 @@ def test_enrichment_limits_unique_indicators_to_fifty(monkeypatch) -> None:
     assert result["indicators_considered"] == 50
     assert result["indicators_truncated"] == 10
     assert len(calls) == 50
+
+
+def test_expired_threat_intel_cache_is_deleted_in_bounded_batches() -> None:
+    from openshield.api import main
+
+    store = main.store
+    store.set_threat_intel_cache("cleanup-test", "ip", "198.51.100.1", {"expired": 1})
+    store.set_threat_intel_cache("cleanup-test", "ip", "198.51.100.2", {"expired": 2})
+    store.set_threat_intel_cache("cleanup-test", "ip", "198.51.100.3", {"active": 3})
+    with store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE threat_intel_cache
+            SET expires_at = NOW() - INTERVAL '1 minute'
+            WHERE provider = %s AND indicator_value IN (%s, %s)
+            """,
+            ("cleanup-test", "198.51.100.1", "198.51.100.2"),
+        )
+
+    assert store.expire_threat_intel_cache(limit=1) == 1
+    assert store.get_threat_intel_cache("cleanup-test", "ip", "198.51.100.3") == {"active": 3}
+    with store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM threat_intel_cache
+            WHERE provider = %s AND expires_at <= NOW()
+            """,
+            ("cleanup-test",),
+        )
+        assert cursor.fetchone()[0] == 1
+
+    assert store.expire_threat_intel_cache(limit=1) == 1
+    assert store.get_threat_intel_cache("cleanup-test", "ip", "198.51.100.3") == {"active": 3}
+
+
+def test_expiration_worker_runs_bounded_cache_cleanup_and_logs(
+    monkeypatch, caplog,
+) -> None:
+    from openshield.execution import worker
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.limits: list[int] = []
+
+        def expire_threat_intel_cache(self, limit: int) -> int:
+            self.limits.append(limit)
+            return 3
+
+    store = FakeStore()
+    monkeypatch.setattr(worker, "expire_due_executions", lambda *_args: None)
+
+    async def stop_after_first_cycle(_seconds: int) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker.asyncio, "sleep", stop_after_first_cycle)
+    caplog.set_level(logging.INFO, logger="openshield.execution.worker")
+
+    try:
+        asyncio.run(worker.run_expiration_loop(store, MagicMock(), interval_seconds=1))
+    except asyncio.CancelledError:
+        pass
+
+    assert store.limits == [500]
+    assert "Expired threat intelligence cache entries deleted count=3" in caplog.text

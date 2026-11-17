@@ -85,7 +85,7 @@ def test_initial_schema_is_recorded_and_not_reapplied(
     store._schema_ready = False
     store.ensure_schema()
 
-    assert database.version == 2
+    assert database.version == 3
     assert migration_statements
     assert [
         statement
@@ -112,7 +112,7 @@ def test_failed_migration_does_not_record_version_or_mark_schema_ready(
 
     database.fail_on = None
     store.ensure_schema()
-    assert database.version == 2
+    assert database.version == 3
     assert store._schema_ready is True
 
 
@@ -125,7 +125,7 @@ def test_legacy_database_without_migration_history_runs_baseline(
 
     store.ensure_schema()
 
-    assert database.version == 2
+    assert database.version == 3
     assert any(
         "CREATE TABLE IF NOT EXISTS integrations" in item
         for item in database.applied_statements
@@ -142,7 +142,7 @@ def test_upgrade_from_v1_backfills_typed_event_timestamps_and_indexes(
 
     store.ensure_schema()
 
-    assert database.version == 2
+    assert database.version == 3
     statements = database.applied_statements
     assert any(
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ" in item
@@ -182,11 +182,45 @@ def test_failed_timestamp_migration_rolls_back_version_and_statements(
     assert store._schema_ready is False
 
 
+def test_upgrade_from_v2_adds_threat_intel_cache_expiry_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 2
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    store.ensure_schema()
+
+    assert database.version == 3
+    assert any(
+        "threat_intel_cache_expires_at_idx" in item
+        and "ON threat_intel_cache (expires_at)" in item
+        for item in database.applied_statements
+    )
+
+
+def test_failed_cache_index_migration_rolls_back_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 2
+    database.fail_on = "threat_intel_cache_expires_at_idx"
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    with pytest.raises(RuntimeError, match="simulated migration failure"):
+        store.ensure_schema()
+
+    assert database.version == 2
+    assert store._schema_ready is False
+
+
 def test_database_newer_than_application_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = FakeDatabase()
-    database.version = 3
+    database.version = 4
     install_fake_database(monkeypatch, database)
     store = storage.PostgresStore("postgresql://test")
 

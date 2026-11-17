@@ -24,6 +24,11 @@ replaces the standalone event-type index with a composite event-type/occurrence-
 index. New event writes populate the typed column directly; privacy analytics use
 typed timestamp predicates instead of casting JSONB values.
 
+Migration version 3 adds an index on `threat_intel_cache.expires_at`.
+The background expiration worker removes expired cache entries in batches of at
+most 500 rows using row locks with `SKIP LOCKED`; concurrent refreshes are not
+deleted, and cleanup counts are logged when rows are removed.
+
 Do not delete the PostgreSQL volume to upgrade the schema. Back up the database
 using the normal PostgreSQL backup procedure before upgrading production systems.
 
