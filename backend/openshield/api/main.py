@@ -48,6 +48,7 @@ from openshield.api.schemas import (
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
+from openshield.core.rate_limits import RequestRateLimitMiddleware
 from openshield.core.request_limits import RequestBodyLimitMiddleware
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
@@ -115,6 +116,12 @@ async def database_pool_timeout_handler(_request: Request, _exc: PoolTimeout) ->
     )
 
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=5 * 1024 * 1024)
+app.add_middleware(
+    RequestRateLimitMiddleware,
+    ingestion_limit=int(os.getenv("OPENSHIELD_INGESTION_RATE_LIMIT", "120")),
+    credential_limit=int(os.getenv("OPENSHIELD_SENSOR_CREDENTIAL_RATE_LIMIT", "10")),
+    window_seconds=int(os.getenv("OPENSHIELD_RATE_LIMIT_WINDOW_SECONDS", "60")),
+)
 
 
 def _integration_ssl_context(integration, url: str):
