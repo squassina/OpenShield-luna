@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
       - name: Build application and validation images
         run: docker compose build openshield-node openshield-gateway-connector openshield-test openshield-lint openshield-browser-test
       - name: Verify previous encryption key is forwarded to Node
@@ -27,6 +28,10 @@ jobs:
           test "$(docker compose --profile gateway run --rm --no-deps openshield-gateway-connector id -u)" = "10001"
       - name: Lint
         run: docker compose run --rm openshield-lint
+      - name: Type check supported application modules
+        run: docker compose run --rm --no-deps openshield-lint mypy openshield/events/models.py openshield/gateway/models.py openshield/gateway/spool.py
+      - name: Audit installed Python dependencies
+        run: docker compose run --rm --no-deps openshield-lint pip-audit --strict --progress-spinner off
       - name: Test
         run: docker compose run --rm openshield-test
       - name: Dashboard browser tests
