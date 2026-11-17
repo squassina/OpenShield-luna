@@ -15,6 +15,7 @@ from openshield.api.routers.inventory import create_inventory_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.privacy import create_privacy_router
+from openshield.api.routers.reports import create_reports_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.integrations.models import (
     Integration,
@@ -693,3 +694,52 @@ def test_privacy_router_is_independently_testable() -> None:
     assert client.get("/api/v1/privacy/lists").json()[0]["list_type"] == "block"
     assert client.delete("/api/v1/privacy/lists/block/ads.doubleclick.net").status_code == 204
     assert client.delete("/api/v1/privacy/lists/block/ads.doubleclick.net").status_code == 404
+
+
+
+def test_reports_router_is_independently_testable() -> None:
+    class ReportsStore(FakeStore):
+        def list_incidents(self, *, limit):
+            assert limit == 25
+            return [{"status": "open"}, {"status": "closed"}, {"status": None}]
+
+        def list_policy_decisions(self, *, limit):
+            assert limit == 25
+            return [{"status": "pending_approval"}, {"status": "approved"}]
+
+        def list_response_executions(self, *, limit):
+            assert limit == 25
+            return [{"status": "succeeded"}, {"status": "failed"}]
+
+        def list_audit(self, limit):
+            assert limit == 25
+            return [{"action": "one"}]
+
+    class ReportsRegistry(FakeRegistry):
+        def list_all(self):
+            return [
+                SimpleNamespace(enabled=True),
+                SimpleNamespace(enabled=False),
+            ]
+
+    app = FastAPI()
+    app.include_router(create_reports_router(
+        store=ReportsStore(),
+        registry=ReportsRegistry(),
+        gateway_connections=FakeGatewayConnections(),
+    ))
+    client = TestClient(app)
+
+    response = client.get("/api/v1/reports/operations?limit=25")
+    assert response.status_code == 200
+    report = response.json()
+    assert report["sample_limit"] == 25
+    assert report["gateways"]["by_status"] == {"connected": 1}
+    assert report["integrations"] == {"total": 2, "enabled": 1, "disabled": 1}
+    assert report["incidents"]["by_status"] == {"open": 1, "closed": 1, "unknown": 1}
+    assert report["incidents"]["open"] == 1
+    assert report["policy_decisions"]["pending_approval"] == 1
+    assert report["executions"]["by_status"] == {"succeeded": 1, "failed": 1}
+    assert report["audit"] == {"recent_records": 1, "limit": 25}
+    assert report["generated_at"]
+    assert client.get("/api/v1/reports/operations?limit=501").status_code == 422
