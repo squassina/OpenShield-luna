@@ -36,6 +36,11 @@ class RequestRateLimitMiddleware:
         self._windows: dict[tuple[str, str], tuple[float, int]] = {}
         self._lock = threading.Lock()
 
+    def reset(self) -> None:
+        """Clear counters; intended for deterministic test isolation."""
+        with self._lock:
+            self._windows.clear()
+
     async def __call__(
         self,
         scope: dict[str, Any],
