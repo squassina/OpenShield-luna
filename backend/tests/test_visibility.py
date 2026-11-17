@@ -6,6 +6,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
+from rate_limit_helpers import reset_rate_limits
 from openshield.events.models import EventEnvelope, EventSource, Severity
 from openshield.visibility.normalizers import (
     normalize_sensor_batch,
@@ -21,6 +22,7 @@ def setup_function() -> None:
     os.environ["OPENSHIELD_GATEWAY_TOKEN"] = "connector-test-token"
     os.environ["OPENSHIELD_SECRET_KEY"] = Fernet.generate_key().decode()
     sensor_tokens.clear()
+    reset_rate_limits(app)
     from openshield.api import main
     main.store.reset()
 
