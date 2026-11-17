@@ -31,7 +31,6 @@ from openshield.integrations.prometheus import PrometheusClient, PrometheusError
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.integrations.wazuh import WazuhClient, WazuhError
 
-
 SSLContextKwargs = Callable[[Integration, str], dict[str, object]]
 
 
