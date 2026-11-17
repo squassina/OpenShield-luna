@@ -15,6 +15,7 @@ from openshield.execution.service import (
     approve_decision,
     reject_decision,
 )
+from openshield.core.storage import PostgresStore
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.registry import IntegrationRegistry
 from openshield.policy.engine import (
@@ -25,17 +26,31 @@ from openshield.policy.engine import (
 )
 
 
+PolicyCreator = Callable[
+    [PostgresStore, IntegrationRegistry, dict[str, object]], dict[str, object]
+]
+PolicyEvaluator = Callable[
+    [PostgresStore, IntegrationRegistry, str, str, GatewayConnectionRegistry],
+    dict[str, object],
+]
+DecisionApprover = Callable[
+    [PostgresStore, IntegrationRegistry, GatewayConnectionRegistry, str],
+    dict[str, object],
+]
+DecisionRejecter = Callable[[PostgresStore, str, str], dict[str, object]]
+
+
 def create_policy_execution_router(
     *,
-    store,
+    store: PostgresStore,
     registry: IntegrationRegistry,
     gateway_connections: GatewayConnectionRegistry,
-    create_policy_fn: Callable = create_policy,
-    evaluate_policy_fn: Callable = evaluate_policy,
-    approve_decision_fn: Callable = approve_decision,
-    reject_decision_fn: Callable = reject_decision,
-    enforcement_enabled_fn: Callable = enforcement_enabled,
-    max_autonomy_level_fn: Callable = max_autonomy_level,
+    create_policy_fn: PolicyCreator = create_policy,
+    evaluate_policy_fn: PolicyEvaluator = evaluate_policy,
+    approve_decision_fn: DecisionApprover = approve_decision,
+    reject_decision_fn: DecisionRejecter = reject_decision,
+    enforcement_enabled_fn: Callable[[], bool] = enforcement_enabled,
+    max_autonomy_level_fn: Callable[[], int] = max_autonomy_level,
 ) -> APIRouter:
     router = APIRouter()
 
