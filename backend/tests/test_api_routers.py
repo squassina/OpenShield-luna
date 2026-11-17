@@ -255,8 +255,6 @@ def test_incidents_router_is_independently_testable() -> None:
     assert client.get("/api/v1/incidents?status=invalid").status_code == 422
 
 
-
-
 def test_policy_execution_router_is_independently_testable() -> None:
     class PolicyStore(FakeStore):
         def __init__(self) -> None:
@@ -299,7 +297,10 @@ def test_policy_execution_router_is_independently_testable() -> None:
         },
         evaluate_policy_fn=lambda *_args: {"status": "observe_only"},
         approve_decision_fn=lambda *_args: {"status": "active"},
-        reject_decision_fn=lambda _store, _decision_id, reason: {"status": "rejected", "reason": reason},
+        reject_decision_fn=lambda _store, _decision_id, reason: {
+            "status": "rejected",
+            "reason": reason,
+        },
         enforcement_enabled_fn=lambda: True,
         max_autonomy_level_fn=lambda: 2,
     ))
@@ -323,7 +324,8 @@ def test_policy_execution_router_is_independently_testable() -> None:
     assert response.json()["policy_id"] == "policy-1"
     assert created[0]["name"] == payload["name"]
 
-    assert client.patch("/api/v1/policies/missing", json={"enabled": False}).status_code == 404
+    missing = client.patch("/api/v1/policies/missing", json={"enabled": False})
+    assert missing.status_code == 404
     assert client.patch("/api/v1/policies/policy-1", json={"enabled": False}).json() == {
         "policy_id": "policy-1", "enabled": False,
     }
@@ -331,7 +333,8 @@ def test_policy_execution_router_is_independently_testable() -> None:
     assert client.get("/api/v1/executions?limit=25").json() == []
     assert client.get("/api/v1/policy-decisions?limit=201").status_code == 422
 
-    assert client.post("/api/v1/control/emergency-stop", json={"active": False}).status_code == 200
+    stopped = client.post("/api/v1/control/emergency-stop", json={"active": False})
+    assert stopped.status_code == 200
     assert store.emergency_stop is False
     assert client.post("/api/v1/incidents/incident-1/evaluate", json={
         "policy_id": "policy-1",
