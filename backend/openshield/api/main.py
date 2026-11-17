@@ -46,7 +46,7 @@ from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.request_limits import RequestBodyLimitMiddleware
-from openshield.core.secrets import SecretConfigurationError, SecretStore
+from openshield.core.secrets import SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.execution.worker import run_expiration_loop
