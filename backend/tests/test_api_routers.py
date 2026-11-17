@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.incidents import create_incidents_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
@@ -217,3 +218,32 @@ def test_integration_credentials_router_is_independently_testable() -> None:
 
     response = client.delete("/api/v1/integrations/missing/opnsense-credentials")
     assert response.status_code == 404
+
+
+
+def test_incidents_router_is_independently_testable() -> None:
+    class IncidentStore(FakeStore):
+        def list_incidents(self, *, limit: int, status: str | None = None):
+            assert limit == 100
+            assert status is None
+            return []
+
+        def get_incident(self, _incident_id: str):
+            return None
+
+    app = FastAPI()
+    app.include_router(create_incidents_router(
+        store=IncidentStore(),
+        registry=IntegrationRegistry(),
+        investigate=lambda *_args: {"status": "investigated"},
+    ))
+    client = TestClient(app)
+
+    assert client.get("/api/v1/incidents").json() == []
+    assert client.get("/api/v1/incidents/missing").status_code == 404
+    assert client.get("/api/v1/incidents/missing/investigations").status_code == 404
+    assert client.patch(
+        "/api/v1/incidents/missing",
+        json={"status": "closed", "reason": "test"},
+    ).status_code == 404
+    assert client.get("/api/v1/incidents?status=invalid").status_code == 422
