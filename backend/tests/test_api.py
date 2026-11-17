@@ -1262,7 +1262,12 @@ def test_misp_credentials_are_encrypted_and_sync_indicators(monkeypatch):
     event["source"] = {"integration_id": "suricata-lab", "kind": "suricata"}
     event["event_type"] = "network.connection"
     event["payload"] = {"src_ip": "198.51.100.23", "dest_ip": "192.0.2.15"}
-    assert client.post("/api/v1/events", json=event).status_code == 202
+    sensor_token = client.put("/api/v1/sensors/suricata-lab/credentials").json()["token"]
+    assert client.post(
+        "/api/v1/events",
+        json=event,
+        headers={"Authorization": f"Bearer {sensor_token}"},
+    ).status_code == 202
     matches = client.get("/api/v1/threat-intel/matches").json()
     assert matches["count"] == 1
     assert matches["items"][0]["indicator"]["indicator_id"] == "misp-uuid-1"
@@ -1282,8 +1287,12 @@ def test_misp_sync_rejects_wrong_kind_and_disabled_integration():
     assert client.post("/api/v1/integrations/misp-disabled/misp-sync").status_code == 409
 
 
-def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
+def test_threat_match_does_not_match_domain_suffix_or_invalid_ip(monkeypatch):
+    from cryptography.fernet import Fernet
+
     from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
 
     created = client.post("/api/v1/integrations", json={
         "integration_id": "suricata-lab",
@@ -1300,7 +1309,12 @@ def test_threat_match_does_not_match_domain_suffix_or_invalid_ip():
     event = sample_event("domain-event", "suricata-lab")
     event["source"] = {"integration_id": "suricata-lab", "kind": "suricata"}
     event["payload"] = {"domain": "sub.evil.example"}
-    assert client.post("/api/v1/events", json=event).status_code == 202
+    sensor_token = client.put("/api/v1/sensors/suricata-lab/credentials").json()["token"]
+    assert client.post(
+        "/api/v1/events",
+        json=event,
+        headers={"Authorization": f"Bearer {sensor_token}"},
+    ).status_code == 202
     assert client.get("/api/v1/threat-intel/matches").json()["count"] == 0
 
 def test_operations_report_summarizes_multiple_gateways_and_bounded_state() -> None:
