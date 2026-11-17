@@ -23,6 +23,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      cache_from:
+        - type=gha,scope=openshield-runtime
+      cache_to:
+        - type=gha,scope=openshield-runtime,mode=max
     environment:
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
       OPENSHIELD_DB_POOL_MIN_SIZE: ${OPENSHIELD_DB_POOL_MIN_SIZE:-1}
@@ -65,6 +69,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+      cache_from:
+        - type=gha,scope=openshield-dev
+      cache_to:
+        - type=gha,scope=openshield-dev,mode=max
     profiles: ["tools"]
     environment:
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
@@ -80,6 +88,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+      cache_from:
+        - type=gha,scope=openshield-dev
+      cache_to:
+        - type=gha,scope=openshield-dev,mode=max
     profiles: ["tools"]
     command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
 
@@ -90,6 +102,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: browser-test
+      cache_from:
+        - type=gha,scope=openshield-browser-test
+      cache_to:
+        - type=gha,scope=openshield-browser-test,mode=max
     profiles: ["tools"]
     command: ["sh", "-c", "ruff check dashboard-tests && pytest -v dashboard-tests"]
 
@@ -100,6 +116,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      cache_from:
+        - type=gha,scope=openshield-runtime
+      cache_to:
+        - type=gha,scope=openshield-runtime,mode=max
     command: ["python", "-m", "openshield.gateway.agent"]
     environment:
       OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}

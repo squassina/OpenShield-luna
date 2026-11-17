@@ -1,5 +1,7 @@
 FROM python:3.12-slim AS base
 
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2,<27"
+
 WORKDIR /app
 COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/openshield ./openshield
