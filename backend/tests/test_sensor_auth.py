@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 from openshield.api.main import app
 from openshield.core.secrets import SecretStore
 
-
 client = TestClient(app)
 
 
