@@ -178,7 +178,7 @@ def test_provider_sync_endpoint_ingests_pulled_records() -> None:
         "timestamp": datetime.now(UTC).isoformat(),
         "status": "blocked",
     }
-    with patch("openshield.api.routers.integration_tests.fetch_dns_records", return_value=[record]):
+    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
         response = client.post("/api/v1/privacy/sources/pihole-home/sync")
     assert response.status_code == 202
     assert response.json() == {"accepted": 1, "duplicates": 0, "received": 1}
