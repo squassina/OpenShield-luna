@@ -16,16 +16,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from psycopg_pool import PoolTimeout
 from pydantic import BaseModel, Field
 
-from openshield.ai.orchestrator import investigate_incident
-from openshield.ai.providers import AIProviderError
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.incidents import create_incidents_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.schemas import (
+    AIInvestigationRequest,
     AdGuardCredentials,
+    IncidentStatusRequest,
     AIProviderCredentials,
     CrowdSecCredentials,
     GrafanaCredentials,
@@ -85,7 +86,7 @@ from openshield.threat_intel.engine import enrich_events
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
-__all__ = ["AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
+__all__ = ["AIInvestigationRequest", "AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "IncidentStatusRequest", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
 
 load_runtime_secrets(create=True)
 configure_logging()
@@ -362,15 +363,6 @@ class ThreatIntelEnrichRequest(BaseModel):
     event_ids: list[str] = Field(min_length=1, max_length=100)
 
 
-class IncidentStatusRequest(BaseModel):
-    status: Literal["open", "acknowledged", "closed", "false_positive"]
-    reason: str = Field(default="", max_length=500)
-
-
-class AIInvestigationRequest(BaseModel):
-    provider_id: str = Field(min_length=2, max_length=64)
-
-
 class PolicyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
@@ -436,6 +428,14 @@ app.include_router(
         store=store,
         registry=registry,
         ssl_context_kwargs=_integration_ssl_context_kwargs,
+    )
+)
+
+app.include_router(
+    create_incidents_router(
+        store=store,
+        registry=registry,
+        investigate=investigate_incident,
     )
 )
 
@@ -553,27 +553,6 @@ def list_threat_matches(
     }
 
 
-@app.post("/api/v1/incidents/{incident_id}/investigate", tags=["ai"])
-def investigate_incident_route(
-    incident_id: str, request: AIInvestigationRequest
-) -> dict[str, object]:
-    try:
-        return investigate_incident(store, registry, incident_id, request.provider_id)
-    except AIProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/incidents/{incident_id}/investigations", tags=["ai"])
-def list_incident_investigations(incident_id: str) -> list[dict[str, object]]:
-    if store.get_incident(incident_id) is None:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return store.list_incident_investigations(incident_id, limit=20)
-
-
 @app.post("/api/v1/threat-intel/enrich", tags=["threat-intelligence"])
 def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, object]:
     try:
@@ -582,37 +561,6 @@ def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, obj
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/incidents", tags=["incidents"])
-def list_incidents(
-    limit: Annotated[int, Query(ge=1, le=200)] = 100,
-    status: str | None = None,
-) -> list[dict[str, object]]:
-    if status is not None and status not in {"open", "acknowledged", "closed", "false_positive"}:
-        raise HTTPException(status_code=422, detail="Invalid incident status")
-    return store.list_incidents(limit=limit, status=status)
-
-
-@app.get("/api/v1/incidents/{incident_id}", tags=["incidents"])
-def get_incident(incident_id: str) -> dict[str, object]:
-    incident = store.get_incident(incident_id)
-    if incident is None:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return {
-        **incident,
-        "timeline": [event.model_dump(mode="json") for event in store.get_incident_events(incident_id)],
-    }
-
-
-@app.patch("/api/v1/incidents/{incident_id}", tags=["incidents"])
-def update_incident_status(
-    incident_id: str, request: IncidentStatusRequest
-) -> dict[str, object]:
-    incident = store.update_incident_status(incident_id, request.status, request.reason)
-    if incident is None:
-        raise HTTPException(status_code=404, detail="Incident not found")
-    return incident
 
 
 @app.get("/api/v1/policies", tags=["policy"])
