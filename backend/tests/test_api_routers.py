@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 
 
@@ -122,3 +123,50 @@ def test_gateway_router_is_independently_testable() -> None:
     assert client.get("/api/v1/gateways").json() == [
         {"gateway_id": "router-1", "status": "connected"},
     ]
+
+
+
+def test_integrations_router_is_independently_testable() -> None:
+    from openshield.integrations.registry import IntegrationRegistry
+
+    class ProbeAdapter:
+        def probe(self, integration):
+            return {"integration_id": integration.integration_id, "status": "configured"}
+
+    app = FastAPI()
+    app.include_router(create_integrations_router(
+        store=FakeStore(),
+        registry=IntegrationRegistry(),
+        adapters={"pihole": ProbeAdapter()},
+    ))
+    client = TestClient(app)
+
+    created = client.post("/api/v1/integrations", json={
+        "integration_id": "dns-home",
+        "kind": "pihole",
+        "display_name": "Home DNS",
+    })
+    assert created.status_code == 201
+    assert created.json()["integration_id"] == "dns-home"
+
+    listed = client.get("/api/v1/integrations")
+    assert listed.status_code == 200
+    assert listed.json()[0]["config"]["auth_configured"] is False
+
+    probed = client.get("/api/v1/integrations/dns-home/probe")
+    assert probed.status_code == 200
+    assert probed.json() == {
+        "integration_id": "dns-home",
+        "status": "configured",
+        "credentials_configured": False,
+    }
+
+    updated = client.patch("/api/v1/integrations/dns-home", json={
+        "display_name": "Updated DNS",
+    })
+    assert updated.status_code == 200
+    assert updated.json()["display_name"] == "Updated DNS"
+
+    assert client.patch("/api/v1/integrations/dns-home", json={}).status_code == 422
+    assert client.delete("/api/v1/integrations/dns-home").status_code == 204
+    assert client.get("/api/v1/integrations/dns-home/probe").status_code == 404
