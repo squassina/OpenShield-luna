@@ -138,3 +138,38 @@ def test_misp_rejects_unexpected_search_shape():
         pytest.raises(MispError, match="unexpected response"),
     ):
         client.search_indicators()
+
+
+
+def test_misp_indicator_lookup_shares_to_ids_interpretation() -> None:
+    payload = {
+        "response": {
+            "Attribute": [
+                {"id": "1", "type": "ip-src", "value": "8.8.8.8", "to_ids": 1},
+                {"id": "2", "type": "domain", "value": "bad.example", "to_ids": "TRUE"},
+                {"id": "3", "type": "domain", "value": "benign.example", "to_ids": False},
+            ]
+        }
+    }
+    client = MispClient("https://misp.example", "api-key")
+    opener = Mock()
+    opener.open.return_value = response(json.dumps(payload).encode())
+
+    with patch("openshield.integrations.misp.build_opener", return_value=opener):
+        attributes = client.search_indicator_attributes("ip", "8.8.8.8")
+
+    assert [item["to_ids"] for item in attributes] == [True, True, False]
+    assert attributes[0]["value"] == "8.8.8.8"
+    request = opener.open.call_args.args[0]
+    assert request.full_url == "https://misp.example/attributes/restSearch"
+    assert json.loads(request.data) == {
+        "returnFormat": "json", "value": "8.8.8.8", "limit": 50, "page": 1,
+    }
+
+
+def test_misp_indicator_lookup_rejects_invalid_indicator_inputs() -> None:
+    client = MispClient("https://misp.example", "api-key")
+    with pytest.raises(ValueError, match="indicator type"):
+        client.search_indicator_attributes("url", "https://bad.example")
+    with pytest.raises(ValueError, match="indicator value"):
+        client.search_indicator_attributes("domain", "")
