@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "update_cname_tracker_feed.py"
+ROOT = Path(__file__).resolve().parents[1]
+if not (ROOT / "scripts").is_dir():
+    ROOT = ROOT.parent
+SCRIPT = ROOT / "scripts" / "update_cname_tracker_feed.py"
 FEED_UPDATER = runpy.run_path(str(SCRIPT))
 
 
