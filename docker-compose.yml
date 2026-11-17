@@ -88,6 +88,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+      cache_from:
+        - type=gha,scope=openshield-dev
+      cache_to:
+        - type=gha,scope=openshield-dev,mode=max
     profiles: ["tools"]
     command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
 
@@ -112,6 +116,10 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      cache_from:
+        - type=gha,scope=openshield-runtime
+      cache_to:
+        - type=gha,scope=openshield-runtime,mode=max
     command: ["python", "-m", "openshield.gateway.agent"]
     environment:
       OPENSHIELD_NODE_URL: ${OPENSHIELD_NODE_URL:-http://openshield-node:8000}
