@@ -55,7 +55,10 @@ def test_prometheus_credentials_are_encrypted_and_diagnostics_are_read_only(monk
                 },
             }
 
+    from openshield.api.routers import integration_tests
+
     monkeypatch.setattr(main, "PrometheusClient", FakePrometheusClient)
+    monkeypatch.setattr(integration_tests, "PrometheusClient", FakePrometheusClient)
     diagnostics = client.get("/api/v1/integrations/prometheus-home/prometheus-diagnostics")
     assert diagnostics.status_code == 200
     assert diagnostics.headers["cache-control"] == "no-store"
