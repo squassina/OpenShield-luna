@@ -25,19 +25,21 @@ from openshield.api.routers.integration_tests import create_integration_test_rou
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.schemas import (
-    AdGuardCredentials as AdGuardCredentials,
-    AIProviderCredentials as AIProviderCredentials,
-    CrowdSecCredentials as CrowdSecCredentials,
-    GrafanaCredentials as GrafanaCredentials,
-    MispCredentials as MispCredentials,
-    OPNsenseCredentials as OPNsenseCredentials,
-    OpenWrtCredentials as OpenWrtCredentials,
-    PfSenseCredentials as PfSenseCredentials,
-    PiHoleCredentials as PiHoleCredentials,
-    PrometheusCredentials as PrometheusCredentials,
-    ThreatIntelCredentials as ThreatIntelCredentials,
-    WazuhCredentials as WazuhCredentials,
+    AdGuardCredentials,
+    AIProviderCredentials,
+    CrowdSecCredentials,
+    GrafanaCredentials,
+    MispCredentials,
+    OPNsenseCredentials,
+    OpenWrtCredentials,
+    PfSenseCredentials,
+    PiHoleCredentials,
+    PrometheusCredentials,
+    ThreatIntelCredentials,
+    WazuhCredentials,
 )
+__all__ = ["AdGuardCredentials","AIProviderCredentials","CrowdSecCredentials","GrafanaCredentials","MispCredentials","OPNsenseCredentials","OpenWrtCredentials","PfSenseCredentials","PiHoleCredentials","PrometheusCredentials","ThreatIntelCredentials","WazuhCredentials"]
+
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
