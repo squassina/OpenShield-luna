@@ -38,8 +38,6 @@ from openshield.api.schemas import (
     ThreatIntelCredentials,
     WazuhCredentials,
 )
-__all__ = ["AdGuardCredentials","AIProviderCredentials","CrowdSecCredentials","GrafanaCredentials","MispCredentials","OPNsenseCredentials","OpenWrtCredentials","PfSenseCredentials","PiHoleCredentials","PrometheusCredentials","ThreatIntelCredentials","WazuhCredentials"]
-
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
@@ -86,6 +84,8 @@ from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sy
 from openshield.threat_intel.engine import enrich_events
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
+
+__all__ = ["AdGuardCredentials","AIProviderCredentials","CrowdSecCredentials","GrafanaCredentials","MispCredentials","OPNsenseCredentials","OpenWrtCredentials","PfSenseCredentials","PiHoleCredentials","PrometheusCredentials","ThreatIntelCredentials","WazuhCredentials"]
 
 load_runtime_secrets(create=True)
 configure_logging()
