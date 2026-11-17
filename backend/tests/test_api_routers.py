@@ -11,6 +11,7 @@ from openshield.api.routers.integration_credentials import create_integration_cr
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
+from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.integrations.models import (
     Integration,
@@ -253,6 +254,97 @@ def test_incidents_router_is_independently_testable() -> None:
     ).status_code == 404
     assert client.get("/api/v1/incidents?status=invalid").status_code == 422
 
+
+def test_policy_execution_router_is_independently_testable() -> None:
+    class PolicyStore(FakeStore):
+        def __init__(self) -> None:
+            self.emergency_stop = True
+
+        def list_policies(self):
+            return [{"policy_id": "policy-1"}]
+
+        def get_emergency_stop(self):
+            return self.emergency_stop
+
+        def list_policy_decisions(self, limit):
+            assert limit == 25
+            return []
+
+        def list_response_executions(self, limit):
+            assert limit == 25
+            return []
+
+        def get_policy(self, policy_id):
+            return {"policy_id": policy_id} if policy_id == "policy-1" else None
+
+        def update_policy(self, policy_id, values):
+            return {"policy_id": policy_id, **values}
+
+        def set_emergency_stop(self, active):
+            self.emergency_stop = active
+
+    store = PolicyStore()
+    registry = IntegrationRegistry()
+    connections = FakeGatewayConnections()
+    created = []
+    app = FastAPI()
+    app.include_router(create_policy_execution_router(
+        store=store,
+        registry=registry,
+        gateway_connections=connections,
+        create_policy_fn=lambda _store, _registry, data: created.append(data) or {
+            "policy_id": "policy-1", **data,
+        },
+        evaluate_policy_fn=lambda *_args: {"status": "observe_only"},
+        approve_decision_fn=lambda *_args: {"status": "active"},
+        reject_decision_fn=lambda _store, _decision_id, reason: {
+            "status": "rejected",
+            "reason": reason,
+        },
+        enforcement_enabled_fn=lambda: True,
+        max_autonomy_level_fn=lambda: 2,
+    ))
+    client = TestClient(app)
+
+    listed = client.get("/api/v1/policies")
+    assert listed.status_code == 200
+    assert listed.json()["max_autonomy_level"] == 2
+    assert listed.json()["items"] == [{"policy_id": "policy-1"}]
+
+    payload = {
+        "name": "Observe suspicious domain",
+        "indicator_type": "domain",
+        "indicator_value": "malicious.example",
+        "action": "block_domain",
+        "integration_id": "pihole-home",
+        "min_risk_score": 70,
+    }
+    response = client.post("/api/v1/policies", json=payload)
+    assert response.status_code == 201
+    assert response.json()["policy_id"] == "policy-1"
+    assert created[0]["name"] == payload["name"]
+
+    missing = client.patch("/api/v1/policies/missing", json={"enabled": False})
+    assert missing.status_code == 404
+    assert client.patch("/api/v1/policies/policy-1", json={"enabled": False}).json() == {
+        "policy_id": "policy-1", "enabled": False,
+    }
+    assert client.get("/api/v1/policy-decisions?limit=25").json() == []
+    assert client.get("/api/v1/executions?limit=25").json() == []
+    assert client.get("/api/v1/policy-decisions?limit=201").status_code == 422
+
+    stopped = client.post("/api/v1/control/emergency-stop", json={"active": False})
+    assert stopped.status_code == 200
+    assert store.emergency_stop is False
+    assert client.post("/api/v1/incidents/incident-1/evaluate", json={
+        "policy_id": "policy-1",
+    }).json() == {"status": "observe_only"}
+    assert client.post("/api/v1/policy-decisions/decision-1/approve").json() == {
+        "status": "active",
+    }
+    assert client.post("/api/v1/policy-decisions/decision-1/reject", json={
+        "reason": "Not approved",
+    }).json() == {"status": "rejected", "reason": "Not approved"}
 
 
 def test_threat_intel_router_is_independently_testable() -> None:
