@@ -64,7 +64,7 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - Restrict Node access to a trusted LAN. Do not publish port 8000 to the Internet.
 - OpenWrt credentials are entered through the dashboard and encrypted at rest with `OPENSHIELD_SECRET_KEY`. They are never returned by integration APIs or stored in integration JSON. The authenticated connector receives them on connect/heartbeat. Back up the encryption key securely.
 - OpenWrt RPC is read-only in this baseline. The connector does not modify firewall, routing, wireless, or forwarding settings.
-- PostgreSQL schema creation is idempotent; formal versioned migrations, backup/restore automation, pooling, and production database hardening remain pending.
+- PostgreSQL uses versioned schema migrations and a bounded connection pool. Automated backup/restore and production database hardening remain pending.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
 - Metrics are process-local and reset on restart.
 - The connector is a nearby-host Linux/Docker agent, not an on-device OpenWrt daemon.
@@ -130,8 +130,8 @@ The connector runs on a nearby Linux/Docker host. Configure the Node URL and, op
 - `OPENSHIELD_GATEWAY_ID` (default `home-gateway`)
 - `OPENSHIELD_GATEWAY_HEARTBEAT_INTERVAL` (default 30 seconds)
 - `OPENSHIELD_GATEWAY_TOKEN` (same random token on Node and connector when using UI-managed router credentials)
-- `OPENSHIELD_GATEWAY_SPOOL_PATH`
-- `OPENSHIELD_OPENWRT_URL`, `OPENSHIELD_OPENWRT_USERNAME`, `OPENSHIELD_OPENWRT_PASSWORD` (legacy environment-based fallback; prefer dashboard setup) (default `/var/lib/openshield/gateway-spool.sqlite3`)
+- `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`)
+- `OPENSHIELD_OPENWRT_URL`, `OPENSHIELD_OPENWRT_USERNAME`, `OPENSHIELD_OPENWRT_PASSWORD` (legacy environment-based fallback; prefer dashboard setup)
 
 For dashboard-managed credentials, set `OPENSHIELD_SECRET_KEY` on Node and the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network. For safe Fernet key rotation, configure `OPENSHIELD_SECRET_KEY_PREVIOUS` on Node and follow the [secret key rotation runbook](docs/operations/secret-key-rotation.md).
 
@@ -245,14 +245,14 @@ Authentication, authorization, gateway enrollment, and tenant isolation will be 
 
 ## License
 
-License not selected yet.
+No `LICENSE` file is present; the project license remains undecided.
 
 
 ## P2 — Privacy Intelligence
 
-The interactive web console is served at `http://localhost:8000/`. It combines P1 network visibility and P2 privacy analytics with service onboarding for Pi-hole v6, AdGuard Home, Suricata, and Zeek. DNS provider setup validates live connectivity without importing records; Suricata/Zeek setup displays the push-ingestion endpoint. The console also manages local allow/block lists and explicit provider synchronization. Full integration editing/removal and UI-managed secret storage remain future P2 work.
+The interactive web console is served at `http://localhost:8000/`. It combines network visibility and privacy analytics with service onboarding for Pi-hole v6, AdGuard Home, Suricata, and Zeek. DNS provider setup validates live connectivity without importing records; Suricata/Zeek setup displays the push-ingestion endpoint. The console supports integration editing and deletion, local allow/block lists, and explicit provider synchronization. Supported integration credentials are stored through the encrypted secret store, not in integration configuration or API responses.
 
-P2 adds DNS privacy telemetry from Pi-hole and AdGuard Home. OpenShield can poll provider query-log APIs directly or accept bounded pushed JSON batches. Provider credentials are read from environment variables and never stored in integration configuration.
+DNS privacy telemetry supports Pi-hole and AdGuard Home. OpenShield polls provider query-log APIs directly or accepts bounded pushed JSON batches. Credentials are stored encrypted per integration and never in integration configuration; legacy environment-variable fallbacks remain supported.
 
 ### Register DNS sources
 
@@ -273,7 +273,7 @@ curl -X POST http://localhost:8000/api/v1/privacy/sources/pihole-home/sync
 curl -X POST http://localhost:8000/api/v1/privacy/sources/adguard-home/sync
 ~~~
 
-Each sync fetches up to 500 latest provider records. Event IDs make overlapping polls idempotent. Pi-hole without an API password needs no credential. Otherwise set `OPENSHIELD_PIHOLE_PASSWORD`. For AdGuard Home set both `OPENSHIELD_ADGUARD_USERNAME` and `OPENSHIELD_ADGUARD_PASSWORD`. Use HTTPS where available. Do not put credentials in integration config or commit them. For private PKI, mount CA PEM bundles in `./certs` and set `ca_bundle_path` on each DNS integration (for example, `/run/openshield/ca/pihole-ca.pem`). This adds that CA to the system trust roots for that integration only; certificate-chain and hostname verification stay enabled. See the [DNS provider TLS runbook](docs/operations/dns-provider-tls.md).
+Each sync fetches up to 500 latest provider records. Event IDs make overlapping polls idempotent. Pi-hole without an API password needs no credential. Otherwise configure its password in the dashboard; AdGuard Home requires a username and password. Dashboard credentials are encrypted at rest per integration. Legacy fallbacks are `OPENSHIELD_PIHOLE_PASSWORD`, `OPENSHIELD_ADGUARD_USERNAME`, and `OPENSHIELD_ADGUARD_PASSWORD`. Use HTTPS where available. Never put credentials in integration config or commit them. For private PKI, mount CA PEM bundles in `./certs` and set `ca_bundle_path` on each DNS integration (for example, `/run/openshield/ca/pihole-ca.pem`). This adds that CA to the system trust roots for that integration only; certificate-chain and hostname verification stay enabled. See the [DNS provider TLS runbook](docs/operations/dns-provider-tls.md).
 
 For provider exporters, records can also be pushed to `POST /api/v1/dns/{integration_id}/queries` in batches of up to 500 records and 5 MiB.
 
@@ -289,7 +289,7 @@ For provider exporters, records can also be pushed to `POST /api/v1/dns/{integra
 
 ### Classification and enforcement boundaries
 
-Tracker classification uses a small curated suffix set; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
+Tracker classification uses the pinned AdGuard CNAME tracker feed when the provider supplies an observed CNAME answer, with curated suffixes as a fallback; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
 
 Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the unauthenticated Node API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
 
