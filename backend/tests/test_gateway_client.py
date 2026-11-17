@@ -734,3 +734,115 @@ def test_configured_openwrt_client_receives_firewall_zone_mapping(monkeypatch) -
     assert isinstance(result, FakeOpenWrtRPCClient)
     assert received["options"] == {"firewall_zones": zones}
 
+
+ 
+ 
+def test_gateway_agent_uses_node_integration_id_distinct_from_gateway_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openshield.gateway import agent
+
+    class NodeClient:
+        heartbeat_calls = 0
+
+        def __init__(self) -> None:
+            self.events: list[EventEnvelope] = []
+
+        def connect(self) -> dict[str, object]:
+            return {
+                "gateway_id": "router-hardware-id",
+                "integration_id": "node-canonical-integration",
+            }
+
+        def heartbeat(self) -> dict[str, object]:
+            self.heartbeat_calls += 1
+            return {"status": "acknowledged"}
+
+        def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
+            self.events.append(event)
+            return {"status": "accepted"}
+
+    class RouterClient:
+        def discover(self) -> dict[str, object]:
+            return {"devices": []}
+
+        def health_check(self) -> dict[str, object]:
+            return {"status": "reachable"}
+
+    node = NodeClient()
+    sleeps = iter([None, KeyboardInterrupt])
+
+    def stop_after_heartbeat(_delay: float) -> None:
+        result = next(sleeps)
+        if result is KeyboardInterrupt:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", stop_after_heartbeat)
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(node, heartbeat_interval=5, openwrt_client=RouterClient())
+
+    assert node.heartbeat_calls == 1
+    assert node.events
+    assert all(
+        event.source.integration_id == "node-canonical-integration"
+        for event in node.events
+    )
+
+
+def test_gateway_config_refresh_discovers_only_once_per_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openshield.gateway import agent
+
+    class NodeClient:
+        heartbeat_calls = 0
+
+        def __init__(self) -> None:
+            self.events: list[EventEnvelope] = []
+
+        def connect(self) -> dict[str, object]:
+            return {
+                "gateway_id": "router",
+                "integration_id": "canonical-router",
+                "openwrt_config": {"version": 1},
+            }
+
+        def heartbeat(self) -> dict[str, object]:
+            self.heartbeat_calls += 1
+            return {"openwrt_config": {"version": 2}}
+
+        def ingest_event(self, event: EventEnvelope) -> dict[str, object]:
+            self.events.append(event)
+            return {"status": "accepted"}
+
+    class RouterClient:
+        def __init__(self) -> None:
+            self.discover_calls = 0
+
+        def discover(self) -> dict[str, object]:
+            self.discover_calls += 1
+            return {"devices": []}
+
+        def health_check(self) -> dict[str, object]:
+            return {"status": "reachable"}
+
+    node = NodeClient()
+    router = RouterClient()
+    monkeypatch.setattr(agent, "_configured_openwrt_client", lambda _config: router)
+    sleeps = iter([None, KeyboardInterrupt])
+
+    def stop_after_heartbeat(_delay: float) -> None:
+        result = next(sleeps)
+        if result is KeyboardInterrupt:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(agent.time, "sleep", stop_after_heartbeat)
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(node, heartbeat_interval=5)
+
+    assert router.discover_calls == 2
+    assert [event.event_type for event in node.events] == [
+        "gateway.discovery",
+        "gateway.discovery",
+        "gateway.health",
+    ]
