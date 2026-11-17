@@ -1,6 +1,8 @@
+import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
@@ -12,11 +14,13 @@ from openshield.visibility.normalizers import (
 )
 
 client = TestClient(app, headers={"Authorization": "Bearer connector-test-token"})
+sensor_tokens: dict[str, str] = {}
 
 
 def setup_function() -> None:
-    import os
     os.environ["OPENSHIELD_GATEWAY_TOKEN"] = "connector-test-token"
+    os.environ["OPENSHIELD_SECRET_KEY"] = Fernet.generate_key().decode()
+    sensor_tokens.clear()
     from openshield.api import main
     main.store.reset()
 
@@ -28,6 +32,13 @@ def register_sensor(sensor_id: str, kind: str) -> None:
         "display_name": f"Test {kind}",
     })
     assert response.status_code == 201
+    credential = client.put(f"/api/v1/sensors/{sensor_id}/credentials")
+    assert credential.status_code == 200
+    sensor_tokens[sensor_id] = credential.json()["token"]
+
+
+def sensor_headers(sensor_id: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {sensor_tokens[sensor_id]}"}
 
 
 def test_suricata_eve_alert_is_normalized_and_severity_mapped() -> None:
@@ -84,8 +95,8 @@ def test_suricata_sensor_ingestion_is_idempotent_and_visible() -> None:
         "alert": {"signature": "Suspicious test", "severity": 2},
     }
     url = "/api/v1/sensors/sensor-suricata/events"
-    first = client.post(url, json=[record])
-    second = client.post(url, json=[record])
+    first = client.post(url, json=[record], headers=sensor_headers("sensor-suricata"))
+    second = client.post(url, json=[record], headers=sensor_headers("sensor-suricata"))
     assert first.status_code == second.status_code == 202
     assert first.json() == {"accepted": 1, "duplicates": 0, "received": 1}
     assert second.json() == {"accepted": 0, "duplicates": 1, "received": 1}
@@ -108,7 +119,9 @@ def test_zeek_sensor_ingestion_populates_inventory_and_topology() -> None:
         "proto": "tcp",
         "service": "ssl",
     }
-    response = client.post("/api/v1/sensors/sensor-zeek/events", json=[record])
+    response = client.post(
+        "/api/v1/sensors/sensor-zeek/events", json=[record], headers=sensor_headers("sensor-zeek")
+    )
     assert response.status_code == 202
     devices = client.get("/api/v1/inventory/devices").json()
     assert {item["ip_address"] for item in devices} == {"192.0.2.11", "8.8.8.8"}
@@ -124,7 +137,7 @@ def test_zeek_sensor_ingestion_populates_inventory_and_topology() -> None:
 def test_sensor_health_reports_no_data_then_healthy() -> None:
     register_sensor("sensor-zeek", "zeek")
     assert client.get("/api/v1/sensors").json()[0]["status"] == "no_data"
-    client.post("/api/v1/sensors/sensor-zeek/events", json=[{
+    client.post("/api/v1/sensors/sensor-zeek/events", headers=sensor_headers("sensor-zeek"), json=[{
         "ts": 1767225600.0, "_path": "dns", "uid": "D1",
         "id.orig_h": "192.0.2.15", "query": "example.test",
     }])
@@ -146,7 +159,7 @@ def test_sensor_endpoint_rejects_non_sensor_integrations() -> None:
 
 def test_inventory_ignores_invalid_unspecified_and_multicast_addresses() -> None:
     register_sensor("sensor-suricata", "suricata")
-    response = client.post("/api/v1/sensors/sensor-suricata/events", json=[{
+    response = client.post("/api/v1/sensors/sensor-suricata/events", headers=sensor_headers("sensor-suricata"), json=[{
         "timestamp": "2026-01-01T12:00:00Z",
         "event_type": "flow",
         "src_ip": "not-an-ip",
@@ -239,7 +252,7 @@ def _ingest_discovery(
 
 def _ingest_identity_sensor_event() -> None:
     register_sensor("sensor-zeek", "zeek")
-    response = client.post("/api/v1/sensors/sensor-zeek/events", json=[{
+    response = client.post("/api/v1/sensors/sensor-zeek/events", headers=sensor_headers("sensor-zeek"), json=[{
         "ts": datetime.now(UTC).timestamp(),
         "_path": "conn",
         "uid": str(uuid4()),
