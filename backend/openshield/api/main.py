@@ -41,7 +41,7 @@ from openshield.integrations.ai import AIProviderAdapter
 from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
 from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
 from openshield.integrations.misp import MispClient, MispError
-from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
+from openshield.integrations.models import IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
