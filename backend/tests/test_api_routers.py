@@ -799,8 +799,14 @@ def test_openwrt_diagnostics_router_is_independently_testable() -> None:
         def get(self, integration_id):
             return self.item if integration_id == "router-1" else None
 
+    class OpenWrtConnections(FakeGatewayConnections):
+        connected = False
+
+        def get_status(self, gateway_id):
+            return {"gateway_id": gateway_id, "status": "connected"} if self.connected else None
+
     store = OpenWrtStore()
-    connections = FakeGatewayConnections()
+    connections = OpenWrtConnections()
     app = FastAPI()
     app.include_router(create_openwrt_diagnostics_router(
         store=store,
@@ -812,6 +818,7 @@ def test_openwrt_diagnostics_router_is_independently_testable() -> None:
     assert client.get("/api/v1/integrations/missing/test").status_code == 404
     assert client.get("/api/v1/integrations/router-1/test").json()["status"] == "connector_disconnected"
 
+    connections.connected = True
     store.events["gateway.health"] = [SimpleNamespace(
         observed_at=now, payload={"status": "reachable"},
     )]
