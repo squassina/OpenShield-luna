@@ -49,7 +49,7 @@ from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.request_limits import RequestBodyLimitMiddleware
-from openshield.core.secrets import SecretStore
+from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.execution.worker import run_expiration_loop
@@ -189,7 +189,10 @@ def _sensor_token_valid(integration_id: str, request: Request) -> bool:
     token = authorization[7:]
     if not token:
         return False
-    credentials = SecretStore(store).get(integration_id)
+    try:
+        credentials = SecretStore(store).get(integration_id)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     expected_hash = credentials.get("sensor_token_sha256") if credentials else None
     if not isinstance(expected_hash, str):
         return False
