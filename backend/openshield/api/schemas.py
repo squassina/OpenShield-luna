@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
@@ -63,3 +65,12 @@ class ThreatIntelCredentials(BaseModel):
 
 class AIProviderCredentials(BaseModel):
     api_key: SecretStr = Field(min_length=8, max_length=2048)
+
+
+class AIInvestigationRequest(BaseModel):
+    provider_id: str = Field(min_length=2, max_length=64)
+
+
+class IncidentStatusRequest(BaseModel):
+    status: Literal["open", "acknowledged", "closed", "false_positive"]
+    reason: str = Field(default="", max_length=500)
