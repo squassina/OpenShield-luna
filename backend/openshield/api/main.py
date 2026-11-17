@@ -20,6 +20,7 @@ from openshield.ai.orchestrator import investigate_incident
 from openshield.ai.providers import AIProviderError, test_ollama, test_openai
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
+from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
@@ -40,7 +41,7 @@ from openshield.integrations.ai import AIProviderAdapter
 from openshield.integrations.crowdsec import CrowdSecClient, CrowdSecError
 from openshield.integrations.grafana import GrafanaAdapter, GrafanaClient, GrafanaError
 from openshield.integrations.misp import MispClient, MispError
-from openshield.integrations.models import IntegrationRegistration, IntegrationUpdate
+from openshield.integrations.models import IntegrationUpdate
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.openwrt_rpc import OpenWrtRPCClient
 from openshield.integrations.opnsense import OPNsenseAdapter, OPNsenseClient, OPNsenseError
@@ -469,64 +470,9 @@ def dashboard() -> FileResponse:
     return FileResponse(DASHBOARD_PATH, media_type="text/html")
 
 
-@app.post("/api/v1/integrations", status_code=201, tags=["integrations"])
-def register_integration(registration: IntegrationRegistration) -> dict[str, object]:
-    if registration.kind not in adapters:
-        raise HTTPException(status_code=400, detail="Unsupported integration kind")
-    try:
-        item = registry.register(registration)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return item.model_dump(mode="json")
-
-
-@app.get("/api/v1/integrations", tags=["integrations"])
-def list_integrations() -> list[dict[str, object]]:
-    result = []
-    for item in registry.list_all():
-        payload = item.model_dump(mode="json")
-        if item.kind in {"pihole", "adguard"}:
-            payload["config"]["auth_configured"] = store.get_integration_secret(item.integration_id) is not None
-        result.append(payload)
-    return result
-
-
-@app.patch("/api/v1/integrations/{integration_id}", tags=["integrations"])
-def update_integration(
-    integration_id: str, changes: IntegrationUpdate
-) -> dict[str, object]:
-    if not changes.model_fields_set:
-        raise HTTPException(status_code=422, detail="At least one field must be provided")
-    item = registry.update(integration_id, changes)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Integration not found")
-    return item.model_dump(mode="json")
-
-
-@app.delete(
-    "/api/v1/integrations/{integration_id}",
-    status_code=204,
-    response_class=Response,
-    tags=["integrations"],
+app.include_router(
+    create_integrations_router(store=store, registry=registry, adapters=adapters)
 )
-def delete_integration(integration_id: str) -> Response:
-    if not registry.delete(integration_id):
-        raise HTTPException(status_code=404, detail="Integration not found")
-    return Response(status_code=204)
-
-
-@app.get("/api/v1/integrations/{integration_id}/probe", tags=["integrations"])
-def probe_integration(integration_id: str) -> dict[str, object]:
-    item = registry.get(integration_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail="Integration not found")
-    result = adapters[item.kind].probe(item)
-    if item.kind in {"crowdsec", "misp", "pihole", "adguard"}:
-        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
-    if item.kind == "openai":
-        result["credentials_configured"] = store.get_integration_secret(integration_id) is not None
-    return result
-
 
 
 @app.post("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
