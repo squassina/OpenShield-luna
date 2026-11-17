@@ -314,3 +314,71 @@ def test_expiration_worker_runs_bounded_cache_cleanup_and_logs(
 
     assert store.limits == [500]
     assert "Expired threat intelligence cache entries deleted count=3" in caplog.text
+
+ 
+ 
+def test_invalid_indicator_does_not_disable_provider_for_remaining_indicators(monkeypatch) -> None:
+    from openshield.api import main
+    from openshield.threat_intel.providers import ThreatIntelIndicatorError
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    _register("suricata", "sensor-suricata")
+    _register("crowdsec", "crowdsec-home")
+    SecretStore(main.store).set("crowdsec-home", {"api_key": "crowdsec-key"})
+    event = _event("mixed-indicator-event").model_copy(update={
+        "payload": {"src_ip": "8.8.8.8", "dest_ip": "1.1.1.1"},
+    })
+    main.store.insert_event(event)
+    calls: list[str] = []
+
+    def lookup(ip_value: str, _api_key: str) -> dict[str, object]:
+        calls.append(ip_value)
+        if ip_value == "8.8.8.8":
+            raise ThreatIntelIndicatorError("invalid test indicator")
+        return {
+            "provider": "crowdsec",
+            "indicator_type": "ip",
+            "indicator_value": ip_value,
+            "matched": True,
+            "reputation": "malicious",
+            "score": 80,
+        }
+
+    monkeypatch.setattr(engine, "lookup_crowdsec", lookup)
+    result = engine.enrich_events(main.store, main.registry, [event.event_id])
+
+    assert calls == ["8.8.8.8", "1.1.1.1"]
+    assert [item["indicator_value"] for item in result["incidents"]] == ["1.1.1.1"]
+    assert result["errors"] == [{
+        "integration_id": "crowdsec-home",
+        "error": "invalid_indicator",
+        "scope": "indicator",
+    }]
+
+
+def test_provider_failure_stops_remaining_lookups_for_that_provider(monkeypatch) -> None:
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    _register("suricata", "sensor-suricata")
+    _register("crowdsec", "crowdsec-home")
+    SecretStore(main.store).set("crowdsec-home", {"api_key": "crowdsec-key"})
+    event = _event("provider-failure-event").model_copy(update={
+        "payload": {"src_ip": "8.8.8.8", "dest_ip": "1.1.1.1"},
+    })
+    main.store.insert_event(event)
+    calls: list[str] = []
+
+    def unavailable(ip_value: str, _api_key: str) -> dict[str, object]:
+        calls.append(ip_value)
+        raise providers.ThreatIntelProviderError("provider unavailable")
+
+    monkeypatch.setattr(engine, "lookup_crowdsec", unavailable)
+    result = engine.enrich_events(main.store, main.registry, [event.event_id])
+
+    assert calls == ["8.8.8.8"]
+    assert result["errors"] == [{
+        "integration_id": "crowdsec-home",
+        "error": "provider_lookup_failed",
+        "scope": "provider",
+    }]

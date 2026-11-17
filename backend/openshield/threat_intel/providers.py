@@ -15,6 +15,11 @@ class ThreatIntelProviderError(RuntimeError):
     pass
 
 
+class ThreatIntelIndicatorError(ValueError):
+    """An invalid indicator that must not disable its provider."""
+
+
+
 def _request(url: str, *, headers: dict[str, str], method: str = "GET",
              body: dict[str, object] | None = None,
              ssl_context: ssl.SSLContext | None = None) -> dict[str, object] | list[object]:
@@ -51,9 +56,9 @@ def lookup_crowdsec(
     try:
         address = ipaddress.ip_address(ip_value)
     except ValueError as exc:
-        raise ValueError("CrowdSec lookup requires a valid IP address") from exc
+        raise ThreatIntelIndicatorError("CrowdSec lookup requires a valid IP address") from exc
     if not address.is_global:
-        raise ValueError("CrowdSec lookup accepts public IP addresses only")
+        raise ThreatIntelIndicatorError("CrowdSec lookup accepts public IP addresses only")
     if not api_key:
         raise ThreatIntelProviderError("CrowdSec API key is not configured")
     result = _request(
