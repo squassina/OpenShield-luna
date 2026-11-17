@@ -1,5 +1,6 @@
 import asyncio
 import os
+from typing import Self
 
 import pytest
 
@@ -119,7 +120,7 @@ def test_response_execution_listing_uses_one_query_and_preserves_rows(
     executed: list[tuple[str, tuple[object, ...]]] = []
 
     class FakeCursor:
-        def __enter__(self) -> "FakeCursor":
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *_args: object) -> None:
