@@ -275,7 +275,7 @@ async def authenticate_requests(request: Request, call_next):
     else:
         denied = _check_admin_auth(request)
         response = denied if denied is not None else await call_next(request)
-    if is_gateway or path.endswith(("-credentials", "-diagnostics")):
+    if is_gateway or path.endswith(("credentials", "-diagnostics")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response
