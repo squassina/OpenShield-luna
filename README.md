@@ -154,7 +154,7 @@ No firewall, routing, wireless, or forwarding settings are modified. Real hardwa
 
 ## API quick reference
 
-The API is unauthenticated by default in residential mode. If Basic authentication is enabled, use the browser's HTTP Basic prompt or pass `-u user:password` to curl. Gateway connect/heartbeat/event routes use the separate connector bearer token when configured. Examples:
+The administrative API is unauthenticated by default in residential mode. If Basic authentication is enabled, use the browser's HTTP Basic prompt or pass `-u user:password` to curl. Gateway routes use the connector bearer token; Suricata/Zeek ingestion requires the corresponding per-sensor bearer token. Examples:
 
 ```bash
 curl http://localhost:8000/api/v1/integrations
@@ -250,7 +250,7 @@ The full interactive web dashboard remains in P2, consistent with the product ro
 
 ## Security
 
-Residential mode trusts the local network and does not authenticate API callers. Keep the Node API on a trusted LAN, restrict access at the network boundary, and never expose port 8000 directly to the Internet. OpenWrt RPC credentials remain separate and must be protected. Store `.env` securely and never commit router credentials or real network event data.
+Residential mode trusts the local network for administrative API access and keeps optional HTTP Basic authentication disabled by default. Suricata/Zeek ingestion is always protected by a per-sensor bearer token. Keep the Node API on a trusted LAN, restrict access at the network boundary, and never expose port 8000 directly to the Internet. OpenWrt RPC credentials remain separate and must be protected. Store `.env` securely and never commit router credentials or real network event data.
 
 Authentication, authorization, gateway enrollment, and tenant isolation will be introduced before business or SaaS deployment.
 
@@ -302,7 +302,7 @@ For provider exporters, records can also be pushed to `POST /api/v1/dns/{integra
 
 Tracker classification uses the pinned AdGuard CNAME tracker feed when the provider supplies an observed CNAME answer, with curated suffixes as a fallback; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
 
-Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the unauthenticated Node API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
+Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the residential administrative API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
 
 
 ## DNS provider polling
