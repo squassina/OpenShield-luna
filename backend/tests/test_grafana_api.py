@@ -2,6 +2,7 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from openshield.api import main
+from openshield.api.routers import integration_tests
 from openshield.core.secrets import SecretStore
 
 client = TestClient(main.app)
@@ -51,8 +52,6 @@ def test_grafana_credentials_are_encrypted_and_diagnostics_are_read_only(monkeyp
                 "dashboards": [{"uid": "abc", "title": "Overview", "type": "dash-db"}],
                 "summary": {"dashboards_returned": 1, "dashboards_limit": 100},
             }
-
-    from openshield.api.routers import integration_tests
 
     monkeypatch.setattr(main, "GrafanaClient", FakeGrafanaClient)
     monkeypatch.setattr(integration_tests, "GrafanaClient", FakeGrafanaClient)
