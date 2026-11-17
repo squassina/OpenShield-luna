@@ -4,10 +4,10 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from openshield.api.routers.events import create_events_router
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
 from openshield.api.routers.incidents import create_incidents_router
-from openshield.api.routers.events import create_events_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
