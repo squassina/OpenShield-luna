@@ -23,6 +23,7 @@ from openshield.api.routers.integration_credentials import create_integration_cr
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
+from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.api.schemas import (
     AdGuardCredentials,
     AIInvestigationRequest,
@@ -37,6 +38,7 @@ from openshield.api.schemas import (
     PiHoleCredentials,
     PrometheusCredentials,
     ThreatIntelCredentials,
+    ThreatIntelEnrichRequest,
     WazuhCredentials,
 )
 from openshield.core.bootstrap import load_runtime_secrets
@@ -56,7 +58,6 @@ from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
 from openshield.integrations.grafana import GrafanaAdapter
-from openshield.integrations.misp import MispClient, MispError
 from openshield.integrations.openwrt import OpenWrtAdapter
 from openshield.integrations.opnsense import OPNsenseAdapter
 from openshield.integrations.pfsense import PfSenseAdapter
@@ -82,7 +83,6 @@ from openshield.privacy.polling import (
     run_dns_polling_loop,
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
-from openshield.threat_intel.engine import enrich_events
 from openshield.visibility.adapter import NetworkSensorAdapter
 from openshield.visibility.normalizers import normalize_sensor_batch
 
@@ -359,10 +359,6 @@ class ClassificationOverrideRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class ThreatIntelEnrichRequest(BaseModel):
-    event_ids: list[str] = Field(min_length=1, max_length=100)
-
-
 class PolicyCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
@@ -439,127 +435,13 @@ app.include_router(
 )
 
 
-@app.post("/api/v1/integrations/{integration_id}/misp-sync", tags=["integrations"])
-def sync_misp_indicators(
-    integration_id: str, limit: Annotated[int, Query(ge=1, le=1000)] = 1000
-) -> dict[str, object]:
-    integration = registry.get(integration_id)
-    if integration is None or integration.kind != "misp":
-        raise HTTPException(status_code=404, detail="MISP integration not found")
-    if not integration.enabled:
-        raise HTTPException(status_code=409, detail="MISP integration is disabled")
-    try:
-        credentials = SecretStore(store).get(integration_id)
-        if credentials is None:
-            raise HTTPException(status_code=409, detail="MISP credentials are not configured")
-        client = MispClient(
-            str(credentials["base_url"]), str(credentials["api_key"]),
-            **_integration_ssl_context_kwargs(integration, str(credentials["base_url"])),
-        )
-        indicators = client.search_indicators(limit)
-        complete_snapshot = len(indicators) < limit
-        sync_result = store.sync_threat_indicators(
-            integration_id, indicators, complete_snapshot=complete_snapshot
-        )
-        return {
-            "status": "synced",
-            "integration_id": integration_id,
-            "received": len(indicators),
-            "stored": sync_result["stored"],
-            "removed": sync_result["removed"],
-            "limit": limit,
-            "truncated_possible": not complete_snapshot,
-            "reconciled": complete_snapshot,
-        }
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail="Stored MISP credentials or sync parameters are invalid") from exc
-    except MispError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/threat-intel/indicators", tags=["threat-intel"])
-def list_threat_indicators(
-    integration_id: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
-) -> dict[str, object]:
-    items = store.list_threat_indicators(integration_id=integration_id, limit=limit)
-    return {"items": items, "count": len(items)}
-
-
-@app.get("/api/v1/threat-intel/matches", tags=["threat-intel"])
-def list_threat_matches(
-    event_limit: Annotated[int, Query(ge=1, le=1000)] = 500,
-    indicator_limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
-) -> dict[str, object]:
-    indicators = store.list_threat_indicators(limit=indicator_limit)
-    events = store.list_events(limit=event_limit)
-    matches = []
-    for event in events:
-        payload = event.payload
-        observed: dict[str, set[str]] = {"ip": set(), "domain": set()}
-        for field in ("src_ip", "dest_ip", "id.orig_h", "id.resp_h"):
-            value = payload.get(field)
-            if isinstance(value, str):
-                try:
-                    observed["ip"].add(str(ipaddress.ip_address(value)))
-                except ValueError:
-                    pass
-        for field in ("domain", "query", "hostname", "host", "url"):
-            value = payload.get(field)
-            if not isinstance(value, str) or not value.strip():
-                continue
-            candidate = value.strip()
-            if field == "url" or "://" in candidate:
-                try:
-                    candidate = urlsplit(candidate).hostname or ""
-                except ValueError:
-                    candidate = ""
-            candidate = candidate.rstrip(".").lower()
-            if candidate and "/" not in candidate and " " not in candidate:
-                observed["domain"].add(candidate)
-        for indicator in indicators:
-            indicator_type = indicator["indicator_type"]
-            value = str(indicator["value"])
-            if indicator_type in {"ip-src", "ip-dst"}:
-                try:
-                    matched = str(ipaddress.ip_address(value)) in observed["ip"]
-                except ValueError:
-                    matched = False
-            elif indicator_type in {"domain", "hostname"}:
-                matched = value.rstrip(".").lower() in observed["domain"]
-            else:
-                matched = False
-            if matched:
-                matches.append({
-                    "indicator": indicator,
-                    "event": {
-                        "event_id": event.event_id,
-                        "event_type": event.event_type,
-                        "occurred_at": event.occurred_at.isoformat(),
-                        "source": event.source.model_dump(mode="json"),
-                    },
-                    "match_type": "exact",
-                    "assessment": "threat_intelligence_match",
-                })
-    return {
-        "items": matches,
-        "count": len(matches),
-        "events_scanned": len(events),
-        "indicators_scanned": len(indicators),
-        "note": "Exact IOC matches only; no autonomous blocking or inferred attribution.",
-    }
-
-
-@app.post("/api/v1/threat-intel/enrich", tags=["threat-intelligence"])
-def enrich_threat_indicators(request: ThreatIntelEnrichRequest) -> dict[str, object]:
-    try:
-        return enrich_events(store, registry, list(dict.fromkeys(request.event_ids)))
-    except SecretConfigurationError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+app.include_router(
+    create_threat_intel_router(
+        store=store,
+        registry=registry,
+        ssl_context_kwargs=_integration_ssl_context_kwargs,
+    )
+)
 
 
 @app.get("/api/v1/policies", tags=["policy"])
