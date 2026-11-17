@@ -467,7 +467,7 @@ def test_inventory_router_is_independently_testable() -> None:
 
     topology = client.get("/api/v1/inventory/topology")
     assert topology.status_code == 200
-    assert topology.json()["nodes"] == ["8.8.8.8", "10.0.0.5"]
+    assert topology.json()["nodes"] == ["10.0.0.5", "8.8.8.8"]
     assert topology.json()["edges"][0]["direction"] == "outbound"
     assert topology.json()["relationships"][0]["relationship"] == "network_segment_membership"
     assert client.get("/api/v1/inventory/devices?limit=0").status_code == 422
