@@ -1,5 +1,6 @@
 import ipaddress
 from datetime import UTC, datetime, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 
@@ -172,7 +173,7 @@ def create_inventory_router(*, store: PostgresStore) -> APIRouter:
 
     @router.get("/api/v1/inventory/router-devices", tags=["inventory"])
     def list_router_devices(
-        limit: int = Query(default=500, ge=1, le=2000),
+        limit: Annotated[int, Query(ge=1, le=2000)] = 500,
     ) -> dict[str, object]:
         now = datetime.now(UTC)
         snapshots = store.list_gateway_discovery_snapshots()
@@ -229,7 +230,7 @@ def create_inventory_router(*, store: PostgresStore) -> APIRouter:
 
     @router.get("/api/v1/inventory/topology", tags=["inventory"])
     def get_network_topology(
-        limit: int = Query(default=1000, ge=1, le=5000),
+        limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
     ) -> dict[str, object]:
         identities = _identity_index(store, datetime.now(UTC))
         segments = _network_segments(store)
