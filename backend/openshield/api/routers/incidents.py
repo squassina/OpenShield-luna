@@ -9,7 +9,9 @@ from openshield.core.secrets import SecretConfigurationError
 from openshield.core.storage import PostgresStore
 from openshield.integrations.registry import IntegrationRegistry
 
-IncidentInvestigator = Callable[[PostgresStore, IntegrationRegistry, str, str], dict[str, object]]
+IncidentInvestigator = Callable[
+    [PostgresStore, IntegrationRegistry, str, str], dict[str, object]
+]
 
 
 def create_incidents_router(
@@ -44,7 +46,9 @@ def create_incidents_router(
         limit: int = Query(default=100, ge=1, le=200),
         status: str | None = None,
     ) -> list[dict[str, object]]:
-        if status is not None and status not in {"open", "acknowledged", "closed", "false_positive"}:
+        if status is not None and status not in {
+            "open", "acknowledged", "closed", "false_positive"
+        }:
             raise HTTPException(status_code=422, detail="Invalid incident status")
         return store.list_incidents(limit=limit, status=status)
 
