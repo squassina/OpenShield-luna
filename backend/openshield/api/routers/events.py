@@ -45,6 +45,16 @@ def create_events_router(
             raise HTTPException(status_code=400, detail="Unknown source integration")
         if integration.kind != event.source.kind:
             raise HTTPException(status_code=400, detail="Event source kind does not match integration")
+        if integration.kind in {"suricata", "zeek"} and not sensor_token_valid(
+            integration.integration_id, request
+        ):
+            store.write_audit(
+                "sensor.ingestion.authentication_failed",
+                None,
+                integration.integration_id,
+                {"source": "events"},
+            )
+            raise HTTPException(status_code=401, detail="Sensor authentication required")
         require_enabled_ingestion(integration.integration_id, integration.enabled, "events")
         inserted = store.insert_event(event)
         if inserted:
