@@ -16,4 +16,14 @@ async def run_expiration_loop(
             await asyncio.to_thread(expire_due_executions, store, registry)
         except Exception:
             logger.exception("Response execution expiry worker failed")
+        try:
+            deleted = await asyncio.to_thread(store.expire_threat_intel_cache, 500)
+            if deleted:
+                logger.info(
+                    "Expired threat intelligence cache entries deleted count=%d batch_limit=%d",
+                    deleted,
+                    500,
+                )
+        except Exception:
+            logger.exception("Threat intelligence cache expiry failed")
         await asyncio.sleep(interval_seconds)
