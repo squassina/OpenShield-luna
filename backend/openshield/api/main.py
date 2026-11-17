@@ -1720,7 +1720,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
     integration = registry.get(request.gateway_id)
     if integration is None:
         try:
-            registry.register(
+            integration = registry.register(
                 IntegrationRegistration(
                     integration_id=request.gateway_id,
                     kind=request.gateway_type,
@@ -1744,6 +1744,7 @@ def connect_gateway(request: GatewayConnectRequest, http_request: Request) -> di
     return {
         "status": "connected",
         "gateway_id": connection.gateway_id,
+        "integration_id": integration.integration_id,
         "protocol_version": connection.protocol_version,
         "accepted_capabilities": [item.value for item in connection.capabilities],
         "connected_at": connection.connected_at.isoformat(),

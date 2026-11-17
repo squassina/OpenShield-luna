@@ -151,6 +151,7 @@ def test_gateway_connect_automatically_registers_home_gateway() -> None:
     response = client.post("/api/v1/gateway/connect", json=gateway_payload())
     assert response.status_code == 201
     assert response.json()["status"] == "connected"
+    assert response.json()["integration_id"] == "home-gateway"
     integrations = client.get("/api/v1/integrations").json()
     assert len(integrations) == 1
     assert integrations[0]["integration_id"] == "home-gateway"

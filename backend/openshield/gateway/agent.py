@@ -236,20 +236,17 @@ def run_agent(
 ) -> None:
     if not 5 <= heartbeat_interval <= 60:
         raise ValueError("Heartbeat interval must be between 5 and 60 seconds")
-    if openwrt_client is not None and integration_id is None:
-        raise ValueError("Integration ID is required when an OpenWrt client is configured")
-
     retry_delay = 1.0
     discovery_collected_offline = False
     openwrt_config_signature: str | None = None
     while True:
         try:
             result = client.connect()
+            if "integration_id" in result or integration_id is None:
+                integration_id = str(result.get("integration_id") or result.get("gateway_id") or "")
             if "openwrt_config" in result:
                 openwrt_config_signature = _openwrt_config_signature(result["openwrt_config"])
                 openwrt_client = _configured_openwrt_client(result["openwrt_config"])
-                if integration_id is None:
-                    integration_id = str(result.get("gateway_id") or "")
             logger.info("Gateway connected", extra={"gateway_id": result.get("gateway_id")})
             retry_delay = 1.0
         except GatewayTransportError as exc:
@@ -296,13 +293,6 @@ def run_agent(
                         openwrt_client = _configured_openwrt_client(heartbeat["openwrt_config"])
                         if integration_id is None:
                             integration_id = str(heartbeat.get("gateway_id") or "")
-                        if openwrt_client is not None and integration_id:
-                            discovery = openwrt_client.discover()
-                            _deliver_event(
-                                client,
-                                _event(integration_id, "gateway.discovery", discovery),
-                                spool,
-                            )
                 _process_gateway_commands(client, openwrt_client, heartbeat.get("commands", []), spool)
                 if spool is not None:
                     _flush_spool(client, spool)
@@ -360,7 +350,7 @@ def main() -> None:
     openwrt_url = os.getenv("OPENSHIELD_OPENWRT_URL", "").strip()
     openwrt_username = os.getenv("OPENSHIELD_OPENWRT_USERNAME", "")
     openwrt_password = os.getenv("OPENSHIELD_OPENWRT_PASSWORD", "")
-    integration_id = gateway_id
+    integration_id: str | None = None
     openwrt_values = (openwrt_url, openwrt_username, openwrt_password)
     if any(openwrt_values) and not all(openwrt_values):
         raise SystemExit(
