@@ -335,6 +335,7 @@ adapters = {
     "openai": AIProviderAdapter("openai"),
 }
 
+
 class PrivacyListEntry(BaseModel):
     list_type: str = Field(pattern=r"^(allow|block)$")
     domain: str = Field(min_length=3, max_length=253)
