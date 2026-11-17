@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from openshield.api.main import app
 from openshield.core.secrets import SecretStore
+from rate_limit_helpers import reset_rate_limits
 
 client = TestClient(app)
 
@@ -15,6 +16,7 @@ def setup_function() -> None:
     os.environ["OPENSHIELD_API_AUTH_ENABLED"] = "false"
     from openshield.api import main
 
+    reset_rate_limits(app)
     main.store.reset()
 
 
