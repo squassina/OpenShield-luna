@@ -9,7 +9,11 @@ from openshield.api.routers.health import create_health_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.metrics import create_metrics_router
-from openshield.integrations.models import Integration, IntegrationRegistration, IntegrationUpdate
+from openshield.integrations.models import (
+    Integration,
+    IntegrationRegistration,
+    IntegrationUpdate,
+)
 from openshield.integrations.registry import IntegrationRegistry
 
 
@@ -170,7 +174,6 @@ def test_integrations_router_is_independently_testable() -> None:
     assert client.patch("/api/v1/integrations/dns-home", json={}).status_code == 422
     assert client.delete("/api/v1/integrations/dns-home").status_code == 204
     assert client.get("/api/v1/integrations/dns-home/probe").status_code == 404
-
 
 
 def test_integration_connection_router_is_independently_testable() -> None:
