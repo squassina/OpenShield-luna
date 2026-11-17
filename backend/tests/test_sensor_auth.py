@@ -106,3 +106,29 @@ def test_sensor_credentials_reject_non_sensor_integrations() -> None:
     assert response.status_code == 201
     assert client.put("/api/v1/sensors/router-lab/credentials").status_code == 404
     assert client.delete("/api/v1/sensors/router-lab/credentials").status_code == 404
+
+
+def test_generic_event_ingestion_cannot_bypass_sensor_authentication() -> None:
+    from datetime import UTC, datetime
+
+    register_sensor("sensor-lab")
+    token = issue_token("sensor-lab")
+    now = datetime.now(UTC).isoformat()
+    event = {
+        "schema_version": "openshield.event.v1",
+        "event_id": "generic-sensor-event",
+        "source": {"integration_id": "sensor-lab", "kind": "zeek"},
+        "event_type": "network.zeek.conn",
+        "occurred_at": now,
+        "observed_at": now,
+        "severity": "info",
+        "payload": {},
+    }
+
+    assert client.post("/api/v1/events", json=event).status_code == 401
+    accepted = client.post(
+        "/api/v1/events",
+        json=event,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert accepted.status_code == 202
