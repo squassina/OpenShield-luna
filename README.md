@@ -154,7 +154,7 @@ No firewall, routing, wireless, or forwarding settings are modified. Real hardwa
 
 ## API quick reference
 
-The API is unauthenticated by default in residential mode. If Basic authentication is enabled, use the browser's HTTP Basic prompt or pass `-u user:password` to curl. Gateway connect/heartbeat/event routes use the separate connector bearer token when configured. Examples:
+The administrative API is unauthenticated by default in residential mode. If Basic authentication is enabled, use the browser's HTTP Basic prompt or pass `-u user:password` to curl. Gateway routes use the connector bearer token; Suricata/Zeek ingestion requires the corresponding per-sensor bearer token. Examples:
 
 ```bash
 curl http://localhost:8000/api/v1/integrations
@@ -212,17 +212,28 @@ curl -X POST http://localhost:8000/api/v1/integrations \
   -d '{"integration_id":"zeek-home","kind":"zeek","display_name":"Zeek"}'
 ```
 
-Send EVE records or Zeek JSON records as a JSON array:
+Issue a per-sensor bearer credential. The token is returned only once; OpenShield stores only its SHA-256 digest encrypted at rest. Rotation invalidates the previous token, and deletion revokes it:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/sensors/suricata-home/credentials
+curl -X PUT http://localhost:8000/api/v1/sensors/zeek-home/credentials
+```
+
+Save each returned `token` securely in the corresponding sensor's secret store. Send EVE records or Zeek JSON records as a JSON array with that sensor's token:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/sensors/suricata-home/events \
+  -H 'Authorization: Bearer <SURICATA_SENSOR_TOKEN>' \
   -H 'Content-Type: application/json' \
   --data-binary @eve-batch.json
 
 curl -X POST http://localhost:8000/api/v1/sensors/zeek-home/events \
+  -H 'Authorization: Bearer <ZEEK_SENSOR_TOKEN>' \
   -H 'Content-Type: application/json' \
   --data-binary @zeek-batch.json
 ```
+
+The credential is scoped to one integration. It cannot ingest events for another sensor. Both the sensor batch endpoint and generic `POST /api/v1/events` enforce the sensor credential for Suricata/Zeek sources. Revoke with `DELETE /api/v1/sensors/{integration_id}/credentials`.
 
 ### Network visibility API
 
@@ -231,7 +242,7 @@ curl -X POST http://localhost:8000/api/v1/sensors/zeek-home/events \
 - `GET /api/v1/sensors`: sensor ingestion freshness based on the Node-generated `observed_at` timestamp (healthy within five minutes, stale afterward, or no_data). This confirms recent delivery to OpenShield, not sensor process or packet-capture health.
 - `GET /api/v1/events?integration_id=...&event_type=...&severity=...&limit=...`: filtered event exploration. Filters, ordering, and limits execute in PostgreSQL.
 
-The residential Node API is unauthenticated. Keep sensor ingestion endpoints and port 8000 restricted to the trusted LAN; do not expose them to the Internet. Configure Suricata/Zeek to send only the records needed for visibility. The P1 APIs do not block traffic or change gateway configuration.
+Sensor ingestion always requires a per-sensor bearer credential, including in residential mode. The remaining residential API (including sensor registration and credential administration) keeps optional HTTP Basic authentication disabled by default. For Business deployments, set `OPENSHIELD_API_AUTH_ENABLED=true` and configure `OPENSHIELD_API_USERNAME` / `OPENSHIELD_API_PASSWORD` so sensor registration, credential rotation/revocation, and administrative APIs require an administrator login. Keep port 8000 behind a trusted network boundary; do not expose it directly to the Internet. Configure Suricata/Zeek to send only the records needed for visibility. The P1 APIs do not block traffic or change gateway configuration.
 
 Inventory and topology use database-side aggregation; the API does not load the full raw event history to calculate these views. Event retention, cursor pagination, sustained-load benchmarks, and database partitioning remain future hardening work.
 
@@ -239,7 +250,7 @@ The full interactive web dashboard remains in P2, consistent with the product ro
 
 ## Security
 
-Residential mode trusts the local network and does not authenticate API callers. Keep the Node API on a trusted LAN, restrict access at the network boundary, and never expose port 8000 directly to the Internet. OpenWrt RPC credentials remain separate and must be protected. Store `.env` securely and never commit router credentials or real network event data.
+Residential mode trusts the local network for administrative API access and keeps optional HTTP Basic authentication disabled by default. Suricata/Zeek ingestion is always protected by a per-sensor bearer token. Keep the Node API on a trusted LAN, restrict access at the network boundary, and never expose port 8000 directly to the Internet. OpenWrt RPC credentials remain separate and must be protected. Store `.env` securely and never commit router credentials or real network event data.
 
 Authentication, authorization, gateway enrollment, and tenant isolation will be introduced before business or SaaS deployment.
 
@@ -291,7 +302,7 @@ For provider exporters, records can also be pushed to `POST /api/v1/dns/{integra
 
 Tracker classification uses the pinned AdGuard CNAME tracker feed when the provider supplies an observed CNAME answer, with curated suffixes as a fallback; suspicious-TLD classification is heuristic. These labels are triage hints, not threat-intelligence verdicts. DNS query logs and client identifiers are sensitive browsing metadata. Keep the Node API on the trusted LAN and protect database backups.
 
-Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the unauthenticated Node API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
+Allow/block entries are OpenShield local desired state. They affect providers only after an explicit POST to the provider list sync endpoint. Pi-hole exact allow/deny entries and an OpenShield-managed AdGuard custom-rule section are reconciled and verified; unrelated provider rules are preserved. This is an administrator-triggered configuration write, not automatic enforcement. Keep the residential administrative API restricted to the trusted LAN. Native provider list synchronization and high-volume cursor/watermark pagination are tracked in [Issue #9](https://github.com/squassina/OpenShield/issues/9). Maintained classification feeds are tracked in [Issue #10](https://github.com/squassina/OpenShield/issues/10).
 
 
 ## DNS provider polling

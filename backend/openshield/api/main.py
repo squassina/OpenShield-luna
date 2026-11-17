@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import os
 import secrets
 import threading
@@ -26,6 +27,7 @@ from openshield.api.routers.openwrt_diagnostics import create_openwrt_diagnostic
 from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.privacy import create_privacy_router
 from openshield.api.routers.reports import create_reports_router
+from openshield.api.routers.sensor_credentials import create_sensor_credentials_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
 from openshield.api.schemas import (
     AdGuardCredentials,
@@ -47,7 +49,7 @@ from openshield.core.bootstrap import load_runtime_secrets
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.request_limits import RequestBodyLimitMiddleware
-from openshield.core.secrets import SecretStore
+from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.execution.worker import run_expiration_loop
@@ -179,6 +181,25 @@ def _gateway_token_valid(request: Request) -> bool:
     ))
 
 
+
+def _sensor_token_valid(integration_id: str, request: Request) -> bool:
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        return False
+    token = authorization[7:]
+    if not token:
+        return False
+    try:
+        credentials = SecretStore(store).get(integration_id)
+    except SecretConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    expected_hash = credentials.get("sensor_token_sha256") if credentials else None
+    if not isinstance(expected_hash, str):
+        return False
+    supplied_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    return secrets.compare_digest(supplied_hash, expected_hash)
+
+
 def _api_auth_enabled() -> bool:
     return os.getenv("OPENSHIELD_API_AUTH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 
@@ -254,7 +275,7 @@ async def authenticate_requests(request: Request, call_next):
     else:
         denied = _check_admin_auth(request)
         response = denied if denied is not None else await call_next(request)
-    if is_gateway or path.endswith(("-credentials", "-diagnostics")):
+    if is_gateway or path.endswith(("credentials", "-diagnostics")):
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -391,6 +412,7 @@ app.include_router(
         registry=registry,
         metrics=metrics,
         gateway_token_valid=_gateway_token_valid,
+        sensor_token_valid=_sensor_token_valid,
     )
 )
 
@@ -415,3 +437,5 @@ app.include_router(
         gateway_connections=gateway_connections,
     )
 )
+
+app.include_router(create_sensor_credentials_router(store=store, registry=registry))

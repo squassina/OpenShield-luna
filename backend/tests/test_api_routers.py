@@ -543,6 +543,7 @@ def test_events_router_is_independently_testable() -> None:
         registry=registry,
         metrics=metrics,
         gateway_token_valid=lambda request: request.headers.get("Authorization") == "Bearer gateway",
+        sensor_token_valid=lambda integration_id, request: True,
     ))
     client = TestClient(app)
 
