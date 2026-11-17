@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from psycopg_pool import PoolTimeout
 from pydantic import BaseModel, Field
 
+from openshield.api.routers.events import create_events_router
 from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
 from openshield.api.routers.incidents import create_incidents_router
@@ -48,7 +49,6 @@ from openshield.core.request_limits import RequestBodyLimitMiddleware
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
 from openshield.core.tls import CABundleError, create_ssl_context
-from openshield.events.models import EventEnvelope
 from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
@@ -73,7 +73,6 @@ from openshield.privacy.polling import (
 )
 from openshield.privacy.providers import DnsProviderError, fetch_dns_records, sync_provider_lists
 from openshield.visibility.adapter import NetworkSensorAdapter
-from openshield.visibility.normalizers import normalize_sensor_batch
 
 __all__ = ["AIInvestigationRequest", "AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "IncidentStatusRequest", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
 
@@ -408,6 +407,29 @@ app.include_router(
 )
 
 app.include_router(create_inventory_router(store=store))
+app.include_router(
+    create_events_router(
+        store=store,
+        registry=registry,
+        metrics=metrics,
+        gateway_token_valid=_gateway_token_valid,
+    )
+)
+
+
+def _require_enabled_ingestion(integration_id: str, enabled: bool, source: str) -> None:
+    if enabled:
+        return
+    store.write_audit(
+        "integration.ingestion.rejected",
+        None,
+        integration_id,
+        {"source": source, "reason": "integration_disabled"},
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Integration is disabled; new ingestion is rejected",
+    )
 
 
 @app.get("/api/v1/integrations/{integration_id}/test", tags=["integrations"])
@@ -463,120 +485,6 @@ def test_openwrt_connector(integration_id: str) -> dict[str, object]:
         "router": router,
         "gateway": gateway,
     }
-
-
-def _require_enabled_ingestion(
-    integration_id: str, enabled: bool, source: str,
-) -> None:
-    if enabled:
-        return
-    store.write_audit(
-        "integration.ingestion.rejected",
-        None,
-        integration_id,
-        {"source": source, "reason": "integration_disabled"},
-    )
-    raise HTTPException(
-        status_code=409,
-        detail="Integration is disabled; new ingestion is rejected",
-    )
-
-
-@app.post("/api/v1/events", status_code=202, tags=["events"])
-def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
-    if (
-        event.source.kind == "openwrt"
-        and not _gateway_token_valid(request)
-    ):
-        raise HTTPException(status_code=401, detail="Gateway authentication required")
-    integration = registry.get(event.source.integration_id)
-    if integration is None:
-        raise HTTPException(status_code=400, detail="Unknown source integration")
-    if integration.kind != event.source.kind:
-        raise HTTPException(status_code=400, detail="Event source kind does not match integration")
-    _require_enabled_ingestion(integration.integration_id, integration.enabled, "events")
-    inserted = store.insert_event(event)
-    if inserted:
-        metrics.increment("openshield_events_ingested_total")
-    if event.source.kind == "openwrt" and event.event_type == "gateway.discovery":
-        store.record_gateway_discovery(
-            event.source.integration_id, event.payload, event.observed_at
-        )
-    return {"status": "accepted" if inserted else "duplicate", "event_id": event.event_id}
-
-
-@app.get("/api/v1/events", tags=["events"])
-def list_events(
-    integration_id: str | None = None,
-    event_type: str | None = None,
-    severity: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
-    cursor: str | None = None,
-) -> dict[str, object]:
-    position = None
-    if cursor:
-        try:
-            raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
-            timestamp, event_id = raw.split("|", 1)
-            position = (datetime.fromisoformat(timestamp), event_id)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=422, detail="Invalid event cursor") from exc
-    events, next_position = store.list_events_page(
-        integration_id=integration_id, event_type=event_type,
-        severity=severity, limit=limit, cursor=position,
-    )
-    next_cursor = None
-    if next_position:
-        raw = f"{next_position[0].isoformat()}|{next_position[1]}".encode()
-        next_cursor = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return {"items": [event.model_dump(mode="json") for event in events], "next_cursor": next_cursor}
-
-
-@app.post("/api/v1/sensors/{integration_id}/events", status_code=202, tags=["sensors"])
-def ingest_sensor_events(
-    integration_id: str,
-    records: Annotated[list[dict[str, Any]], Body()],
-) -> dict[str, object]:
-    integration = registry.get(integration_id)
-    if integration is None or integration.kind not in {"suricata", "zeek"}:
-        raise HTTPException(status_code=404, detail="Network sensor integration not found")
-    _require_enabled_ingestion(integration_id, integration.enabled, "sensor_events")
-    try:
-        events = normalize_sensor_batch(integration.kind, records, integration_id)
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    accepted = duplicates = 0
-    for event in events:
-        if store.insert_event(event):
-            accepted += 1
-            metrics.increment("openshield_events_ingested_total")
-        else:
-            duplicates += 1
-    return {"accepted": accepted, "duplicates": duplicates, "received": len(events)}
-
-
-@app.get("/api/v1/sensors", tags=["sensors"])
-def list_sensor_health() -> list[dict[str, object]]:
-    now = datetime.now(UTC)
-    result = []
-    stats = store.sensor_event_stats()
-    for integration in registry.list_all():
-        if integration.kind not in {"suricata", "zeek"}:
-            continue
-        sensor_stats = stats.get(integration.integration_id, {})
-        latest = sensor_stats.get("last_observed_at")
-        age = now - latest if latest else None
-        result.append({
-            "integration_id": integration.integration_id,
-            "kind": integration.kind,
-            "display_name": integration.display_name,
-            "status": "healthy" if age is not None and age <= timedelta(minutes=5)
-                else "stale" if age is not None else "no_data",
-            "last_event_at": latest.isoformat() if latest else None,
-            "events_seen": sensor_stats.get("events_seen", 0),
-            "freshness_basis": "node_observed_at",
-        })
-    return result
 
 
 @app.post("/api/v1/dns/{integration_id}/queries", status_code=202, tags=["privacy"])
