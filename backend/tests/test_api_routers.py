@@ -10,6 +10,7 @@ from openshield.api.routers.incidents import create_incidents_router
 from openshield.api.routers.integration_credentials import create_integration_credentials_router
 from openshield.api.routers.integration_tests import create_integration_test_router
 from openshield.api.routers.integrations import create_integrations_router
+from openshield.api.routers.inventory import create_inventory_router
 from openshield.api.routers.metrics import create_metrics_router
 from openshield.api.routers.policy_execution import create_policy_execution_router
 from openshield.api.routers.threat_intel import create_threat_intel_router
@@ -377,3 +378,97 @@ def test_threat_intel_router_is_independently_testable() -> None:
     )
     assert enriched.status_code == 200
     assert enriched.json() == {"event_ids": ["event-1", "event-2"]}
+
+
+
+def test_inventory_router_is_independently_testable() -> None:
+    now = datetime.now(UTC)
+    first_seen = now.replace(year=now.year - 1)
+
+    class InventoryStore(FakeStore):
+        def list_gateway_discovery_snapshots(self):
+            return [{
+                "gateway_id": "router-1",
+                "observed_at": now,
+                "payload": {
+                    "board": {"hostname": "home-router"},
+                    "interfaces": [{
+                        "name": "lan",
+                        "device": "br-lan",
+                        "vlan_id": 10,
+                        "subnets": [{"subnet": "10.0.0.0/24"}],
+                    }],
+                },
+            }]
+
+        def list_gateway_devices(self, limit=None):
+            return [{
+                "gateway_id": "router-1",
+                "mac_address": "aa:bb:cc:dd:ee:ff",
+                "first_seen_at": first_seen,
+                "last_seen_at": now,
+                "payload": {
+                    "name": "desktop",
+                    "vendor": "Example",
+                    "interface": "lan",
+                },
+            }]
+
+        def list_device_identity_observations(self):
+            return [{
+                "ip_address": "10.0.0.5",
+                "gateway_id": "router-1",
+                "mac_address": "aa:bb:cc:dd:ee:ff",
+                "source": "gateway.discovery",
+                "confidence": "high",
+                "first_seen_at": first_seen,
+                "last_seen_at": now,
+            }]
+
+        def list_inventory_observations(self, *, limit):
+            assert limit == 500
+            return [{
+                "ip_address": "10.0.0.5",
+                "protocols": {"tcp", "udp"},
+                "first_seen": first_seen,
+                "last_seen": now,
+                "observations": 3,
+            }]
+
+        def list_topology_observations(self, *, limit):
+            assert limit == 1000
+            return [{
+                "source": "10.0.0.5",
+                "target": "8.8.8.8",
+                "protocol": "tcp",
+                "observations": 2,
+                "source_integration_ids": ["sensor-1"],
+                "source_event_types": ["flow"],
+                "first_seen": first_seen,
+                "last_seen": now,
+            }]
+
+        def list_nat_observations(self, *, limit):
+            assert limit == 1000
+            return []
+
+    app = FastAPI()
+    app.include_router(create_inventory_router(store=InventoryStore()))
+    client = TestClient(app)
+
+    router_devices = client.get("/api/v1/inventory/router-devices")
+    assert router_devices.status_code == 200
+    assert router_devices.json()["gateways"][0]["board"]["hostname"] == "home-router"
+    assert router_devices.json()["devices"][0]["status"] == "online"
+
+    devices = client.get("/api/v1/inventory/devices")
+    assert devices.status_code == 200
+    assert devices.json()[0]["mac_address"] == "aa:bb:cc:dd:ee:ff"
+    assert devices.json()[0]["network_segments"][0]["subnet"] == "10.0.0.0/24"
+
+    topology = client.get("/api/v1/inventory/topology")
+    assert topology.status_code == 200
+    assert topology.json()["nodes"] == ["8.8.8.8", "10.0.0.5"]
+    assert topology.json()["edges"][0]["direction"] == "outbound"
+    assert topology.json()["relationships"][0]["relationship"] == "network_segment_membership"
+    assert client.get("/api/v1/inventory/devices?limit=0").status_code == 422
