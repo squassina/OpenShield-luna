@@ -13,6 +13,7 @@ from openshield.core.tls import CABundleError, create_ssl_context
 from openshield.integrations.models import Integration
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+ADGUARD_WATERMARK_OVERLAP_SECONDS = 1.0
 
 
 class DnsProviderError(RuntimeError):
@@ -420,8 +421,17 @@ def fetch_dns_records_page(
         if not oldest and records:
             oldest = records[-1].get("time") if isinstance(records[-1], dict) else None
         newest = state.get("newest")
-        if not newest and records and isinstance(records[0], dict):
-            newest = records[0].get("time")
+        if records:
+            newest_record = max(
+                (
+                    item for item in records
+                    if isinstance(item, dict) and _time_value(item.get("time")) is not None
+                ),
+                key=lambda item: _time_value(item.get("time")) or 0,
+                default=None,
+            )
+            if newest_record is not None:
+                newest = newest_record.get("time")
         oldest_epoch = _time_value(oldest)
         done = not oldest or oldest_epoch is None or oldest_epoch <= float(state["watermark"])
         if done:
@@ -433,6 +443,18 @@ def fetch_dns_records_page(
                 **state, "older_than": oldest, "pages": int(state.get("pages", 0)) + 1,
                 "newest": newest,
             }
+
+        # AdGuard returns the newest page on every poll. Filter old records before
+        # normalization/event hashing; a one-second overlap preserves timestamp ties
+        # and slightly late arrivals while the deterministic event IDs deduplicate them.
+        if not state.get("bootstrap"):
+            threshold = float(state["watermark"]) - ADGUARD_WATERMARK_OVERLAP_SECONDS
+            records = [
+                item for item in records
+                if not isinstance(item, dict)
+                or _time_value(item.get("time")) is None
+                or _time_value(item.get("time")) >= threshold
+            ]
         return _normalize_adguard_records(records), next_state, done
 
     raise DnsProviderError("Unsupported DNS provider")
