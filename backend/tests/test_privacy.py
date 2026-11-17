@@ -178,7 +178,7 @@ def test_provider_sync_endpoint_ingests_pulled_records() -> None:
         "timestamp": datetime.now(UTC).isoformat(),
         "status": "blocked",
     }
-    with patch("openshield.api.main.fetch_dns_records", return_value=[record]):
+    with patch("openshield.api.routers.privacy.fetch_dns_records", return_value=[record]):
         response = client.post("/api/v1/privacy/sources/pihole-home/sync")
     assert response.status_code == 202
     assert response.json() == {"accepted": 1, "duplicates": 0, "received": 1}
@@ -272,7 +272,7 @@ def test_provider_list_sync_merges_manual_and_provider_scoped_entries() -> None:
         captured.extend(dict(entry) for entry in entries)
         return {"provider": "pihole", "added": 2, "removed": 0}
 
-    with patch("openshield.api.main.sync_provider_lists", side_effect=fake_sync):
+    with patch("openshield.api.routers.privacy.sync_provider_lists", side_effect=fake_sync):
         response = client.post("/api/v1/privacy/lists/pihole-home/sync")
         repeated = client.post("/api/v1/privacy/lists/pihole-home/sync")
         deleted = client.delete("/api/v1/privacy/lists/block/manual.example")
