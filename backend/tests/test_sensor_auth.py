@@ -34,6 +34,8 @@ def issue_token(integration_id: str) -> str:
     response = client.put(f"/api/v1/sensors/{integration_id}/credentials")
     assert response.status_code == 200
     assert response.json()["status"] == "rotated"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
     return response.json()["token"]
 
 
