@@ -1399,3 +1399,87 @@ def test_cname_tracker_classification_uses_label_suffix_membership(monkeypatch) 
 
     assert exact["category"] == nested["category"] == "tracker"
     assert unrelated["category"] == "unclassified"
+
+
+
+def test_adguard_idle_page_filters_records_at_or_before_watermark(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    watermark = datetime.fromisoformat("2026-11-13T12:00:00+00:00").timestamp()
+    payload = {
+        "oldest": "2026-11-13T11:59:40Z",
+        "data": [
+            {"question": {"host": "old-one.example"}, "time": "2026-11-13T11:59:50Z"},
+            {"question": {"host": "old-two.example"}, "time": "2026-11-13T11:59:40Z"},
+        ],
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size):
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(providers, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    records, next_cursor, done = providers.fetch_dns_records_page(
+        integration, {"watermark": watermark, "complete": True},
+    )
+
+    assert records == []
+    assert done is True
+    assert next_cursor == {"watermark": watermark, "complete": True}
+
+
+def test_adguard_watermark_keeps_new_equal_and_slightly_late_records(monkeypatch) -> None:
+    import json
+
+    from openshield.privacy import providers
+
+    integration = Integration(
+        integration_id="adguard-home", kind="adguard", display_name="AdGuard",
+        capabilities=[], config={"base_url": "http://192.0.2.54"},
+    )
+    watermark = datetime.fromisoformat("2026-11-13T12:00:00+00:00").timestamp()
+    payload = {
+        "oldest": "2026-11-13T11:59:58Z",
+        "data": [
+            {"question": {"host": "new.example"}, "time": "2026-11-13T12:00:02Z"},
+            {"question": {"host": "same-second.example"}, "time": "2026-11-13T12:00:00Z"},
+            {"question": {"host": "late.example"}, "time": "2026-11-13T11:59:59.500Z"},
+            {"question": {"host": "too-old.example"}, "time": "2026-11-13T11:59:58Z"},
+        ],
+    }
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size):
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(providers, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    records, next_cursor, done = providers.fetch_dns_records_page(
+        integration, {"watermark": watermark, "complete": True},
+    )
+
+    assert [item["domain"] for item in records] == [
+        "new.example", "same-second.example", "late.example",
+    ]
+    assert done is True
+    assert next_cursor["watermark"] == datetime.fromisoformat(
+        "2026-11-13T12:00:02+00:00"
+    ).timestamp()
+    assert next_cursor["watermark"] >= watermark
