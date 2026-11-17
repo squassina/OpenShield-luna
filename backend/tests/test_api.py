@@ -323,6 +323,39 @@ def test_event_occurrence_timestamp_is_stored_as_timestamptz() -> None:
     assert "occurred_at DESC" in index[0]
 
 
+def test_event_analytics_uses_composite_timestamp_index() -> None:
+    from openshield.api import main
+
+    with main.store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO events (event_id, payload, occurred_at)
+            SELECT
+                'analytics-plan-' || seq,
+                jsonb_build_object(
+                    'event_type',
+                    CASE WHEN seq % 100 = 0 THEN 'privacy.dns.query' ELSE 'sensor.event' END
+                ),
+                NOW() - seq * INTERVAL '1 second'
+            FROM generate_series(1, 20000) AS series(seq)
+            """
+        )
+        cursor.execute("ANALYZE events")
+        cursor.execute(
+            """
+            EXPLAIN (ANALYZE, BUFFERS)
+            SELECT event_id
+            FROM events
+            WHERE payload->>'event_type' = 'privacy.dns.query'
+              AND occurred_at >= NOW() - INTERVAL '110 seconds'
+            """
+        )
+        plan = "\n".join(row[0] for row in cursor.fetchall())
+
+    assert "events_event_type_occurred_at_idx" in plan
+    assert "occurred_at" in plan
+
+
 def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
     register_integration()
     event = sample_event()
