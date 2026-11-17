@@ -8,6 +8,8 @@ from openshield.api.routers.gateway import create_gateway_router
 from openshield.api.routers.health import create_health_router
 from openshield.api.routers.integrations import create_integrations_router
 from openshield.api.routers.metrics import create_metrics_router
+from openshield.integrations.models import Integration
+from openshield.integrations.registry import IntegrationRegistry
 
 
 class FakeStore:
@@ -125,12 +127,9 @@ def test_gateway_router_is_independently_testable() -> None:
     ]
 
 
-
 def test_integrations_router_is_independently_testable() -> None:
-    from openshield.integrations.registry import IntegrationRegistry
-
     class ProbeAdapter:
-        def probe(self, integration):
+        def probe(self, integration: Integration) -> dict[str, object]:
             return {"integration_id": integration.integration_id, "status": "configured"}
 
     app = FastAPI()
