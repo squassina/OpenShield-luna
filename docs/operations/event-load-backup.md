@@ -58,7 +58,7 @@ Do not add partitioning or indexes by intuition. Change schema only when measure
 
 ## 4. PostgreSQL backup
 
-Create a custom-format backup without stopping Node:
+Create a custom-format backup. For a row-count restore drill, follow Section 5 and stop database writers before capturing both the manifest and backup:
 
 ~~~bash
 mkdir -p backups
