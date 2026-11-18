@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-import pytest
 
 
 script_path = (
@@ -69,42 +68,42 @@ def test_event_query_specs_match_list_events_page_filters_and_sort_order() -> No
     assert specs[2][2] == ("zeek-lab", "network.zeek.conn", "info")
 
 
-@pytest.mark.parametrize("analyze", [False, True])
-def test_collect_diagnostics_is_read_only_and_reports_query_plans(analyze: bool) -> None:
-    connection = FakeConnection()
-    args = type(
-        "Args",
-        (),
-        {
-            "integration_id": "zeek-lab",
-            "event_type": "network.zeek.conn",
-            "severity": "info",
-            "analyze": analyze,
-            "statement_timeout_ms": 15_000,
-        },
-    )()
+def test_collect_diagnostics_is_read_only_and_reports_query_plans() -> None:
+    for analyze in (False, True):
+        connection = FakeConnection()
+        args = type(
+            "Args",
+            (),
+            {
+                "integration_id": "zeek-lab",
+                "event_type": "network.zeek.conn",
+                "severity": "info",
+                "analyze": analyze,
+                "statement_timeout_ms": 15_000,
+            },
+        )()
 
-    report = diagnostics.collect_diagnostics(connection, args)
+        report = diagnostics.collect_diagnostics(connection, args)
 
-    assert report["database"] == {
-        "name": "openshield_test",
-        "server_version": "16.4",
-        "size_bytes": 1024,
-    }
-    assert report["events"]["estimated_live_rows"] == 1200
-    assert report["events"]["total_bytes"] == 8192
-    assert len(report["indexes"]) == 1
-    assert set(report["query_plans"]) == {
-        "recent_page",
-        "integration_page",
-        "integration_type_severity_page",
-        "integration_cursor_page",
-    }
-    assert report["explain_analyze_executed"] is analyze
+        assert report["database"] == {
+            "name": "openshield_test",
+            "server_version": "16.4",
+            "size_bytes": 1024,
+        }
+        assert report["events"]["estimated_live_rows"] == 1200
+        assert report["events"]["total_bytes"] == 8192
+        assert len(report["indexes"]) == 1
+        assert set(report["query_plans"]) == {
+            "recent_page",
+            "integration_page",
+            "integration_type_severity_page",
+            "integration_cursor_page",
+        }
+        assert report["explain_analyze_executed"] is analyze
 
-    statements = [statement for statement, _ in connection.cursor_instance.executed]
-    assert statements[0] == "SET TRANSACTION READ ONLY"
-    assert "set_config('statement_timeout'" in statements[1]
-    explain_statements = [statement for statement in statements if statement.startswith("EXPLAIN")]
-    assert len(explain_statements) == 4
-    assert all(("ANALYZE, BUFFERS" in statement) is analyze for statement in explain_statements)
+        statements = [statement for statement, _ in connection.cursor_instance.executed]
+        assert statements[0] == "SET TRANSACTION READ ONLY"
+        assert "set_config('statement_timeout'" in statements[1]
+        explain_statements = [statement for statement in statements if statement.startswith("EXPLAIN")]
+        assert len(explain_statements) == 4
+        assert all(("ANALYZE, BUFFERS" in statement) is analyze for statement in explain_statements)
