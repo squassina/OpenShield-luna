@@ -1,11 +1,22 @@
 import base64
 import json
 import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 from urllib.request import Request
 
 import pytest
 
-from scripts.ops import benchmark_sensor_ingestion as benchmark
+benchmark_path = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "ops"
+    / "benchmark_sensor_ingestion.py"
+)
+benchmark_spec = spec_from_file_location("benchmark_sensor_ingestion", benchmark_path)
+assert benchmark_spec is not None and benchmark_spec.loader is not None
+benchmark = module_from_spec(benchmark_spec)
+benchmark_spec.loader.exec_module(benchmark)
 
 
 def test_percentile_uses_nearest_rank_and_handles_empty_values() -> None:
