@@ -1,4 +1,4 @@
-import json
+from json import loads
 from pathlib import Path
 
 from openshield.visibility.normalizers import normalize_sensor_batch
@@ -9,7 +9,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "sensors"
 
 def load_jsonl(name: str) -> list[dict[str, object]]:
     return [
-        json.loads(line)
+        loads(line)
         for line in (FIXTURE_DIR / name).read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
