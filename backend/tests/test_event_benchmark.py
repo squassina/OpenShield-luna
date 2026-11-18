@@ -3,6 +3,7 @@ import json
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from typing import Self
 from urllib.request import Request
 
 import pytest
@@ -31,7 +32,7 @@ def test_api_uses_basic_auth_from_environment(monkeypatch: pytest.MonkeyPatch) -
     captured: list[Request] = []
 
     class Response:
-        def __enter__(self) -> "Response":
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *_: object) -> None:
