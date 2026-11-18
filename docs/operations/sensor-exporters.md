@@ -11,6 +11,8 @@ Store this token in the sensor shipper's secret store. The plaintext is returned
 
 ## 1. Suricata
 
+A standalone output fragment is available at [docs/examples/sensors/suricata-eve.yaml](../examples/sensors/suricata-eve.yaml); merge it into the existing `outputs` list rather than replacing unrelated outputs.
+
 Enable EVE JSON output in `suricata.yaml`:
 
 ```yaml
@@ -56,6 +58,8 @@ curl --fail-with-body -X POST \
 ```
 
 ## 2. Zeek
+
+The minimal site script is available at [docs/examples/sensors/zeek-local.zeek](../examples/sensors/zeek-local.zeek).
 
 Issue a separate token for the Zeek integration; tokens are integration-scoped:
 
