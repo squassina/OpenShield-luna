@@ -11,8 +11,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psycopg
-
 
 FORMAT_VERSION = 1
 
@@ -198,6 +196,8 @@ def _load_manifest(path: Path) -> dict[str, object]:
 
 
 def main() -> int:
+    import psycopg
+
     args = parse_args()
     dsn = os.getenv("OPENSHIELD_DATABASE_URL", "").strip()
     if not dsn:
