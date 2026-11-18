@@ -1,6 +1,13 @@
 # Suricata and Zeek sensor forwarding
 
-OpenShield accepts bounded JSON batches from Suricata EVE and Zeek JSON logs. Register a sensor first in **Service integrations**; choose kind `suricata` or `zeek`, then copy the resulting integration ID.
+OpenShield accepts bounded JSON batches from Suricata EVE and Zeek JSON logs. Register a sensor first in **Service integrations**; choose kind `suricata` or `zeek`, then copy the resulting integration ID. Issue a token once per integration with the credential endpoint (requires administrator authentication when enabled):
+
+```bash
+export SENSOR_TOKEN="$(curl --fail-with-body -sS -X PUT \\
+  http://openshield-node:8000/api/v1/sensors/suricata-home/credentials | jq -r .token)"
+```
+
+Store this token in the sensor shipper's secret store. The plaintext is returned only during creation/rotation; rotate it to invalidate the previous token, or DELETE the same endpoint to revoke it.
 
 ## 1. Suricata
 
@@ -28,6 +35,7 @@ Restart Suricata and confirm it writes JSON lines to `eve.json`. Smoke-test inge
 curl --fail-with-body -X POST \
   http://openshield-node:8000/api/v1/sensors/suricata-home/events \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $SENSOR_TOKEN" \
   --data-binary '[
     {
       "timestamp": "2026-11-13T12:00:00.000000+0000",
@@ -49,6 +57,14 @@ curl --fail-with-body -X POST \
 
 ## 2. Zeek
 
+Issue a separate token for the Zeek integration; tokens are integration-scoped:
+
+```bash
+export SENSOR_TOKEN="$(curl --fail-with-body -sS -X PUT \
+  http://openshield-node:8000/api/v1/sensors/zeek-home/credentials | jq -r .token)"
+```
+
+
 Enable JSON logs in the Zeek deployment (for example in `local.zeek`):
 
 ```zeek
@@ -62,6 +78,7 @@ Ensure the `conn.log`, `dns.log`, `http.log`, and `ssl.log` files are emitted as
 curl --fail-with-body -X POST \
   http://openshield-node:8000/api/v1/sensors/zeek-home/events \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $SENSOR_TOKEN" \
   --data-binary '[
     {
       "_path": "conn",
@@ -84,7 +101,9 @@ curl --fail-with-body -X POST \
 - Preserve the original sensor timestamps. OpenShield assigns its own observation timestamp.
 - Retries are safe for duplicate event IDs; include Suricata `community_id` or Zeek `uid` when available.
 - The Node normalizers retain only allowlisted fields; arbitrary sensor fields are discarded.
-- Keep Node reachable only from the trusted sensor network. Sensor-ingestion authentication is a separate hardening item before Business deployment (tracked by issue #7).
+- Send the integration-scoped bearer token in the `Authorization` header; tokens cannot be reused across integrations.
+- Default application limits: 120 ingestion requests per client IP per 60 seconds, 10 sensor credential operations per client IP per 60 seconds, and 5 MiB per request. A 429 response includes `Retry-After`.
+- Keep Node reachable only from the trusted sensor network. Compose binds to loopback by default; when enabling LAN access, bind to the Node's specific LAN IP and restrict port 8000 with the host firewall. Use a TLS reverse proxy for untrusted network segments and apply additional edge rate limits.
 - Do not send PCAPs, raw packet payloads, passwords, or unrelated local files to these endpoints.
 
 ## 4. Verify
