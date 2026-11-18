@@ -8,11 +8,11 @@ from urllib.request import Request
 
 import pytest
 
-benchmark_path = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "ops"
-    / "benchmark_sensor_ingestion.py"
+benchmark_relative_path = Path("scripts/ops/benchmark_sensor_ingestion.py")
+benchmark_path = next(
+    parent / benchmark_relative_path
+    for parent in Path(__file__).resolve().parents
+    if (parent / benchmark_relative_path).is_file()
 )
 benchmark_spec = spec_from_file_location("benchmark_sensor_ingestion", benchmark_path)
 assert benchmark_spec is not None and benchmark_spec.loader is not None
