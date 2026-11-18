@@ -1,0 +1,4 @@
+{"ts":1794916800.0,"_path":"conn","uid":"C-fixture-001","id.orig_h":"192.0.2.10","id.orig_p":51514,"id.resp_h":"198.51.100.20","id.resp_p":443,"proto":"tcp","service":"ssl","duration":1.2,"orig_bytes":300,"resp_bytes":500,"conn_state":"SF","fixture_secret":"must-not-be-retained"}
+{"ts":1794916801.0,"_path":"dns","uid":"C-fixture-002","id.orig_h":"192.0.2.10","id.orig_p":53000,"id.resp_h":"192.0.2.53","id.resp_p":53,"proto":"udp","query":"example.test","qtype_name":"A","answers":["198.51.100.20"],"rcode_name":"NOERROR"}
+{"ts":1794916802.0,"_path":"http","uid":"C-fixture-003","id.orig_h":"192.0.2.10","id.orig_p":51515,"id.resp_h":"198.51.100.20","id.resp_p":80,"proto":"tcp","method":"GET","host":"example.test","uri":"/health","status_code":200}
+{"ts":1794916803.0,"_path":"ssl","uid":"C-fixture-004","id.orig_h":"192.0.2.10","id.orig_p":51516,"id.resp_h":"198.51.100.20","id.resp_p":443,"proto":"tcp","server_name":"example.test","version":"TLSv13"}
