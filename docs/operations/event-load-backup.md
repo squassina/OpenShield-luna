@@ -34,12 +34,25 @@ Run progressively (1k, 10k, 50k). Stop if API latency, DB load, disk growth or s
 
 ## 3. Query plans and table sizes
 
+Generate a machine-readable report from the dev tools image. The command connects to the configured database in read-only mode, reports estimated event row counts/table and index sizes, index usage statistics, and plans for the same filters and ordering used by the event-list API:
+
+~~~bash
+docker compose run --rm openshield-test python scripts/ops/inspect_event_storage.py \
+  --integration-id benchmark-zeek \
+  --event-type network.zeek.conn \
+  --severity info > event-storage-report.json
+~~~
+
+The default uses EXPLAIN without executing the SELECT statements. n_live_tup and n_dead_tup are PostgreSQL estimates; index counters are cumulative since the last statistics reset. Preserve the JSON report with the benchmark run's commit, database version and host details.
+
+For measured execution time and buffer usage, repeat on staging only with **--analyze**. This enables EXPLAIN (ANALYZE, BUFFERS), which executes each SELECT and can add real database load. The utility applies a read-only transaction and a bounded statement timeout (30 seconds by default).
+
+The equivalent manual inventory queries remain available:
+
 ~~~bash
 docker compose exec -T openshield-db psql -U openshield -d openshield -c "SELECT version();"
 docker compose exec -T openshield-db psql -U openshield -d openshield -c "SELECT relname, n_live_tup, pg_total_relation_size(relid) AS bytes FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC;"
 ~~~
-
-Capture EXPLAIN (ANALYZE, BUFFERS) for representative event-list queries using integration, event-type, severity and received-at filters. Run on staging because ANALYZE executes the query. Record duration, rows scanned/returned, buffers and chosen indexes.
 
 Do not add partitioning or indexes by intuition. Change schema only when measurements show a repeatable bottleneck; include representative data and regression tests.
 
