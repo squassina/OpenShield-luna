@@ -97,7 +97,7 @@ def test_main_reports_ingestion_and_read_after_write(
         def request(self, path: str, payload: object | None = None) -> dict:
             if path == "/health/ready":
                 return {"status": "ready"}
-            assert path == "/api/v1/sensors/zeek/events"
+            assert path == "/api/v1/sensors/zeek-lab/events"
             assert isinstance(payload, list)
             return {"received": len(payload), "accepted": len(payload), "duplicates": 0}
 
