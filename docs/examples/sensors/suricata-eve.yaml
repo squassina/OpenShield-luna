@@ -1,0 +1,13 @@
+# Merge this eve-log output into the existing Suricata outputs list.
+# Validate the complete file with the Suricata version deployed at the capture host.
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert
+        - flow
+        - dns
+        - http
+        - tls
