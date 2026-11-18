@@ -37,32 +37,32 @@ def event_query_specs(
     return [
         (
             "recent_page",
-            "SELECT payload, received_at, event_id FROM events "
-            "ORDER BY received_at DESC, event_id DESC LIMIT 201",
+            """SELECT payload, received_at, event_id FROM events
+            ORDER BY received_at DESC, event_id DESC LIMIT 201""",
             (),
         ),
         (
             "integration_page",
-            "SELECT payload, received_at, event_id FROM events "
-            "WHERE payload #>> '{source,integration_id}' = %s "
-            "ORDER BY received_at DESC, event_id DESC LIMIT 201",
+            """SELECT payload, received_at, event_id FROM events
+            WHERE payload #>> '{source,integration_id}' = %s
+            ORDER BY received_at DESC, event_id DESC LIMIT 201""",
             (integration_id,),
         ),
         (
             "integration_type_severity_page",
-            "SELECT payload, received_at, event_id FROM events "
-            "WHERE payload #>> '{source,integration_id}' = %s "
-            "AND payload->>'event_type' = %s "
-            "AND payload->>'severity' = %s "
-            "ORDER BY received_at DESC, event_id DESC LIMIT 201",
+            """SELECT payload, received_at, event_id FROM events
+            WHERE payload #>> '{source,integration_id}' = %s
+            AND payload->>'event_type' = %s
+            AND payload->>'severity' = %s
+            ORDER BY received_at DESC, event_id DESC LIMIT 201""",
             (integration_id, event_type, severity),
         ),
         (
             "integration_cursor_page",
-            "SELECT payload, received_at, event_id FROM events "
-            "WHERE payload #>> '{source,integration_id}' = %s "
-            "AND (received_at, event_id) < (%s, %s) "
-            "ORDER BY received_at DESC, event_id DESC LIMIT 201",
+            """SELECT payload, received_at, event_id FROM events
+            WHERE payload #>> '{source,integration_id}' = %s
+            AND (received_at, event_id) < (%s, %s)
+            ORDER BY received_at DESC, event_id DESC LIMIT 201""",
             (integration_id, cursor_time, "~"),
         ),
     ]
