@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -191,5 +191,5 @@ def test_write_manifest_uses_restrictive_permissions_and_valid_json(tmp_path: Pa
     assert target.is_file()
     assert target.stat().st_mode & 0o777 == 0o600
     assert restore_verifier.validate_manifest(
-        __import__("json").loads(target.read_text(encoding="utf-8"))
+        json.loads(target.read_text(encoding="utf-8"))
     ) == manifest
