@@ -97,8 +97,11 @@ def validate_manifest(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or value.get("format_version") != FORMAT_VERSION:
         raise ValueError("Unsupported or invalid restore manifest format")
     postgres_major = value.get("postgres_major")
+    source_database = value.get("source_database")
     tables = value.get("tables")
     migrations = value.get("schema_migrations")
+    if not isinstance(source_database, str) or not source_database:
+        raise ValueError("Manifest source_database must be a non-empty string")
     if not isinstance(postgres_major, int) or postgres_major < 10:
         raise ValueError("Manifest postgres_major must be a valid integer")
     if not isinstance(tables, dict) or not tables:
@@ -139,8 +142,10 @@ def compare_manifests(
     }
     postgres_major_matches = expected["postgres_major"] == actual["postgres_major"]
     migrations_match = expected["schema_migrations"] == actual["schema_migrations"]
+    same_database_name = expected["source_database"] == actual["source_database"]
     matches = (
-        postgres_major_matches
+        not same_database_name
+        and postgres_major_matches
         and migrations_match
         and not missing_tables
         and not unexpected_tables
@@ -150,6 +155,7 @@ def compare_manifests(
         "matches": matches,
         "source_database": expected.get("source_database"),
         "restored_database": actual.get("source_database"),
+        "same_database_name": same_database_name,
         "postgres_major_matches": postgres_major_matches,
         "expected_postgres_major": expected["postgres_major"],
         "actual_postgres_major": actual["postgres_major"],
