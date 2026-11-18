@@ -10,8 +10,6 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-
 FORMAT_VERSION = 1
 
 
