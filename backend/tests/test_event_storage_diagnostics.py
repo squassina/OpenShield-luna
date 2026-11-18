@@ -2,8 +2,6 @@ from datetime import UTC, datetime
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
-
-
 script_relative_path = Path("scripts/ops/inspect_event_storage.py")
 script_path = next(
     parent / script_relative_path
