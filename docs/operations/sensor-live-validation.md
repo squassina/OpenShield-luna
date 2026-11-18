@@ -31,8 +31,10 @@ Record interface speed, packet drops, CPU, memory and disk baseline. Do not incl
 
 Follow [sensor-exporters.md](sensor-exporters.md) for baseline EVE JSON and Zeek JSON settings. Validate at least:
 
-- Suricata EVE: alert, flow, DNS, HTTP and TLS.
-- Zeek JSON: conn, dns, http and ssl.
+- Suricata EVE: alert, flow, DNS, HTTP and TLS. Use the [Suricata EVE output example](../examples/sensors/suricata-eve.yaml) as the output fragment to merge into the host's existing configuration.
+- Zeek JSON: conn, dns, http and ssl. Use the [Zeek JSON logging example](../examples/sensors/zeek-local.zeek) in the site configuration.
+- The sanitized [Suricata fixture](../../backend/tests/fixtures/sensors/suricata-eve.jsonl) and [Zeek fixture](../../backend/tests/fixtures/sensors/zeek-json.jsonl) exercise the supported common streams through the production normalizers; they are synthetic test data, not captured traffic.
+- No Suricata or Zeek release is certified by repository tests alone. Record exact deployed versions and successful host-side validation in the results table below before declaring support.
 - Original sensor timestamps remain distinct from Node observation time.
 - Stable IDs are present where available (community_id for Suricata, uid for Zeek).
 - Shipper uses persistent/checkpointed offsets and bounded retries.
