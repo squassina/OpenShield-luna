@@ -4,8 +4,11 @@ from pathlib import Path
 
 
 
-script_path = (
-    Path(__file__).resolve().parents[2] / "scripts" / "ops" / "inspect_event_storage.py"
+script_relative_path = Path("scripts/ops/inspect_event_storage.py")
+script_path = next(
+    parent / script_relative_path
+    for parent in Path(__file__).resolve().parents
+    if (parent / script_relative_path).is_file()
 )
 script_spec = spec_from_file_location("inspect_event_storage", script_path)
 assert script_spec is not None and script_spec.loader is not None
