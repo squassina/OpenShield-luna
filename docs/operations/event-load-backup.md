@@ -70,26 +70,60 @@ Store backups outside the Docker volume and encrypt at rest. Dumps contain netwo
 
 ## 5. Restore drill into a separate database
 
-Never overwrite the live database during acceptance. Create an isolated restore target:
+Never overwrite the live database during acceptance. Use staging, stop Node and any other database writers, and keep the source database unchanged until the manifest and backup are captured. The manifest uses exact table counts from one repeatable-read, read-only snapshot. Counts will not match a backup if application writes continue between manifest capture and pg_dump.
+
+Capture the manifest and backup while writers remain stopped:
 
 ~~~bash
-docker compose exec -T openshield-db createdb -U openshield openshield_restore_test
+mkdir -p backups
+docker compose stop openshield-node
+trap 'docker compose start openshield-node' EXIT
+
+docker compose run --rm -v "$PWD/backups:/reports" openshield-test \
+  python scripts/ops/verify_database_restore.py \
+  --statement-timeout-ms 120000 capture \
+  --output /reports/source-manifest.json
+
+docker compose exec -T openshield-db pg_dump \
+  -U openshield -d openshield -Fc \
+  > backups/openshield-$(date -u +%Y%m%dT%H%M%SZ).dump
+
+pg_restore --list backups/openshield-<timestamp>.dump
 ~~~
 
-Restore from the host by streaming the custom-format archive into the existing database container. Replace the archive filename:
+The manifest contains database/version metadata, schema migration names/versions and exact row counts for all public base tables. It contains no event payloads, credentials, host identifiers or other row contents. The verifier creates the manifest atomically with mode 0600.
+
+Create a fresh restore target; do not drop or truncate anything:
 
 ~~~bash
+docker compose exec -T openshield-db createdb \
+  -U openshield openshield_restore_test
+
 docker compose exec -T openshield-db pg_restore \
-  --exit-on-error --no-owner -U openshield -d openshield_restore_test \
+  --exit-on-error --no-owner --no-privileges \
+  -U openshield -d openshield_restore_test \
   < backups/openshield-<timestamp>.dump
 ~~~
 
-Do not put the real password in shell history; use a protected .pgpass or equivalent secret mechanism.
+Point the verifier at the separate target database. Set the URL through the deployment's secret mechanism; URL-encode special characters in credentials:
 
-Compare restored table counts, latest event timestamps, integrations, gateway/device records and audit records with the source snapshot. Start a separate Node pointed at the restore DB only in an isolated deployment with no port/config collisions. Record restore duration and warnings.
+~~~bash
+export RESTORE_DATABASE_URL='postgresql://openshield:<password>@openshield-db:5432/openshield_restore_test'
 
-After evidence capture, remove only the isolated test database using an explicitly reviewed command. Never drop the live openshield database or delete persistent Docker volumes.
+OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" docker compose run --rm \
+  -e OPENSHIELD_DATABASE_URL \
+  -v "$PWD/backups:/reports" openshield-test \
+  python scripts/ops/verify_database_restore.py \
+  --statement-timeout-ms 120000 verify \
+  --manifest /reports/source-manifest.json
+~~~
 
+The verifier exits non-zero when the target has the same database name as the source, a different PostgreSQL major version, different migration history, missing/extra public tables, or any row-count mismatch. It uses a repeatable-read, read-only snapshot and per-statement timeout. Counting every table reads the tables and may take time on a large database; raise the timeout only after reviewing staging load.
+
+After a successful comparison, validate application readiness and key workflows against the restored database in an isolated deployment. Record backup size/time, restore time, verifier JSON output and the tested image/commit. Treat the backup as sensitive data and encrypt it at rest. Keep the original Node database URL unchanged when the shell trap starts Node again.
+
+Do not put the real password in shell history; use a protected .pgpass or equivalent secret mechanism. Never drop the live database or delete persistent Docker volumes.
+ 
 ## 6. Results
 
 | Measurement | Run 1 | Run 2 | Run 3 |
