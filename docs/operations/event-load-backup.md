@@ -73,7 +73,8 @@ SOURCE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=openshield user=openshield"
 
 docker compose exec -T openshield-db mkdir -p "$CONTAINER_WORK_DIR"
 docker compose cp scripts/backup.sh "openshield-db:$CONTAINER_WORK_DIR/backup.sh"
-docker compose exec -T -e PGPASSWORD -e OPENSHIELD_DATABASE_URL \
+docker compose exec -T -e PGPASSWORD \
+  -e "OPENSHIELD_DATABASE_URL=$SOURCE_DATABASE_URL" \
   openshield-db sh "$CONTAINER_WORK_DIR/backup.sh" "$CONTAINER_WORK_DIR"
 ~~~
 
@@ -135,7 +136,7 @@ docker compose cp scripts/restore.sh "openshield-db:$CONTAINER_WORK_DIR/restore.
 docker compose cp "$BACKUP_FILE" "openshield-db:$CONTAINER_WORK_DIR/source.dump"
 
 docker compose exec -T \
-  -e PGPASSWORD -e OPENSHIELD_DATABASE_URL \
+  -e PGPASSWORD -e "OPENSHIELD_DATABASE_URL=$RESTORE_DATABASE_URL" \
   -e OPENSHIELD_RESTORE_CONFIRM=YES \
   openshield-db sh "$CONTAINER_WORK_DIR/restore.sh" \
   "$CONTAINER_WORK_DIR/source.dump"
