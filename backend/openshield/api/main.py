@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import logging
 import os
 import secrets
 import threading
@@ -75,6 +76,7 @@ __all__ = ["AIInvestigationRequest", "AIProviderCredentials", "AdGuardCredential
 validate_deployment_configuration()
 load_runtime_secrets(create=True)
 configure_logging()
+logger = logging.getLogger("openshield.api")
 
 async def _monitor_worker_lock(connection: Connection) -> None:
     """Detect a lost PostgreSQL session lock and stop this process's workers."""
