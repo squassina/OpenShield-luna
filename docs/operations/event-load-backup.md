@@ -58,13 +58,15 @@ Do not add partitioning or indexes by intuition. Change schema only when measure
 
 ## 4. PostgreSQL backup
 
-Create a custom-format backup. For a row-count restore drill, follow Section 5 and stop database writers before capturing both the manifest and backup:
+Use the repository backup script to create a verified custom-format archive:
 
 ~~~bash
-mkdir -p backups
-docker compose exec -T openshield-db pg_dump -U openshield -d openshield -Fc > backups/openshield-$(date -u +%Y%m%dT%H%M%SZ).dump
-pg_restore --list backups/openshield-<timestamp>.dump
+OPENSHIELD_DATABASE_URL="$OPENSHIELD_DATABASE_URL" sh scripts/backup.sh ./backups
 ~~~
+
+The script writes to a unique temporary file in the destination directory, validates the archive with `pg_restore --list`, applies mode 0600, then atomically renames it to the published `openshield-*.dump` filename. A failed dump or archive validation removes the incomplete temporary file. The random suffix avoids collisions between backups created in the same second.
+
+For a row-count restore drill, follow Section 5 and stop database writers before capturing both the manifest and backup. The CI workflow also executes these exact backup and restore scripts against disposable PostgreSQL databases.
 
 Store backups outside the Docker volume and encrypt at rest. Dumps contain network metadata, host identifiers, integration configuration and audit history. Treat as sensitive household/business data.
 
@@ -119,6 +121,8 @@ OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" docker compose run --rm \
 ~~~
 
 The verifier exits non-zero when the target has the same database name as the source, a different PostgreSQL major version, different migration history, missing/extra public tables, or any row-count mismatch. It uses a repeatable-read, read-only snapshot and per-statement timeout. Counting every table reads the tables and may take time on a large database; raise the timeout only after reviewing staging load.
+
+The restore script requires `OPENSHIELD_RESTORE_CONFIRM=YES`, validates the archive first, and invokes `pg_restore --single-transaction --exit-on-error`. A failed restore is rolled back by PostgreSQL instead of leaving a partially restored target.
 
 CI also runs a real `pg_dump`/`pg_restore` round-trip between disposable PostgreSQL databases and compares the restored database with the source manifest. This validates the toolchain and verifier against a real PostgreSQL server; it does not replace a staging restore drill on the deployment's actual data volume.
 
