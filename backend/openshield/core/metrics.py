@@ -17,7 +17,7 @@ class MetricsRegistry:
             raise ValueError("max_series must be a positive integer")
         self._max_series = max_series
         self._counters: Counter[tuple[str, tuple[tuple[str, str], ...]]] = Counter()
-        self._dropped_series = 0
+        self._dropped_samples = 0
         self._lock = Lock()
 
     def increment(self, name: str, labels: dict[str, str] | None = None) -> None:
@@ -30,13 +30,13 @@ class MetricsRegistry:
             elif len(self._counters) < self._max_series:
                 self._counters[key] = 1
             else:
-                self._dropped_series += 1
+                self._dropped_samples += 1
 
     def render(self) -> str:
         with self._lock:
             snapshot = dict(self._counters)
-            if self._dropped_series:
-                snapshot[(DROPPED_SAMPLES_METRIC, ())] = self._dropped_series
+            if self._dropped_samples:
+                snapshot[(DROPPED_SAMPLES_METRIC, ())] = self._dropped_samples
         metric_names = sorted({name for name, _ in snapshot})
         lines = []
         for name in metric_names:
