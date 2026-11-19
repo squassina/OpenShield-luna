@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir --root-user-action=ignore ".[dev]"
 COPY backend/tests ./tests
 COPY scripts/ops ./scripts/ops
 COPY scripts/backup.sh scripts/restore.sh ./scripts/
+COPY scripts/check_markdown_links.py scripts/check_dashboard_js.py ./scripts/
 COPY scripts/backup.sh scripts/restore.sh ./scripts/
 COPY scripts/update_cname_tracker_feed.py ./scripts/update_cname_tracker_feed.py
 
