@@ -38,8 +38,9 @@ def test_spool_encrypts_event_and_command_result_payloads_at_rest(tmp_path) -> N
     path = tmp_path / "encrypted.sqlite3"
     key = Fernet.generate_key().decode("ascii")
     spool = GatewayEventSpool(str(path), encryption_key=key)
+    event = _event()
 
-    assert spool.enqueue(_event()) is True
+    assert spool.enqueue(event) is True
     spool.enqueue_command_result(
         "command-1", "completed", {"router_ip": "192.168.1.1", "hostname": "private-router"}
     )
@@ -56,7 +57,7 @@ def test_spool_encrypts_event_and_command_result_payloads_at_rest(tmp_path) -> N
     assert "192.168.1.42" not in event_payload
     assert "private-device" not in event_payload
     assert "192.168.1.1" not in command_payload
-    assert spool.pending() == [_event()]
+    assert spool.pending() == [event]
     assert spool.get_command_result("command-1") == {
         "command_id": "command-1",
         "status": "completed",
@@ -68,7 +69,8 @@ def test_spool_encrypts_event_and_command_result_payloads_at_rest(tmp_path) -> N
 def test_spool_migrates_legacy_plaintext_rows_on_first_encrypted_startup(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     legacy = GatewayEventSpool(str(path))
-    legacy.enqueue(_event())
+    event = _event()
+    legacy.enqueue(event)
     legacy.enqueue_command_result(
         "command-1", "completed", {"hostname": "private-router"}
     )
@@ -87,7 +89,7 @@ def test_spool_migrates_legacy_plaintext_rows_on_first_encrypted_startup(tmp_pat
     assert command_payload.startswith("fernet:v1:")
     assert "192.168.1.42" not in event_payload
     assert "private-router" not in command_payload
-    assert encrypted.pending() == [_event()]
+    assert encrypted.pending() == [event]
     assert encrypted.get_command_result("command-1")["result"] == {
         "hostname": "private-router",
     }
@@ -100,7 +102,8 @@ def test_spool_rotation_reencrypts_old_rows_and_accepts_only_active_key_afterwar
     old_key = Fernet.generate_key().decode("ascii")
     new_key = Fernet.generate_key().decode("ascii")
     old_spool = GatewayEventSpool(str(path), encryption_key=old_key)
-    old_spool.enqueue(_event())
+    event = _event()
+    old_spool.enqueue(event)
 
     rotated = GatewayEventSpool(
         str(path),
@@ -108,7 +111,7 @@ def test_spool_rotation_reencrypts_old_rows_and_accepts_only_active_key_afterwar
         previous_encryption_keys=old_key,
     )
 
-    assert rotated.pending() == [_event()]
+    assert rotated.pending() == [event]
     payload = _stored_payload(path, "pending_events", "payload", "encrypted-event")
     plaintext = Fernet(new_key.encode("ascii")).decrypt(
         payload.removeprefix("fernet:v1:").encode("ascii")
@@ -116,7 +119,7 @@ def test_spool_rotation_reencrypts_old_rows_and_accepts_only_active_key_afterwar
     assert b"192.168.1.42" in plaintext
 
     reopened = GatewayEventSpool(str(path), encryption_key=new_key)
-    assert reopened.pending() == [_event()]
+    assert reopened.pending() == [event]
 
 
 def test_spool_refuses_to_open_encrypted_data_with_wrong_key(tmp_path) -> None:
