@@ -28,7 +28,7 @@ python scripts/ops/benchmark_sensor_ingestion.py \
 
 For Suricata, use --kind suricata. The integration must already exist and be enabled. The script sends sequential requests, verifies accepted/duplicate counts, measures latency and throughput, then reads ingested events through cursor pagination.
 
-Optional HTTP Basic credentials are read from OPENSHIELD_BENCHMARK_USERNAME and OPENSHIELD_BENCHMARK_PASSWORD. Never put credentials in command-line arguments.
+Before running the benchmark, issue an integration-scoped sensor credential through `PUT /api/v1/sensors/{integration-id}/credentials` and export the returned token as `OPENSHIELD_BENCHMARK_SENSOR_TOKEN`. The benchmark sends this Bearer token only to the sensor ingestion endpoint. Optional HTTP Basic credentials are read from `OPENSHIELD_BENCHMARK_USERNAME` and `OPENSHIELD_BENCHMARK_PASSWORD` for health/read requests when API authentication is enabled; Basic credentials do not replace the sensor token. Never put credentials in command-line arguments or commit them.
 
 Run progressively (1k, 10k, 50k). Stop if API latency, DB load, disk growth or sensor backlog exceeds the deployment's budget. Record host resources, DB volume size and image/commit. Synthetic RFC 5737 addresses are used; this is not representative network topology.
 

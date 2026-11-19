@@ -56,6 +56,48 @@ def test_api_uses_basic_auth_from_environment(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
+def test_api_uses_sensor_bearer_token_for_ingestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENSHIELD_BENCHMARK_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_BENCHMARK_PASSWORD", "secret")
+    monkeypatch.setenv("OPENSHIELD_BENCHMARK_SENSOR_TOKEN", "sensor-token")
+    captured: list[Request] = []
+
+    class Response:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"accepted":1}'
+
+    def fake_urlopen(request: Request, timeout: float) -> Response:
+        captured.append(request)
+        assert timeout == 7
+        return Response()
+
+    monkeypatch.setattr(benchmark.urllib.request, "urlopen", fake_urlopen)
+    api = benchmark.Api("http://localhost:8000", timeout=7)
+
+    assert api.request("/api/v1/sensors/zeek-lab/events", [{"_path": "conn"}]) == {
+        "accepted": 1
+    }
+    assert captured[0].get_header("Authorization") == "Bearer sensor-token"
+
+
+def test_api_requires_sensor_token_for_ingestion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENSHIELD_BENCHMARK_SENSOR_TOKEN", raising=False)
+    api = benchmark.Api("http://localhost:8000", timeout=7)
+
+    with pytest.raises(ValueError, match="OPENSHIELD_BENCHMARK_SENSOR_TOKEN"):
+        api.request("/api/v1/sensors/zeek-lab/events", [{"_path": "conn"}])
+
+
 def test_api_rejects_partial_basic_auth_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
