@@ -77,7 +77,19 @@ def test_backup_publishes_unique_verified_file_with_restrictive_permissions(
 
 def test_backup_removes_partial_artifact_when_dump_fails(tmp_path: Path) -> None:
     bindir, _ = _fake_postgres_tools(tmp_path)
-    _command(bindir / "pg_dump", "printf 'partial' > \"$2\"\nexit 23")
+    _command(
+        bindir / "pg_dump",
+        """
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--file" ]; then
+    printf 'partial' > "$2"
+    exit 23
+  fi
+  shift
+done
+exit 24
+""",
+    )
     backup_dir = tmp_path / "backups"
     result = subprocess.run(
         ["sh", str(ROOT / "scripts" / "backup.sh"), str(backup_dir)],
