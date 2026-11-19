@@ -497,8 +497,8 @@ def test_background_dns_polling_records_provider_failure_and_continues(monkeypat
     assert sources["pihole-home"]["retryable"] is True
     assert sources["pihole-home"]["last_failure_at"]
     rendered = metrics.render()
-    assert 'openshield_dns_poll_failures_total{category="provider_error",integration_id="pihole-home",provider="pihole"} 1' in rendered
-    assert 'openshield_dns_poll_success_total{integration_id="adguard-home",provider="adguard"} 1' in rendered
+    assert 'openshield_dns_poll_failures_total{category="provider_error",provider="pihole"} 1' in rendered
+    assert 'openshield_dns_poll_success_total{provider="adguard"} 1' in rendered
 
 
 
@@ -1199,7 +1199,7 @@ def test_dns_polling_ingests_499_of_500_records_and_resumes_next_page_next_cycle
     assert metrics.counts["openshield_dns_records_rejected_total"] == 1
     assert (
         "openshield_dns_poll_records_total",
-        {"integration_id": "pihole-home", "provider": "pihole", "outcome": "rejected"},
+        {"provider": "pihole", "outcome": "rejected"},
     ) in metrics.samples
     events = client.get("/api/v1/events?event_type=privacy.dns.query&limit=500").json()["items"]
     assert len(events) == 499
@@ -1268,7 +1268,7 @@ def test_dns_polling_isolates_normalization_failure_and_continues(monkeypatch) -
     )
     assert source["last_error_category"] == "normalization_error"
     assert source["retryable"] is False
-    assert 'category="normalization_error",integration_id="a-pihole-home",provider="pihole"' in metrics.render()
+    assert 'category="normalization_error",provider="pihole"' in metrics.render()
 
 
 def test_dns_polling_isolates_unexpected_provider_error(monkeypatch, caplog) -> None:
@@ -1363,7 +1363,7 @@ def test_dns_database_failure_aborts_cycle_and_replays_without_cursor_loss(
     )
     assert source["last_error_category"] == "database_error"
     assert source["retryable"] is True
-    assert 'category="database_error",integration_id="a-pihole-home",provider="pihole"' in metrics.render()
+    assert 'category="database_error",provider="pihole"' in metrics.render()
 
     monkeypatch.setattr(main.store, "_insert_audit", original_insert_audit)
     retry = polling.poll_dns_sources_once(main.registry, main.store, metrics)
