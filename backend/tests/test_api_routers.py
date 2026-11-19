@@ -74,6 +74,8 @@ class FakeGatewayConnections:
 
     def get_status(self, gateway_id: str):
         return {"gateway_id": gateway_id, "status": "connected"}
+
+
 class FakeMetrics:
     def __init__(self) -> None:
         self.counters = []
