@@ -5,13 +5,13 @@ import os
 import secrets
 import threading
 import time
-from psycopg import Connection
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
+from psycopg import Connection
 from psycopg_pool import PoolTimeout
 
 from openshield.api.routers.audit import create_audit_router
@@ -76,7 +76,6 @@ validate_deployment_configuration()
 load_runtime_secrets(create=True)
 configure_logging()
 
-@asynccontextmanager
 async def _monitor_worker_lock(connection: Connection) -> None:
     """Detect a lost PostgreSQL session lock and stop this process's workers."""
     while True:
@@ -118,6 +117,8 @@ async def _run_background_workers(interval_seconds: int) -> None:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for completed in done:
+                if completed.cancelled():
+                    raise RuntimeError("Background worker or lease monitor was cancelled")
                 error = completed.exception()
                 if error is not None:
                     raise error
