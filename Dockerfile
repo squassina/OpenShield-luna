@@ -27,10 +27,16 @@ COPY backend/tests ./tests
 COPY scripts/ops ./scripts/ops
 COPY scripts/update_cname_tracker_feed.py ./scripts/update_cname_tracker_feed.py
 
-FROM dev AS browser-test
+# The official image already contains Chromium and its OS libraries.
+# Avoid apt-get / Playwright's --with-deps downloads in CI, where mirror DNS
+# failures can make browser installation fail before tests even start.
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS browser-test
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+WORKDIR /app
+COPY backend/pyproject.toml ./pyproject.toml
+COPY backend/openshield ./openshield
+RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2,<27" \
+    && pip install --no-cache-dir --root-user-action=ignore ".[dev]"
 COPY tests/dashboard ./dashboard-tests
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 \
-    && rm -rf /var/lib/apt/lists/*
-RUN python -m playwright install --with-deps chromium
