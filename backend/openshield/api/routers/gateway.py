@@ -101,6 +101,24 @@ def create_gateway_router(
                 detail="Gateway authentication required to receive router credentials",
             )
         metrics.increment("openshield_gateway_heartbeats_total")
+        if request.spool_stats is not None:
+            # Connector-reported telemetry is for monitoring only, never policy decisions.
+            labels = {"gateway_id": connection.gateway_id}
+            stats = request.spool_stats
+            metrics.set_gauge("openshield_gateway_spool_pending_events", stats.pending_events, labels)
+            metrics.set_gauge("openshield_gateway_spool_capacity", stats.capacity, labels)
+            metrics.set_counter("openshield_gateway_spool_evicted_events_total", stats.evicted_events, labels)
+            metrics.set_counter(
+                "openshield_gateway_spool_coalesced_health_events_total",
+                stats.coalesced_health_events,
+                labels,
+            )
+            metrics.set_counter("openshield_gateway_spool_dropped_events_total", stats.dropped_events, labels)
+            metrics.set_gauge(
+                "openshield_gateway_spool_last_report_timestamp_seconds",
+                connection.last_seen_at.timestamp(),
+                labels,
+            )
         try:
             openwrt_config = (
                 gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None
