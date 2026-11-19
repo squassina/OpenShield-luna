@@ -37,11 +37,11 @@ export OPENSHIELD_DATABASE_URL='postgresql://...'
 sh scripts/backup.sh ./backups
 ```
 
-The script uses a restrictive umask, creates a custom-format dump, verifies its archive catalog with `pg_restore --list`, and sets mode 0600. Copy verified backups to encrypted off-host storage and test restores regularly. Back up `OPENSHIELD_SECRET_KEY` separately in a secure secret manager: without the matching key, encrypted integration credentials cannot be recovered. Also retain any previous key still needed to decrypt older ciphertext.
+The script uses a restrictive umask, creates a custom-format dump, verifies its archive catalog with `pg_restore --list`, and sets mode 0600. Copy verified backups to encrypted off-host storage and test restores regularly. Back up `OPENSHIELD_SECRET_KEY` separately in a secure secret manager: without the matching key, encrypted integration credentials and the Connector's encrypted spool cannot be recovered. Also retain any previous key still needed to decrypt older ciphertext. Back up the `openshield-runtime-secrets` and `openshield-gateway-spool` Docker volumes as part of the same recovery point; spool payloads are Fernet-encrypted and migrate from legacy plaintext at Connector startup.
 
 ## Restore
 
-Restore into a newly created, empty PostgreSQL database compatible with the deployed OpenShield version. The script deliberately does not drop existing objects. It requires an explicit confirmation variable:
+Restore into a newly created, empty PostgreSQL database compatible with the deployed OpenShield version. The script deliberately does not drop existing objects. It requires an explicit confirmation variable and checks the target database catalogs before restore; any user tables, views, sequences, routines, custom types, large objects, or extra schemas cause a refusal:
 
 ```bash
 export OPENSHIELD_DATABASE_URL='postgresql://.../openshield_restore'
