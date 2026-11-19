@@ -170,9 +170,8 @@ def test_advisory_lock_rejects_a_second_process(monkeypatch: pytest.MonkeyPatch)
     )
     store = PostgresStore("postgresql://test")
 
-    with pytest.raises(AdvisoryLockUnavailable, match="already holds"):
-        with store.advisory_lock(42):
-            pytest.fail("A competing process must not acquire the lock")
+    with pytest.raises(AdvisoryLockUnavailable, match="already holds"), store.advisory_lock(42):
+        pytest.fail("A competing process must not acquire the lock")
 
     assert calls == ["commit", "close"]
 
@@ -184,10 +183,12 @@ def test_postgres_advisory_lock_is_exclusive_across_connections(
     first = PostgresStore(database_url)
     second = PostgresStore(database_url)
 
-    with first.advisory_lock(lock_id):
-        with pytest.raises(AdvisoryLockUnavailable):
-            with second.advisory_lock(lock_id):
-                pytest.fail("A second PostgreSQL session must not acquire the lock")
+    with (
+        first.advisory_lock(lock_id),
+        pytest.raises(AdvisoryLockUnavailable),
+        second.advisory_lock(lock_id),
+    ):
+        pytest.fail("A second PostgreSQL session must not acquire the lock")
 
     with second.advisory_lock(lock_id):
         pass
