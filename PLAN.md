@@ -365,7 +365,7 @@ Scope:
 - Incident timeline and investigation workflow.
 - Evidence provenance and false-positive handling.
 
-**Implementation status:** P3 software scope is implemented on the chained feature branch. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
+**Implementation status:** P3 software scope is implemented on `main` and CI-validated. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
 
 ### P4 — Hybrid AI Network Intelligence
 
@@ -380,7 +380,7 @@ Scope:
 - Explanations, summaries, and recommendations.
 - AI governance, evaluation, and prompt-injection resilience.
 
-**Implementation status:** P4 software scope is implemented on the chained feature branch. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
+**Implementation status:** P4 software scope is implemented on `main` and CI-validated. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
 
 ### P5 — Autonomous Response
 
@@ -397,13 +397,13 @@ Scope:
 - Emergency stop / kill switch.
 - Complete decision and execution audit.
 
-**Implementation status:** P5 software implementation is underway on the chained branch. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
+**Implementation status:** P5 software scope is implemented on `main` and CI-validated; enforcement remains disabled by default. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
 
 ### P6 — Enterprise Readiness
 
 **Goal:** support broader operational use where validated by demand.
 
-**Implementation status:** P6 baseline is underway on the chained branch. Current increment adds multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
+**Implementation status:** P6 baseline is implemented on `main` and CI-validated, including multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
 
 Scope:
 - Multiple gateways and sites.
@@ -618,9 +618,16 @@ Configuration:
 - `OPENSHIELD_POSTGRES_PASSWORD`
 - `OPENSHIELD_DATABASE_URL`
 
+Implemented:
+- Formal versioned database migrations and a bounded PostgreSQL connection pool.
+- Durable audit records and PostgreSQL-backed persistence.
+- Atomic custom-format backup publication with archive verification and mode 0600.
+- Restore preflight that refuses non-empty or unverifiable targets, followed by a single-transaction restore.
+- Source/restore manifest comparison and a real disposable PostgreSQL backup/restore round-trip in CI.
+
 Remaining:
-- Durable audit records are not implemented yet.
-- Formal versioned database migrations, backup/restore automation, pooling, and production hardening remain pending.
+- Deployment-specific backup cadence, off-host encrypted retention, and production database hardening.
+- A measured staging load/query-plan review and a restore drill using the deployment's actual data volume remain tracked by [Issue #19](https://github.com/squassina/OpenShield-luna/issues/19).
 - Local tests must run through Docker Compose so the PostgreSQL dependency is available.
 
 
@@ -663,7 +670,7 @@ The nearby-host connector now uses a local SQLite outbox:
 - The connector drains pending events in batches and retries after reconnect.
 - When the Node is unavailable, the connector continues local OpenWrt discovery/health polling and queues resulting events.
 - Node event ingestion is idempotent: duplicate event IDs return HTTP 202 with `status=duplicate`, so retries after a lost response are safe.
-- Queue capacity is bounded at 10,000 pending events; the connector refuses new events when full rather than discarding older pending events.
+- Queue capacity is bounded at 10,000 pending events. At capacity, the connector evicts the oldest unprotected low-priority event first; gateway health, command results, security/audit events, and high/critical-severity events are protected. Identical health snapshots may be coalesced while state transitions remain durable. If all pending events are protected and no health snapshot can be compacted, the incoming event is rejected and the dropped counter increments.
 - SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; the spool directory is enforced at mode 0700.
 - Docker Compose mounts a named volume at `/var/lib/openshield`, preserving the spool across connector container restarts.
 
@@ -695,7 +702,7 @@ Physical hardware acceptance is deferred as technical debt [#2](https://github.c
 
 **Software scope: implemented and CI-validated.** The current branch covers trusted-LAN residential API access, automatic gateway registration, gateway handshake and presence, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, metrics, and durable connector-side event retry/recovery.
 
-**Physical gateway acceptance: deferred technical debt.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [issue #2](https://github.com/squassina/OpenShield/issues/2).
+**Physical gateway acceptance: deferred technical debt.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 
 ## Residential deployment decision — current product stage
@@ -746,5 +753,5 @@ Known limitations:
 - MAC identity is scoped to one gateway. Cross-source identity reconciliation with Suricata/Zeek, randomized-MAC handling, spoofing detection, and confidence scoring remain open.
 - The 90-second presence threshold is an initial heuristic and must be reviewed against real router behavior.
 
-Track physical gateway acceptance under [Issue #2](https://github.com/squassina/OpenShield/issues/2), broader identity enrichment under [Issue #5](https://github.com/squassina/OpenShield/issues/5), and richer topology semantics under [Issue #8](https://github.com/squassina/OpenShield/issues/8). See docs/technical-debt.md and docs/operations/openwrt-validation.md.
+Track physical gateway acceptance under [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17). Identity enrichment and richer topology semantics remain roadmap topics recorded in TODO.md. See docs/technical-debt.md and docs/operations/openwrt-validation.md.
 
