@@ -46,8 +46,8 @@ The procedure is in [the OpenWrt validation runbook](operations/openwrt-validati
   - Native LuCI host hints provide MAC identity and IPv4/IPv6 address hints; DHCP leases enrich hostname and logical-interface data where available. Remaining: richer Wi-Fi association and topology data, identity reconciliation across OpenWrt/Suricata/Zeek, conflict handling, and identity confidence.
 - [Issue #6 — Event retention, pagination, and sustained-load validation](https://github.com/squassina/OpenShield/issues/6)
   - Event filters/limits and inventory/topology aggregation execute in PostgreSQL. Retention, cursor pagination, load benchmarks, and long-term storage strategy remain open.
-- [Issue #7 — Authenticate sensor ingestion before Business deployment](https://github.com/squassina/OpenShield/issues/7)
-  - Home mode intentionally trusts the LAN. Sensor ingestion has no per-sensor authentication or authorization; do not expose the Node API beyond the trusted LAN.
+- [Issue #7 — Authenticate sensor ingestion before Business deployment](https://github.com/squassina/OpenShield/issues/7) — closed by PRs [#132](https://github.com/squassina/OpenShield-luna/pull/132) and [#133](https://github.com/squassina/OpenShield-luna/pull/133).
+  - Sensor ingestion requires integration-scoped bearer credentials with rotation/revocation, rate limits and request-size enforcement. Home mode still intentionally has no general user authentication; keep the Node API on the trusted LAN. Business/SaaS user and organization authorization remains a separate deployment requirement.
 - [Issue #8 — Improve topology semantics beyond inferred IP connections](https://github.com/squassina/OpenShield/issues/8)
   - The dashboard includes a router-interface inventory grouped by logical OpenWrt interface. The flow graph describes observed IP connections; neither view is a complete Layer-2 map. VLAN membership, bridge ports, switch ports, Wi-Fi associations, routes, NAT relationships, and physical links remain unresolved.
 
@@ -69,7 +69,7 @@ P1 software is considered complete when CI passes and documented API behavior is
 - [Issue #14 — Automate DNS provider polling and dashboard refresh](https://github.com/squassina/OpenShield/issues/14): background polling, provider isolation, freshness/error state, manual sync, bounded pagination, and dashboard refresh.
 - [Issue #15 — Configure OpenWrt router from the web interface](https://github.com/squassina/OpenShield/issues/15): guided router address/RPC credentials, connectivity and ACL validation, router discovery, connector status, and safe read-only setup. Depends on secure secret handling in #13; physical validation remains #2.
 
-## Recently implemented on feature/technical-debt-2-4-6-13 (verify merge status)
+## Delivered operational work (merged to main)
 
 - Event exploration has stable keyset cursor pagination using `received_at` and `event_id`.
 - Integration records support enabled/disabled state; the dashboard exposes the toggle.
