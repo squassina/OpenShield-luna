@@ -1,7 +1,7 @@
 import pytest
 
 from openshield.core.metrics import (
-    DROPPED_SERIES_METRIC,
+    DROPPED_SAMPLES_METRIC,
     MetricsRegistry,
 )
 
@@ -26,7 +26,7 @@ def test_metrics_registry_caps_new_series_and_reports_drops() -> None:
     assert 'requests_total{route="/b"} 1' in rendered
     assert 'route="/c"' not in rendered
     assert "another_total" not in rendered
-    assert f"{DROPPED_SERIES_METRIC} 2" in rendered
+    assert f"{DROPPED_SAMPLES_METRIC} 2" in rendered
 
 
 def test_metrics_registry_reuses_series_independent_of_label_order() -> None:
@@ -37,11 +37,11 @@ def test_metrics_registry_reuses_series_independent_of_label_order() -> None:
     rendered = metrics.render()
 
     assert 'requests_total{method="GET",route="/health"} 2' in rendered
-    assert DROPPED_SERIES_METRIC not in rendered
+    assert DROPPED_SAMPLES_METRIC not in rendered
 
 
 def test_metrics_registry_protects_internal_overflow_metric_name() -> None:
     metrics = MetricsRegistry()
 
     with pytest.raises(ValueError, match="reserved for registry overflow"):
-        metrics.increment(DROPPED_SERIES_METRIC)
+        metrics.increment(DROPPED_SAMPLES_METRIC)
