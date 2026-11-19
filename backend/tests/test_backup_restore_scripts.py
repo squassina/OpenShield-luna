@@ -3,8 +3,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-
-
 SCRIPT_ROOT = next(
     parent for parent in Path(__file__).resolve().parents if (parent / "scripts/backup.sh").is_file()
 )
@@ -59,7 +57,9 @@ exit "${PG_RESTORE_EXIT_CODE:-0}"
     return environment
 
 
-def run_script(script: Path, environment: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def run_script(
+    script: Path, environment: dict[str, str], *args: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["sh", str(script), *args],
         check=False,
