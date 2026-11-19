@@ -12,13 +12,18 @@ SOURCE_DB="openshield_ci_restore_source_${RUN_SUFFIX}"
 TARGET_DB="openshield_ci_restore_target_${RUN_SUFFIX}"
 REPORT_DIR="$(mktemp -d)"
 MANIFEST="${REPORT_DIR}/source-manifest.json"
-BACKUP="${REPORT_DIR}/source.dump"
+BACKUP_SCRIPT_IN_CONTAINER="/tmp/openshield-backup-${RUN_SUFFIX}.sh"
+RESTORE_SCRIPT_IN_CONTAINER="/tmp/openshield-restore-${RUN_SUFFIX}.sh"
+CONTAINER_BACKUP_DIR="/tmp/openshield-ci-backups-${RUN_SUFFIX}"
 
 cleanup() {
   docker compose exec -T openshield-db dropdb --if-exists --force \
     -U "$DB_USER" "$TARGET_DB" >/dev/null 2>&1 || true
   docker compose exec -T openshield-db dropdb --if-exists --force \
     -U "$DB_USER" "$SOURCE_DB" >/dev/null 2>&1 || true
+  docker compose exec -T openshield-db rm -rf \
+    "$CONTAINER_BACKUP_DIR" "$BACKUP_SCRIPT_IN_CONTAINER" "$RESTORE_SCRIPT_IN_CONTAINER" \
+    >/dev/null 2>&1 || true
   rm -rf "$REPORT_DIR"
 }
 trap cleanup EXIT
@@ -67,16 +72,25 @@ docker compose run --rm --no-deps \
   openshield-test python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 30000 capture --output /reports/source-manifest.json
 
-docker compose exec -T openshield-db pg_dump \
-  --format=custom --no-owner --no-acl \
-  -U "$DB_USER" -d "$SOURCE_DB" > "$BACKUP"
-test -s "$BACKUP"
-docker compose exec -T openshield-db pg_restore --list < "$BACKUP" >/dev/null
+docker compose cp scripts/backup.sh \
+  "openshield-db:$BACKUP_SCRIPT_IN_CONTAINER"
+docker compose cp scripts/restore.sh \
+  "openshield-db:$RESTORE_SCRIPT_IN_CONTAINER"
+docker compose exec -T openshield-db mkdir -p "$CONTAINER_BACKUP_DIR"
+docker compose exec -T openshield-db env \
+  OPENSHIELD_DATABASE_URL="dbname=$SOURCE_DB user=$DB_USER" \
+  sh "$BACKUP_SCRIPT_IN_CONTAINER" "$CONTAINER_BACKUP_DIR"
+
+BACKUP_PATH="$(docker compose exec -T openshield-db sh -c \
+  'set -- "$1"/openshield-*.dump; [ -f "$1" ] && printf "%s\\n" "$1"' \
+  sh "$CONTAINER_BACKUP_DIR")"
+test -n "$BACKUP_PATH"
 
 docker compose exec -T openshield-db createdb -U "$DB_USER" "$TARGET_DB"
-docker compose exec -T openshield-db pg_restore \
-  --exit-on-error --no-owner --no-privileges \
-  -U "$DB_USER" -d "$TARGET_DB" < "$BACKUP"
+docker compose exec -T openshield-db env \
+  OPENSHIELD_DATABASE_URL="dbname=$TARGET_DB user=$DB_USER" \
+  OPENSHIELD_RESTORE_CONFIRM=YES \
+  sh "$RESTORE_SCRIPT_IN_CONTAINER" "$BACKUP_PATH"
 
 docker compose run --rm --no-deps \
   -e "OPENSHIELD_DATABASE_URL=$TARGET_URL" \
