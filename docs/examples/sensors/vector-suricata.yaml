@@ -42,6 +42,8 @@ sinks:
       timeout_secs: 30
       retry_initial_backoff_secs: 1
       retry_max_duration_secs: 30
+      headers:
+        Content-Type: application/json
     batch:
       max_events: 100
       max_bytes: 3000000
@@ -60,6 +62,3 @@ sinks:
       when_full: block
     acknowledgements:
       enabled: true
-    request:
-      headers:
-        Content-Type: application/json
