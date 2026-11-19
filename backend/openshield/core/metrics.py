@@ -34,7 +34,9 @@ class MetricsRegistry:
         key = (name, tuple(sorted((labels or {}).items())))
         if key in self._counters or key in self._gauges:
             if self._metric_types[name] != metric_type:
-                raise ValueError(f"Metric {name} is already registered as {self._metric_types[name]}")
+                raise ValueError(
+                    f"Metric {name} is already registered as {self._metric_types[name]}"
+                )
             return key
 
         existing_type = self._metric_types.get(name)
@@ -72,7 +74,11 @@ class MetricsRegistry:
         value: int | float,
         labels: dict[str, str] | None = None,
     ) -> None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
             raise ValueError("Gauge value must be a finite number")
         with self._lock:
             key = self._register_series(name, labels, "gauge")
