@@ -28,6 +28,9 @@ services:
       cache_to:
         - type=gha,scope=openshield-runtime,mode=max
     environment:
+      OPENSHIELD_DEPLOYMENT_PROFILE: ${OPENSHIELD_DEPLOYMENT_PROFILE:-home}
+      OPENSHIELD_POSTGRES_PASSWORD: ${OPENSHIELD_POSTGRES_PASSWORD:-openshield-dev-password}
+      OPENSHIELD_PUBLISH_ADDRESS: ${OPENSHIELD_PUBLISH_ADDRESS:-127.0.0.1}
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
       OPENSHIELD_DB_POOL_MIN_SIZE: ${OPENSHIELD_DB_POOL_MIN_SIZE:-1}
       OPENSHIELD_DB_POOL_MAX_SIZE: ${OPENSHIELD_DB_POOL_MAX_SIZE:-10}
