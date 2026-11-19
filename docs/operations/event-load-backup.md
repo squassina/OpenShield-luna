@@ -133,13 +133,11 @@ RESTORE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=$RESTORE_DATABASE user=ope
 docker compose exec -T openshield-db createdb -U openshield "$RESTORE_DATABASE"
 
 docker compose cp scripts/restore.sh "openshield-db:$CONTAINER_WORK_DIR/restore.sh"
-docker compose cp "$BACKUP_FILE" "openshield-db:$CONTAINER_WORK_DIR/source.dump"
 
 docker compose exec -T \
   -e PGPASSWORD -e "OPENSHIELD_DATABASE_URL=$RESTORE_DATABASE_URL" \
   -e OPENSHIELD_RESTORE_CONFIRM=YES \
-  openshield-db sh "$CONTAINER_WORK_DIR/restore.sh" \
-  "$CONTAINER_WORK_DIR/source.dump"
+  openshield-db sh "$CONTAINER_WORK_DIR/restore.sh" "$BACKUP_PATH"
 ~~~
 
 The restore script validates the archive, checks the target using `psql`, and refuses unless the target contains no user tables, views, sequences, functions, custom types, or non-default schemas. If the preflight query errors or returns an unexpected value, restore fails closed. It then invokes `pg_restore --single-transaction --exit-on-error`; PostgreSQL rolls back the restore if any archive command fails. It never drops, truncates, or cleans an existing database.
@@ -147,9 +145,10 @@ The restore script validates the archive, checks the target using `psql`, and re
 Compare the restored database with the source manifest:
 
 ~~~bash
+RESTORE_TEST_DATABASE_URL="host=openshield-db port=5432 dbname=$RESTORE_DATABASE user=openshield"
 docker compose run --rm --no-deps \
   --user "$(id -u):$(id -g)" \
-  -e OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" \
+  -e "OPENSHIELD_DATABASE_URL=$RESTORE_TEST_DATABASE_URL" \
   -e PGPASSWORD \
   -v "$PWD/backups:/reports" openshield-test \
   python scripts/ops/verify_database_restore.py \
