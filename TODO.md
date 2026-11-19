@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `c7c7f393d0f0b1b7f317f0e1c44b2223b7f459a7`  
+**Reviewed baseline:** `main` at `b7351e05b2b9c4edc8a15022affe0621b4d8a78d`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -61,7 +61,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Enforce the single-process Node assumption.** Implementation in review: FastAPI startup holds a PostgreSQL session-level advisory lock on a dedicated connection; a second Node process using the same database fails startup before starting DNS polling or execution-expiration loops. This also prevents process-local rate-limit and failed-login counters from diverging across Node replicas. Tests cover lock acquisition/release, contention and lifespan cleanup. One Uvicorn worker and one Node replica per database remain required; counters still reset on restart. Multi-instance support requires a shared limiter and a coordinated worker/lease design. Evidence: `backend/openshield/api/main.py`, `backend/openshield/core/storage.py`, `backend/openshield/core/rate_limits.py`.
 
-- [ ] **Bound Prometheus metric cardinality.** `MetricsRegistry` stores every distinct label tuple indefinitely and has no maximum-series guard. DNS polling adds the user-configurable `integration_id` label, so adding/removing many integrations can grow process memory and leave stale series. Prefer bounded/static labels (provider and outcome), cap series, and test churn/deletion. Evidence: `backend/openshield/core/metrics.py`, `backend/openshield/privacy/polling.py`.
+- [ ] **Bound Prometheus metric cardinality.** Implementation in review: DNS polling no longer emits user-controlled `integration_id` labels; it uses only bounded provider/category/outcome labels. `MetricsRegistry` has a 4,096-series default cap and reports overflow through the fixed `openshield_metrics_samples_dropped_total` metric. Tests cover cap enforcement, dropped-series visibility, reuse of existing series, and label-order normalization. Evidence: `backend/openshield/core/metrics.py`, `backend/openshield/privacy/polling.py`, `backend/tests/test_metrics_registry.py`.
 
 - [ ] **Expose gateway spool counters and alert on loss/pressure.** SQLite already maintains `pending_events`, `capacity`, `evicted_events`, `coalesced_health_events`, and `dropped_events`. Protected events include gateway health, command results, security/audit events and high/critical severity; duplicate health snapshots may be coalesced while state transitions remain durable. However, `GatewayEventSpool.stats()` is not wired to Node metrics or an operational API. Expose bounded counters/gauges and alert on drops, evictions and sustained high-water marks. Evidence: `backend/openshield/gateway/spool.py`, `backend/openshield/gateway/agent.py`.
 

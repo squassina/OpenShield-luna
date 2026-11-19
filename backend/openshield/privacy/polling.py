@@ -97,10 +97,8 @@ def _metric(
 
 
 def _base_labels(integration: Any) -> dict[str, str]:
-    return {
-        "integration_id": integration.integration_id,
-        "provider": integration.kind,
-    }
+    # Integration IDs are user-controlled and would create unbounded time series.
+    return {"provider": integration.kind}
 
 
 def _record_failure(
