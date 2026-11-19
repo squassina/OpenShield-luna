@@ -49,7 +49,7 @@ class MetricsRegistry:
         if current_type is not None and current_type != metric_type:
             self._dropped_series += 1
             return False
-        if not existing and len(self._types) + self._series_count() >= self.max_series:
+        if not existing and self._series_count() >= self.max_series:
             self._dropped_series += 1
             return False
         self._types[name] = metric_type
