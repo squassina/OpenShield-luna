@@ -1,6 +1,6 @@
 # Secret encryption key rotation
 
-OpenShield encrypts integration credentials with Fernet. The Node accepts one active key (**OPENSHIELD_SECRET_KEY**) and a comma-separated list of previous keys (**OPENSHIELD_SECRET_KEY_PREVIOUS**). When a secret is read with a previous key, SecretStore immediately re-encrypts it with the active key.
+OpenShield encrypts integration credentials with Fernet. The Node accepts one active key (**OPENSHIELD_SECRET_KEY**) and a comma-separated list of previous keys (**OPENSHIELD_SECRET_KEY_PREVIOUS**). When a secret is read with a previous key, SecretStore immediately re-encrypts it with the active key. The Gateway Connector uses the same active/previous key set to encrypt its SQLite event and command-result payloads. On startup it migrates legacy plaintext rows and re-encrypts rows that use a previous key.
 
 ## Safe rotation
 
@@ -14,10 +14,10 @@ OpenShield encrypts integration credentials with Fernet. The Node accepts one ac
    ~~~
 
    Multiple previous keys can be comma-separated. Keep the new active key configured after rotation; removing the override without updating the persisted **fernet.key** file would make the old volume key active again.
-4. Restart the Node so Compose passes both values into its container:
+4. Restart the Node and Gateway Connector so Compose passes both values into both containers:
 
    ~~~bash
-   docker compose up -d openshield-node
+   docker compose up -d openshield-node openshield-gateway-connector
    ~~~
 5. Re-encrypt and verify every stored integration secret:
 
@@ -36,4 +36,4 @@ Do not remove the previous key before the verification command succeeds. Do not 
 - Previous and active keys are not written to integration records, audit details, logs, or API responses.
 - The rotation command emits only a verified-secret count.
 - The API continues to return integration metadata, never decrypted credentials or key material.
-- The previous-key list is consumed only by the Node; the gateway connector does not need it.
+- The previous-key list is used by both Node credential storage and the Gateway Connector spool migration.
