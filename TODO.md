@@ -105,4 +105,4 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - P5 exact-match policies, approval, emergency stop, bounded DNS/OpenWrt execution, TTL and rollback logic; hardware validation remains a gate.
 - P6 multi-gateway summaries, loopback-by-default publishing and PostgreSQL backup/restore tooling.
 - Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling, atomic backup publication, fail-closed transactional restore, and a disposable PostgreSQL backup/restore round-trip in CI.
-- Playwright browser setup using the official browser image; no apt-based browser dependency installation is needed in CI.
+- Playwright browser setup uses the official browser image; no apt-based browser dependency installation is needed in CI. See [dashboard browser test runbook](docs/operations/dashboard-browser-tests.md).
