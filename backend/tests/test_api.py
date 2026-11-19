@@ -165,6 +165,57 @@ def test_gateway_heartbeat_identifies_gateway_without_credentials() -> None:
     assert response.json()["status"] == "acknowledged"
 
 
+def test_gateway_heartbeat_reports_durable_spool_metrics() -> None:
+    gateway_id = "telemetry-gateway"
+    assert client.post(
+        "/api/v1/gateway/connect", json=gateway_payload(gateway_id)
+    ).status_code == 201
+
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": gateway_id,
+        "spool_stats": {
+            "pending_events": 12,
+            "capacity": 100,
+            "evicted_events": 4,
+            "coalesced_health_events": 2,
+            "dropped_events": 1,
+        },
+    })
+
+    assert response.status_code == 200
+    rendered = client.get("/metrics").text
+    label = f'gateway_id="{gateway_id}"'
+    assert f"openshield_gateway_spool_pending_events{{{label}}} 12" in rendered
+    assert f"openshield_gateway_spool_capacity{{{label}}} 100" in rendered
+    assert f"openshield_gateway_spool_evicted_events_total{{{label}}} 4" in rendered
+    assert f"openshield_gateway_spool_coalesced_health_events_total{{{label}}} 2" in rendered
+    assert f"openshield_gateway_spool_dropped_events_total{{{label}}} 1" in rendered
+    assert f"openshield_gateway_spool_last_report_timestamp_seconds{{{label}}}" in rendered
+
+
+def test_gateway_heartbeat_rejects_invalid_spool_statistics() -> None:
+    gateway_id = "invalid-spool-gateway"
+    assert client.post(
+        "/api/v1/gateway/connect", json=gateway_payload(gateway_id)
+    ).status_code == 201
+
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": gateway_id,
+        "spool_stats": {
+            "pending_events": 101,
+            "capacity": 100,
+            "evicted_events": 0,
+            "coalesced_health_events": 0,
+            "dropped_events": 0,
+        },
+    })
+
+    assert response.status_code == 422
+    assert f'gateway_id="{gateway_id}"' not in client.get("/metrics").text
+
+
 def test_gateway_heartbeat_requires_existing_connection() -> None:
     response = client.post("/api/v1/gateway/heartbeat", json={
         "protocol_version": "openshield.gateway.v1", "gateway_id": "unknown-gateway",
