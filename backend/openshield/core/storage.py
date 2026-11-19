@@ -1,6 +1,8 @@
 import ipaddress
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import psycopg
@@ -30,6 +32,10 @@ def _has_valid_device_address(device: dict[str, object]) -> bool:
 
 class StorageConfigurationError(RuntimeError):
     pass
+
+
+class AdvisoryLockUnavailable(RuntimeError):
+    """Another OpenShield Node process already owns the database process lock."""
 
 
 class PostgresStore:
@@ -90,6 +96,38 @@ class PostgresStore:
             self._pool = None
             if pool is not None and not pool.closed:
                 pool.close()
+
+    @contextmanager
+    def advisory_lock(self, lock_id: int) -> Iterator[None]:
+        """Hold a PostgreSQL session advisory lock without consuming a pool slot."""
+        if isinstance(lock_id, bool) or not isinstance(lock_id, int) or not -(1 << 63) <= lock_id < (1 << 63):
+            raise ValueError("Advisory lock ID must be a signed 64-bit integer")
+        if not self._dsn:
+            raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
+
+        connection = psycopg.connect(self._dsn, connect_timeout=5)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+                row = cursor.fetchone()
+            acquired = row is not None and row[0] is True
+            connection.commit()
+            if not acquired:
+                raise AdvisoryLockUnavailable(
+                    "Another OpenShield Node process already holds the PostgreSQL process lock"
+                )
+
+            try:
+                yield
+            finally:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+                    released = cursor.fetchone()
+                connection.commit()
+                if released is None or released[0] is not True:
+                    raise RuntimeError("OpenShield PostgreSQL process lock was not released")
+        finally:
+            connection.close()
 
     def _connect(self):
         if not self._dsn:
