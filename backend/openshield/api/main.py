@@ -350,7 +350,7 @@ def _check_admin_auth(request: Request) -> Response | None:
 @app.middleware("http")
 async def authenticate_requests(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/health/") or path == "/metrics":
+    if path.startswith("/health/"):
         return await call_next(request)
     is_gateway = path.startswith("/api/v1/gateway/")
     if is_gateway:
