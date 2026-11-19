@@ -71,7 +71,7 @@ class MetricsRegistry:
     def set_gauge(
         self,
         name: str,
-        value: int | float,
+        value: float,
         labels: dict[str, str] | None = None,
     ) -> None:
         if (
