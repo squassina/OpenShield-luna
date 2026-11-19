@@ -3,7 +3,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-import pytest
 
 
 SCRIPT_ROOT = next(
@@ -40,8 +39,10 @@ exit "${PG_DUMP_EXIT_CODE:-0}"
 set -eu
 if [ "${1:-}" = "--list" ]; then
   [ "${PG_RESTORE_LIST_FAIL:-0}" != "1" ] || exit 23
-  [ -f "$2" ] && grep -q 'valid-archive' "$2"
-  exit 0
+  if [ -f "$2" ] && grep -q 'valid-archive' "$2"; then
+    exit 0
+  fi
+  exit 12
 fi
 printf '%s\\n' "$*" >> "${PG_RESTORE_LOG:?}"
 exit "${PG_RESTORE_EXIT_CODE:-0}"
