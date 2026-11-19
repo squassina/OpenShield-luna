@@ -8,3 +8,8 @@
 .env
 .env.*
 !.env.example
+certs
+backups
+runtime-secrets
+**/*.pem
+**/*.key

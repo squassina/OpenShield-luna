@@ -107,7 +107,7 @@ services:
       cache_to:
         - type=gha,scope=openshield-browser-test,mode=max
     profiles: ["tools"]
-    command: ["sh", "-c", "ruff check dashboard-tests && pytest -v dashboard-tests"]
+    command: ["sh", "-c", "ruff check dashboard-tests scripts/ops && python scripts/ops/check_repository_docs.py && pytest -v dashboard-tests"]
 
   openshield-gateway-connector:
     container_name: openshield-luna-gateway-connector

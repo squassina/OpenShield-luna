@@ -40,3 +40,4 @@ COPY backend/openshield ./openshield
 RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2,<27" \
     && pip install --no-cache-dir --root-user-action=ignore ".[dev]"
 COPY tests/dashboard ./dashboard-tests
+COPY . .
