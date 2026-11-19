@@ -1,3 +1,4 @@
+import math
 import re
 from collections import Counter
 from threading import Lock
@@ -71,8 +72,8 @@ class MetricsRegistry:
     def set_counter(
         self, name: str, value: int, labels: dict[str, str] | None = None,
     ) -> None:
-        if value < 0:
-            raise ValueError("Counter values cannot be negative")
+        if type(value) is not int or value < 0:
+            raise ValueError("Counter values must be non-negative integers")
         key = self._key(name, labels)
         with self._lock:
             if key is None:
@@ -86,14 +87,18 @@ class MetricsRegistry:
     def set_gauge(
         self, name: str, value: float, labels: dict[str, str] | None = None,
     ) -> None:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            numeric_value = math.nan
         key = self._key(name, labels)
         with self._lock:
-            if key is None:
+            if key is None or not math.isfinite(numeric_value):
                 self._dropped_series += 1
                 return
             exists = key in self._gauges
             if self._reserve(key, "gauge", exists):
-                self._gauges[key] = float(value)
+                self._gauges[key] = numeric_value
 
     def render(self) -> str:
         with self._lock:
