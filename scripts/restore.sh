@@ -38,12 +38,12 @@ target_has_objects="$(
         )
         OR EXISTS (
           SELECT 1
-          FROM pg_catalog.pg_type AS type
+          FROM pg_catalog.pg_type AS user_type
           JOIN pg_catalog.pg_namespace AS namespace
-            ON namespace.oid = type.typnamespace
+            ON namespace.oid = user_type.typnamespace
           WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema')
             AND namespace.nspname NOT LIKE 'pg_toast%'
-            AND type.typtype IN ('d', 'e', 'r')
+            AND user_type.typtype IN ('d', 'e', 'r')
         )
         OR EXISTS (
           SELECT 1
