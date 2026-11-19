@@ -60,7 +60,7 @@ class FakeGatewayConnections:
             connected_at=datetime.now(UTC),
         )
 
-    def heartbeat(self, _gateway_id: str):
+    def heartbeat(self, _gateway_id: str, _spool_stats=None):
         return None
 
     def list_status(self):
@@ -76,6 +76,9 @@ class FakeMetrics:
 
     def increment(self, name: str) -> None:
         self.counters.append(name)
+
+    def set_gauge(self, name: str, value: int, labels=None) -> None:
+        self.counters.append((name, value, labels))
 
     def render(self) -> str:
         return "# HELP openshield_test_metric Test metric\n"

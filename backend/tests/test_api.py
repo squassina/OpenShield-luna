@@ -165,6 +165,46 @@ def test_gateway_heartbeat_identifies_gateway_without_credentials() -> None:
     assert response.json()["status"] == "acknowledged"
 
 
+def test_gateway_heartbeat_persists_spool_stats_and_exports_metrics() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    stats = {
+        "pending_events": 3,
+        "capacity": 100,
+        "evicted_events": 2,
+        "coalesced_health_events": 4,
+        "dropped_events": 1,
+    }
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "spool_stats": stats,
+    })
+
+    assert response.status_code == 200
+    gateway = client.get("/api/v1/gateways").json()[0]
+    assert gateway["spool_stats"] == stats
+    metrics = client.get("/metrics").text
+    assert "# TYPE openshield_gateway_spool_pending_events gauge" in metrics
+    assert "openshield_gateway_spool_pending_events 3" in metrics
+    assert "openshield_gateway_spool_dropped_events 1" in metrics
+
+
+def test_gateway_heartbeat_rejects_spool_depth_above_capacity() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    response = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "spool_stats": {
+            "pending_events": 3,
+            "capacity": 2,
+            "evicted_events": 0,
+            "coalesced_health_events": 0,
+            "dropped_events": 0,
+        },
+    })
+    assert response.status_code == 422
+
+
 def test_gateway_heartbeat_requires_existing_connection() -> None:
     response = client.post("/api/v1/gateway/heartbeat", json={
         "protocol_version": "openshield.gateway.v1", "gateway_id": "unknown-gateway",

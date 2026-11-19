@@ -65,6 +65,25 @@ def test_connector_client_heartbeat_includes_gateway_identity() -> None:
     }
 
 
+def test_connector_client_sends_spool_stats_with_heartbeat() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "acknowledged", "gateway_id": "test-gateway"}
+    ).encode()
+    stats = {
+        "pending_events": 2,
+        "capacity": 10,
+        "evicted_events": 1,
+        "coalesced_health_events": 3,
+        "dropped_events": 0,
+    }
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        make_client().heartbeat(stats)
+
+    payload = json.loads(mocked.call_args.args[0].data)
+    assert payload["spool_stats"] == stats
+
+
 def test_connector_client_surfaces_transport_failures() -> None:
     from urllib.error import URLError
 
@@ -88,7 +107,7 @@ def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.Mon
                 raise GatewayTransportError("offline")
             return {"gateway_id": "test-gateway"}
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, _spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             raise GatewayTransportError("connection lost")
 
@@ -162,7 +181,7 @@ def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pyt
         def connect(self) -> dict[str, object]:
             return {"gateway_id": "test-gateway"}
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, _spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"status": "acknowledged"}
 
@@ -754,7 +773,7 @@ def test_gateway_agent_uses_node_integration_id_distinct_from_gateway_id(
                 "integration_id": "node-canonical-integration",
             }
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, _spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"status": "acknowledged"}
 
@@ -807,7 +826,7 @@ def test_gateway_config_refresh_discovers_only_once_per_heartbeat(
                 "openwrt_config": {"version": 1},
             }
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, _spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"openwrt_config": {"version": 2}}
 
