@@ -123,9 +123,14 @@ docker compose run --rm openshield-lint
 docker compose run --rm openshield-test
 
 # Browser-level dashboard tests (Chromium)
+# Uses the official Playwright Python image with Chromium and OS libraries preinstalled.
+# Do not run Playwright's --with-deps or apt-get browser setup in CI:
+# those steps depend on Ubuntu mirror DNS and have failed on hosted runners.
 docker compose build openshield-browser-test
 docker compose run --rm openshield-browser-test
 ```
+
+See the [dashboard browser test runbook](docs/operations/dashboard-browser-tests.md) for the CI image rationale and troubleshooting.
 
 API: http://localhost:8000  
 OpenAPI: http://localhost:8000/docs  
