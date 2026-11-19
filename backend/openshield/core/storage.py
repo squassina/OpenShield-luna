@@ -8,7 +8,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from openshield.events.models import EventEnvelope
-from openshield.gateway.models import GatewayConnection
+from openshield.gateway.models import GatewayConnection, GatewaySpoolStats
 from openshield.integrations.models import Integration
 
 
@@ -2021,7 +2021,11 @@ CREATE TABLE IF NOT EXISTS events (
                 },
             )
 
-    def heartbeat_gateway(self, gateway_id: str) -> GatewayConnection | None:
+    def heartbeat_gateway(
+        self,
+        gateway_id: str,
+        spool_stats: GatewaySpoolStats | None = None,
+    ) -> GatewayConnection | None:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT payload FROM gateway_connections WHERE gateway_id = %s",
@@ -2031,7 +2035,10 @@ CREATE TABLE IF NOT EXISTS events (
             if row is None:
                 return None
             current = GatewayConnection.model_validate(row[0])
-            updated = current.model_copy(update={"last_seen_at": datetime.now(UTC)})
+            updates: dict[str, object] = {"last_seen_at": datetime.now(UTC)}
+            if spool_stats is not None:
+                updates["spool_stats"] = spool_stats
+            updated = current.model_copy(update=updates)
             cursor.execute(
                 """
                 UPDATE gateway_connections

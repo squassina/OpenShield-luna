@@ -16,6 +16,29 @@ from openshield.integrations.models import IntegrationRegistration
 from openshield.integrations.registry import IntegrationRegistry
 
 
+_SPOOL_METRIC_FIELDS = (
+    "pending_events",
+    "capacity",
+    "evicted_events",
+    "coalesced_health_events",
+    "dropped_events",
+)
+
+
+def _refresh_gateway_spool_metrics(gateway_connections, metrics: MetricsRegistry) -> None:
+    totals = dict.fromkeys(_SPOOL_METRIC_FIELDS, 0)
+    for gateway in gateway_connections.list_status():
+        stats = gateway.get("spool_stats")
+        if not isinstance(stats, dict):
+            continue
+        for field in _SPOOL_METRIC_FIELDS:
+            value = stats.get(field, 0)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                totals[field] += value
+    for field, value in totals.items():
+        metrics.set_gauge(f"openshield_gateway_spool_{field}", value)
+
+
 def create_gateway_router(
     *,
     store: PostgresStore,
@@ -89,7 +112,7 @@ def create_gateway_router(
     def gateway_heartbeat(
         request: GatewayHeartbeatRequest, http_request: Request,
     ) -> dict[str, object]:
-        connection = gateway_connections.heartbeat(request.gateway_id)
+        connection = gateway_connections.heartbeat(request.gateway_id, request.spool_stats)
         if connection is None:
             raise HTTPException(
                 status_code=409, detail="Gateway must connect before sending heartbeat",
@@ -101,6 +124,8 @@ def create_gateway_router(
                 detail="Gateway authentication required to receive router credentials",
             )
         metrics.increment("openshield_gateway_heartbeats_total")
+        if request.spool_stats is not None:
+            _refresh_gateway_spool_metrics(gateway_connections, metrics)
         try:
             openwrt_config = (
                 gateway_openwrt_config(connection.gateway_id) if encrypted_secret else None

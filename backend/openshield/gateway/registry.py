@@ -1,7 +1,11 @@
 from datetime import UTC, datetime, timedelta
 
 from openshield.core.storage import PostgresStore
-from openshield.gateway.models import GatewayConnection, GatewayConnectRequest
+from openshield.gateway.models import (
+    GatewayConnection,
+    GatewayConnectRequest,
+    GatewaySpoolStats,
+)
 
 CONNECTION_TIMEOUT = timedelta(seconds=90)
 
@@ -23,13 +27,20 @@ class GatewayConnectionRegistry:
             self._connections[connection.gateway_id] = connection
         return connection
 
-    def heartbeat(self, gateway_id: str) -> GatewayConnection | None:
+    def heartbeat(
+        self,
+        gateway_id: str,
+        spool_stats: GatewaySpoolStats | None = None,
+    ) -> GatewayConnection | None:
         if self._store is not None:
-            return self._store.heartbeat_gateway(gateway_id)
+            return self._store.heartbeat_gateway(gateway_id, spool_stats)
         connection = self._connections.get(gateway_id)
         if connection is None:
             return None
-        updated = connection.model_copy(update={"last_seen_at": datetime.now(UTC)})
+        updates: dict[str, object] = {"last_seen_at": datetime.now(UTC)}
+        if spool_stats is not None:
+            updates["spool_stats"] = spool_stats
+        updated = connection.model_copy(update=updates)
         self._connections[gateway_id] = updated
         return updated
 

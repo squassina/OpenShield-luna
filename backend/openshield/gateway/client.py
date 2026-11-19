@@ -49,11 +49,16 @@ class GatewayConnectorClient:
         )
         return self._post("/api/v1/gateway/connect", request.model_dump(mode="json"))
 
-    def heartbeat(self) -> dict[str, object]:
-        return self._post(
-            "/api/v1/gateway/heartbeat",
-            {"protocol_version": "openshield.gateway.v1", "gateway_id": self._gateway_id},
-        )
+    def heartbeat(
+        self, spool_stats: dict[str, int] | None = None,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "protocol_version": "openshield.gateway.v1",
+            "gateway_id": self._gateway_id,
+        }
+        if spool_stats is not None:
+            payload["spool_stats"] = spool_stats
+        return self._post("/api/v1/gateway/heartbeat", payload)
 
     def report_command_result(
         self, command_id: str, status: str, result: dict[str, object]

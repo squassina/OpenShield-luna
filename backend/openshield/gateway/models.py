@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openshield.integrations.models import Capability
 
@@ -24,11 +24,28 @@ class GatewayConnectRequest(BaseModel):
         return values
 
 
+class GatewaySpoolStats(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pending_events: int = Field(ge=0, le=1_000_000)
+    capacity: int = Field(ge=1, le=1_000_000)
+    evicted_events: int = Field(ge=0)
+    coalesced_health_events: int = Field(ge=0)
+    dropped_events: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_pending_capacity(self) -> "GatewaySpoolStats":
+        if self.pending_events > self.capacity:
+            raise ValueError("Pending gateway spool events cannot exceed capacity")
+        return self
+
+
 class GatewayHeartbeatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     protocol_version: Literal["openshield.gateway.v1"]
     gateway_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$")
+    spool_stats: GatewaySpoolStats | None = None
 
 
 class GatewayConnection(BaseModel):
@@ -39,6 +56,7 @@ class GatewayConnection(BaseModel):
     capabilities: list[Capability]
     connected_at: datetime
     last_seen_at: datetime
+    spool_stats: GatewaySpoolStats | None = None
 
     @classmethod
     def create(cls, request: GatewayConnectRequest) -> "GatewayConnection":
@@ -52,7 +70,6 @@ class GatewayConnection(BaseModel):
             connected_at=now,
             last_seen_at=now,
         )
-
 
 
 class GatewayCommandResultRequest(BaseModel):
