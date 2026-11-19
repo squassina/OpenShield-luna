@@ -65,6 +65,44 @@ def test_connector_client_heartbeat_includes_gateway_identity() -> None:
     }
 
 
+def test_connector_client_reports_spool_stats_in_heartbeat() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "acknowledged", "gateway_id": "test-gateway"}
+    ).encode()
+    stats = {
+        "pending_events": 12,
+        "capacity": 10000,
+        "evicted_events": 4,
+        "coalesced_health_events": 2,
+        "dropped_events": 1,
+    }
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        make_client().heartbeat(stats)
+
+    payload = json.loads(mocked.call_args.args[0].data)
+    assert payload["spool_stats"] == stats
+
+
+def test_gateway_heartbeat_rejects_invalid_spool_capacity() -> None:
+    from pydantic import ValidationError
+
+    from openshield.gateway.models import GatewayHeartbeatRequest
+
+    with pytest.raises(ValidationError, match="Pending events cannot exceed spool capacity"):
+        GatewayHeartbeatRequest.model_validate({
+            "protocol_version": "openshield.gateway.v1",
+            "gateway_id": "test-gateway",
+            "spool_stats": {
+                "pending_events": 11,
+                "capacity": 10,
+                "evicted_events": 0,
+                "coalesced_health_events": 0,
+                "dropped_events": 0,
+            },
+        })
+
+
 def test_connector_client_surfaces_transport_failures() -> None:
     from urllib.error import URLError
 
