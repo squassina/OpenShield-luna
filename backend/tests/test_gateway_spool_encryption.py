@@ -66,6 +66,24 @@ def test_spool_encrypts_event_and_command_result_payloads_at_rest(tmp_path) -> N
     }
 
 
+def test_encrypted_command_result_retries_are_idempotent(tmp_path) -> None:
+    path = tmp_path / "command-result-retry.sqlite3"
+    key = Fernet.generate_key().decode("ascii")
+    spool = GatewayEventSpool(str(path), encryption_key=key)
+    result = {"hostname": "private-router", "sequence": 7}
+
+    assert spool.enqueue_command_result("command-1", "completed", result) is True
+    # Fernet encrypts the same plaintext to a different token on each call.
+    assert spool.enqueue_command_result("command-1", "completed", result) is False
+
+    with pytest.raises(ValueError, match="cannot be changed"):
+        spool.enqueue_command_result(
+            "command-1", "completed", {"hostname": "different-router", "sequence": 7}
+        )
+    with pytest.raises(ValueError, match="cannot be changed"):
+        spool.enqueue_command_result("command-1", "failed", result)
+
+
 def test_spool_migrates_legacy_plaintext_rows_on_first_encrypted_startup(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     legacy = GatewayEventSpool(str(path))
