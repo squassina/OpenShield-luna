@@ -39,13 +39,21 @@ class Api:
         if username and password:
             token = base64.b64encode(f"{username}:{password}".encode()).decode()
             self.authorization = f"Basic {token}"
+        self.sensor_token = os.getenv("OPENSHIELD_BENCHMARK_SENSOR_TOKEN", "").strip()
 
     def request(self, path: str, payload: object | None = None) -> dict:
         data = None if payload is None else json.dumps(payload).encode()
         headers = {"Accept": "application/json"}
         if data is not None:
             headers["Content-Type"] = "application/json"
-        if self.authorization:
+        if path.startswith("/api/v1/sensors/") and path.endswith("/events"):
+            if not self.sensor_token:
+                raise ValueError(
+                    "Set OPENSHIELD_BENCHMARK_SENSOR_TOKEN to the integration-scoped "
+                    "sensor credential"
+                )
+            headers["Authorization"] = f"Bearer {self.sensor_token}"
+        elif self.authorization:
             headers["Authorization"] = self.authorization
         request = urllib.request.Request(
             self.base_url + path, data=data, headers=headers,
