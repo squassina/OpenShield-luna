@@ -20,7 +20,11 @@ transforms:
       - suricata_eve
     source: |
       . = parse_json!(.message)
+      if .event_type != "alert" && .event_type != "flow" && .event_type != "dns" && .event_type != "http" && .event_type != "tls" && .event_type != "ssh" && .event_type != "anomaly" {
+        abort
+      }
     drop_on_error: true
+    drop_on_abort: true
     reroute_dropped: false
 
 sinks:
@@ -38,7 +42,7 @@ sinks:
     request:
       concurrency: 1
       rate_limit_duration_secs: 60
-      rate_limit_num: 45
+      rate_limit_num: 30
       timeout_secs: 30
       retry_initial_backoff_secs: 1
       retry_max_duration_secs: 30
