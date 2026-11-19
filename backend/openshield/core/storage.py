@@ -100,7 +100,11 @@ class PostgresStore:
     @contextmanager
     def advisory_lock(self, lock_id: int) -> Iterator[None]:
         """Hold a PostgreSQL session advisory lock without consuming a pool slot."""
-        if isinstance(lock_id, bool) or not isinstance(lock_id, int) or not -(1 << 63) <= lock_id < (1 << 63):
+        if (
+            isinstance(lock_id, bool)
+            or not isinstance(lock_id, int)
+            or not -(1 << 63) <= lock_id < (1 << 63)
+        ):
             raise ValueError("Advisory lock ID must be a signed 64-bit integer")
         if not self._dsn:
             raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
