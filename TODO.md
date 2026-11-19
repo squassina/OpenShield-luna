@@ -77,7 +77,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Pin the complete build inputs.** Python dependencies use version ranges and base images are tag-pinned rather than digest-pinned. Add a reproducible dependency lock and pin runtime/build images by digest or a controlled update process. Keep Playwright client and browser image versions aligned.
 
-- [ ] **Reconcile PLAN.md with the merged implementation.** Some appended P3/P4/P5/P6 status text still says implementation is on a chained feature branch or underway, while the corresponding software is present on main. P1 checkpoint and earlier P0 notes also repeat older boundaries. Keep PLAN.md as product architecture/strategy, but update implementation checkpoints to match README and this TODO.
+- [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
 - [ ] **Reduce large-module maintenance cost incrementally.** `backend/openshield/core/storage.py` is a 2,200+ line persistence module and `backend/openshield/dashboard.html` is a single roughly 90 KB UI asset. Extract only when there is a clear seam and regression coverage; preserve current contracts and avoid a broad rewrite.
 
