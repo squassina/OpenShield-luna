@@ -88,7 +88,7 @@ def test_connector_agent_reconnects_after_transport_loss(monkeypatch: pytest.Mon
                 raise GatewayTransportError("offline")
             return {"gateway_id": "test-gateway"}
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             raise GatewayTransportError("connection lost")
 
@@ -162,7 +162,7 @@ def test_connector_agent_forwards_discovery_and_periodic_health(monkeypatch: pyt
         def connect(self) -> dict[str, object]:
             return {"gateway_id": "test-gateway"}
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"status": "acknowledged"}
 
@@ -754,7 +754,7 @@ def test_gateway_agent_uses_node_integration_id_distinct_from_gateway_id(
                 "integration_id": "node-canonical-integration",
             }
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"status": "acknowledged"}
 
@@ -807,7 +807,7 @@ def test_gateway_config_refresh_discovers_only_once_per_heartbeat(
                 "openwrt_config": {"version": 1},
             }
 
-        def heartbeat(self) -> dict[str, object]:
+        def heartbeat(self, spool_stats: dict[str, int] | None = None) -> dict[str, object]:
             self.heartbeat_calls += 1
             return {"openwrt_config": {"version": 2}}
 
