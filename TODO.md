@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `9dc80ffdfcc6b6afbad141c221412582a0caab27`  
+**Reviewed baseline:** `main` at `b6037fdae4a1834fabf933f4409a3e9fa8189f8b`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -52,7 +52,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - Run the sequential synthetic benchmark at 1k/10k/50k events against staging or a representative deployment. Record hardware, CPU/memory, PostgreSQL version, image/commit, DB volume growth, throughput and p50/p95/p99 request latency.
 - Review read-only query plans and index usage with representative data. Use `EXPLAIN ANALYZE` only in staging because it executes the SELECTs.
 - Do not add partitioning/indexes without measured evidence of a bottleneck.
-- Restore a backup from the actual deployment data volume into an isolated database; record backup size/time, restore time, manifest comparison and application-level validation.
+- Repository tooling now provides atomic custom-format backup publication, fail-closed restore preflight, one-transaction restore, a source-manifest verifier, and a real PostgreSQL round-trip in CI. Remaining deployment acceptance: restore a backup from the actual data volume into an isolated database; record backup size/time, restore time, manifest comparison and application-level validation.
 - Keep retention disabled unless a retention policy is explicitly approved.
 
 ## Engineering debt found in the repository review
@@ -65,7 +65,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Expose gateway spool counters and alert on loss/pressure.** SQLite already maintains `pending_events`, `capacity`, `evicted_events`, `coalesced_health_events`, and `dropped_events`. Protected events include gateway health, command results, security/audit events and high/critical severity; duplicate health snapshots may be coalesced while state transitions remain durable. However, `GatewayEventSpool.stats()` is not wired to Node metrics or an operational API. Expose bounded counters/gauges and alert on drops, evictions and sustained high-water marks. Evidence: `backend/openshield/gateway/spool.py`, `backend/openshield/gateway/agent.py`.
 
-- [ ] **Make restore preflight fail closed.** `scripts/restore.sh` requires `OPENSHIELD_RESTORE_CONFIRM=YES`, but it does not verify that the target database is empty before running `pg_restore`. A non-empty target can retain unrelated objects or fail partway on conflicts. Check the target database/schema before restore and refuse unless it is demonstrably empty; add tests for empty, non-empty and wrong-target cases. Keep restore non-destructive; do not add automatic `--clean`/drop behavior.
+- [x] **Make restore preflight fail closed.** `scripts/restore.sh` requires `OPENSHIELD_RESTORE_CONFIRM=YES`, verifies that the archive is readable, and uses `psql` to reject targets containing user tables/views/sequences, functions, custom types, or non-default schemas. Query failure or an unexpected result is rejected; restore runs with `pg_restore --single-transaction --exit-on-error`. Tests cover empty and non-empty targets, unknown preflight output, confirmation, and transactional failure. No automatic drop/clean behavior is used.
 
 - [ ] **Remove insecure Compose database fallback for production use.** `docker-compose.yml` falls back to the public development password `openshield-dev-password` when the variable is absent. Keep a convenient local-development path, but add an explicit production/preflight guard that rejects known defaults and documents mandatory unique credentials. Evidence: `docker-compose.yml`, `.env.example`, README deployment instructions.
 
@@ -77,13 +77,13 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Pin the complete build inputs.** Python dependencies use version ranges and base images are tag-pinned rather than digest-pinned. Add a reproducible dependency lock and pin runtime/build images by digest or a controlled update process. Keep Playwright client and browser image versions aligned.
 
-- [ ] **Reconcile PLAN.md with the merged implementation.** Some appended P3/P4/P5/P6 status text still says implementation is on a chained feature branch or underway, while the corresponding software is present on main. P1 checkpoint and earlier P0 notes also repeat older boundaries. Keep PLAN.md as product architecture/strategy, but update implementation checkpoints to match README and this TODO.
+- [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
 - [ ] **Reduce large-module maintenance cost incrementally.** `backend/openshield/core/storage.py` is a 2,200+ line persistence module and `backend/openshield/dashboard.html` is a single roughly 90 KB UI asset. Extract only when there is a clear seam and regression coverage; preserve current contracts and avoid a broad rewrite.
 
 - [ ] **Add documentation and dashboard static checks to CI.** Validate relative Markdown links and run a JavaScript syntax/lint check on the inline dashboard script. Browser tests already exercise the dashboard, but syntax checks and link validation would catch documentation drift earlier.
 
-- [ ] **Review backup artifact handling.** `scripts/backup.sh` uses second-resolution filenames and can leave a partial file if `pg_dump` fails before archive verification. Use collision-safe temporary output plus atomic rename and cleanup on failure.
+- [x] **Review backup artifact handling.** `scripts/backup.sh` writes to a collision-safe temporary file in the destination directory, validates it with `pg_restore --list`, enforces mode 0600, and publishes it with an atomic rename. An EXIT trap removes incomplete files after dump, validation, or publication failures. Tests cover unique names, permissions, and cleanup.
 
 ## Operational constraints to keep visible
 
@@ -104,5 +104,5 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - P4 local Ollama and opt-in sanitized OpenAI investigation, schema validation and audit.
 - P5 exact-match policies, approval, emergency stop, bounded DNS/OpenWrt execution, TTL and rollback logic; hardware validation remains a gate.
 - P6 multi-gateway summaries, loopback-by-default publishing and PostgreSQL backup/restore tooling.
-- Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling and a disposable PostgreSQL restore round-trip in CI.
+- Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling, atomic backup publication, fail-closed transactional restore, and a disposable PostgreSQL backup/restore round-trip in CI.
 - Playwright browser setup using the official browser image; no apt-based browser dependency installation is needed in CI.

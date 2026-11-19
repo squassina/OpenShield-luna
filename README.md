@@ -68,11 +68,21 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - Restrict Node access to a trusted LAN. Do not publish port 8000 to the Internet.
 - OpenWrt credentials are entered through the dashboard and encrypted at rest with `OPENSHIELD_SECRET_KEY`. They are never returned by integration APIs or stored in integration JSON. The authenticated connector receives them on connect/heartbeat. Back up the encryption key securely.
 - P0 OpenWrt discovery is read-only and does not modify router configuration. Separate P5 enforcement can add or remove narrowly scoped temporary UCI firewall rules through authenticated gateway commands after explicit policy approval. It is disabled by default and requires physical firmware, ACL, and rollback validation before use.
-- PostgreSQL uses versioned schema migrations and a bounded connection pool. Automated backup/restore and production database hardening remain pending.
+- PostgreSQL uses versioned schema migrations and a bounded connection pool. Verified custom-format backup and fail-closed restore scripts are included; CI exercises a real PostgreSQL backup/restore round-trip. Deployment-specific backup retention, off-host encryption, staging recovery evidence, and production database hardening remain operational responsibilities.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
 - Metrics are process-local and reset on restart.
 - The connector is a nearby-host Linux/Docker agent, not an on-device OpenWrt daemon.
 - Physical OpenWrt hardware/firmware compatibility and forwarding-independence validation remain open in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
+
+## PostgreSQL backup and restore
+
+Custom-format database backups use [`scripts/backup.sh`](scripts/backup.sh). The script writes to a unique temporary file, validates the archive with `pg_restore --list`, restricts permissions to the owner, and publishes it with an atomic rename. Failed or interrupted dumps do not leave a partial file under the final backup name.
+
+Restores use [`scripts/restore.sh`](scripts/restore.sh). The script requires `OPENSHIELD_RESTORE_CONFIRM=YES`, validates the archive, refuses targets containing user database objects, and restores in one PostgreSQL transaction. It does not drop or truncate an existing database. Restore only into a newly created, isolated database.
+
+The CI workflow runs a real `pg_dump`/`pg_restore` round-trip between disposable PostgreSQL databases and verifies schema migrations and exact table counts. This validates the scripts and verifier, not a deployment's actual backup media or recovery objectives.
+
+Backups contain sensitive network metadata and configuration. Encrypt them at rest, store copies outside the database volume, and protect the database credentials and `OPENSHIELD_SECRET_KEY` separately. See the [event load, query-plan and backup/restore runbook](docs/operations/event-load-backup.md) for the complete procedure. Staging load measurements, query-plan review and a restore drill using deployment data remain open under [Issue #19](https://github.com/squassina/OpenShield-luna/issues/19).
 
 ## Docker-first development
 

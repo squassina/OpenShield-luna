@@ -8,6 +8,8 @@ The canonical, prioritized engineering backlog is now maintained in the reposito
 - [Issue #18 — Live Suricata and Zeek deployment validation](https://github.com/squassina/OpenShield-luna/issues/18)
 - [Issue #19 — Representative event load, query plans, and deployment backup/restore](https://github.com/squassina/OpenShield-luna/issues/19)
 
+Repository-side #19 tooling is implemented: sequential ingestion benchmark, read-only query-plan diagnostics, source/restore manifest comparison, atomic verified backups, fail-closed empty-target restore, and a real disposable PostgreSQL round-trip in CI. The issue remains open for measured staging load/query-plan evidence and recovery using the deployment's actual data volume.
+
 ## Status boundary
 
 P0–P6 software features are implemented to the extent described in README.md. That does not mean the physical gateway, real sensor deployments, production database performance, disaster recovery, or multi-tenant security have been accepted. Synthetic fixtures and CI are necessary regression evidence, not substitutes for deployment evidence.
