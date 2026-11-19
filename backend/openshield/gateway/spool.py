@@ -109,7 +109,6 @@ class GatewayEventSpool:
                 "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
                 "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
-            connection.execute("BEGIN IMMEDIATE")
             migrated_payloads = self._migrate_payloads(connection)
         if migrated_payloads:
             self._compact_encrypted_database()
