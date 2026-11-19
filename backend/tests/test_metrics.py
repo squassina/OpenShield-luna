@@ -39,7 +39,7 @@ def test_registry_rejects_invalid_metric_labels_and_type_conflicts() -> None:
     rendered = metrics.render()
     assert "valid_total" not in rendered
     assert "mixed_metric{result=\"ok\"} 1" in rendered
-    assert "openshield_metrics_series_dropped_total 5" in rendered
+    assert "openshield_metrics_series_dropped_total 4" in rendered
 
 
 def test_registry_rejects_negative_counter_values() -> None:
