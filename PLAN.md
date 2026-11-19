@@ -317,7 +317,7 @@ Scope:
 - Unit and integration tests.
 - Node/gateway disconnection and recovery behavior.
 
-**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield/issues/2).
+**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield-luna/issues/17).
 
 ### P1 — Network Visibility
 
@@ -695,7 +695,7 @@ Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) t
 - Spool and gateway recovery after connector container restart.
 - No firewall, routing, wireless, or forwarding changes.
 
-Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield/issues/2). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
+Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield-luna/issues/17). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
 
 
 ## P0 implementation checkpoint
