@@ -7,18 +7,22 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
 fi
 
 DB_USER="openshield"
-RUN_SUFFIX="$$"
+RUN_SUFFIX="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-1}-$$"
 SOURCE_DB="openshield_ci_restore_source_${RUN_SUFFIX}"
 TARGET_DB="openshield_ci_restore_target_${RUN_SUFFIX}"
 REPORT_DIR="$(mktemp -d)"
-MANIFEST="${REPORT_DIR}/source-manifest.json"
-BACKUP="${REPORT_DIR}/source.dump"
+CONTAINER_WORK_DIR="/tmp/openshield-ci-restore-${RUN_SUFFIX}"
+BACKUP_SCRIPT_IN_CONTAINER="$CONTAINER_WORK_DIR/backup.sh"
+RESTORE_SCRIPT_IN_CONTAINER="$CONTAINER_WORK_DIR/restore.sh"
+CONTAINER_BACKUP_DIR="$CONTAINER_WORK_DIR/backups"
 
 cleanup() {
   docker compose exec -T openshield-db dropdb --if-exists --force \
     -U "$DB_USER" "$TARGET_DB" >/dev/null 2>&1 || true
   docker compose exec -T openshield-db dropdb --if-exists --force \
     -U "$DB_USER" "$SOURCE_DB" >/dev/null 2>&1 || true
+  docker compose exec -T openshield-db rm -rf "$CONTAINER_WORK_DIR" \
+    >/dev/null 2>&1 || true
   rm -rf "$REPORT_DIR"
 }
 trap cleanup EXIT
@@ -33,7 +37,7 @@ import os
 from urllib.parse import quote
 password = quote(os.environ["POSTGRES_PASSWORD"], safe="")
 database = quote(os.environ["DATABASE_NAME"], safe="")
-print(f"postgresql://openshield:{password}@openshield-db:5432/{database}")
+print(f"postgresql://openshield:{password}@127.0.0.1:5432/{database}")
 '
 }
 
@@ -67,16 +71,24 @@ docker compose run --rm --no-deps \
   openshield-test python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 30000 capture --output /reports/source-manifest.json
 
-docker compose exec -T openshield-db pg_dump \
-  --format=custom --no-owner --no-acl \
-  -U "$DB_USER" -d "$SOURCE_DB" > "$BACKUP"
-test -s "$BACKUP"
-docker compose exec -T openshield-db pg_restore --list < "$BACKUP" >/dev/null
+docker compose exec -T openshield-db mkdir -p "$CONTAINER_WORK_DIR"
+docker compose cp scripts/backup.sh "openshield-db:$BACKUP_SCRIPT_IN_CONTAINER"
+docker compose cp scripts/restore.sh "openshield-db:$RESTORE_SCRIPT_IN_CONTAINER"
+
+docker compose exec -T openshield-db env \
+  OPENSHIELD_DATABASE_URL="$SOURCE_URL" \
+  sh "$BACKUP_SCRIPT_IN_CONTAINER" "$CONTAINER_BACKUP_DIR"
+
+BACKUP_PATH="$(docker compose exec -T openshield-db sh -c \
+  'set -- "$1"/openshield-*.dump; [ -f "$1" ] && printf "%s\\n" "$1"' \
+  sh "$CONTAINER_BACKUP_DIR")"
+test -n "$BACKUP_PATH"
 
 docker compose exec -T openshield-db createdb -U "$DB_USER" "$TARGET_DB"
-docker compose exec -T openshield-db pg_restore \
-  --exit-on-error --no-owner --no-privileges \
-  -U "$DB_USER" -d "$TARGET_DB" < "$BACKUP"
+docker compose exec -T openshield-db env \
+  OPENSHIELD_DATABASE_URL="$TARGET_URL" \
+  OPENSHIELD_RESTORE_CONFIRM=YES \
+  sh "$RESTORE_SCRIPT_IN_CONTAINER" "$BACKUP_PATH"
 
 docker compose run --rm --no-deps \
   -e "OPENSHIELD_DATABASE_URL=$TARGET_URL" \
