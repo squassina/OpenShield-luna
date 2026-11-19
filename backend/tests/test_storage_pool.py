@@ -177,6 +177,22 @@ def test_advisory_lock_rejects_a_second_process(monkeypatch: pytest.MonkeyPatch)
     assert calls == ["commit", "close"]
 
 
+def test_postgres_advisory_lock_is_exclusive_across_connections(
+    database_url: str,
+) -> None:
+    lock_id = 0x4F53484C54455354
+    first = PostgresStore(database_url)
+    second = PostgresStore(database_url)
+
+    with first.advisory_lock(lock_id):
+        with pytest.raises(AdvisoryLockUnavailable):
+            with second.advisory_lock(lock_id):
+                pytest.fail("A second PostgreSQL session must not acquire the lock")
+
+    with second.advisory_lock(lock_id):
+        pass
+
+
 def test_application_lifespan_holds_process_lock_until_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
