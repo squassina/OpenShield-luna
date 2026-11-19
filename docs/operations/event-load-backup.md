@@ -120,6 +120,8 @@ OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" docker compose run --rm \
 
 The verifier exits non-zero when the target has the same database name as the source, a different PostgreSQL major version, different migration history, missing/extra public tables, or any row-count mismatch. It uses a repeatable-read, read-only snapshot and per-statement timeout. Counting every table reads the tables and may take time on a large database; raise the timeout only after reviewing staging load.
 
+CI also runs a real `pg_dump`/`pg_restore` round-trip between disposable PostgreSQL databases and compares the restored database with the source manifest. This validates the toolchain and verifier against a real PostgreSQL server; it does not replace a staging restore drill on the deployment's actual data volume.
+
 After a successful comparison, validate application readiness and key workflows against the restored database in an isolated deployment. Record backup size/time, restore time, verifier JSON output and the tested image/commit. Treat the backup as sensitive data and encrypt it at rest. Keep the original Node database URL unchanged when the shell trap starts Node again.
 
 Do not put the real password in shell history; use a protected .pgpass or equivalent secret mechanism. Never drop the live database or delete persistent Docker volumes.
