@@ -26,7 +26,7 @@ SELECT NOT (
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg_toast%'
-      AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
+      AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'c')
   )
   OR EXISTS (
     SELECT 1
@@ -41,8 +41,9 @@ SELECT NOT (
     JOIN pg_catalog.pg_namespace AS n ON n.oid = t.typnamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
       AND n.nspname NOT LIKE 'pg_toast%'
-      AND t.typtype IN ('c', 'd', 'e', 'm', 'r')
+      AND t.typtype IN ('b', 'c', 'd', 'e', 'm', 'r')
       AND t.typrelid = 0
+      AND t.typelem = 0
   )
   OR EXISTS (
     SELECT 1
