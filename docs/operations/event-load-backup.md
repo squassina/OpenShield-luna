@@ -65,8 +65,7 @@ Export the database password through your secret manager (do not type the litera
 ~~~bash
 : "${OPENSHIELD_POSTGRES_PASSWORD:?Load the PostgreSQL password from your secret manager}"
 export PGPASSWORD="$OPENSHIELD_POSTGRES_PASSWORD"
-RUN_SUFFIX="$(date -u +%Y%m%dT%H%M%SZ)-$"
-CONTAINER_WORK_DIR="/tmp/openshield-backup-$RUN_SUFFIX"
+CONTAINER_WORK_DIR="$(docker compose exec -T openshield-db mktemp -d /tmp/openshield-backup.XXXXXX)"
 mkdir -p backups
 
 SOURCE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=openshield user=openshield"
@@ -96,9 +95,12 @@ Store backups outside the Docker volume and encrypt them at rest. Dumps contain 
 
 Never overwrite the live database during acceptance. Use staging and stop Node plus any other database writers until both the source manifest and backup have been captured. The manifest uses exact table counts from one repeatable-read, read-only snapshot. Counts can mismatch if application writes continue between manifest capture and `pg_dump`.
 
-Record whether Node was already running so the procedure does not start a service that was intentionally stopped:
+Load the PostgreSQL password from the deployment's secret manager. Record whether Node was already running so the procedure does not start a service that was intentionally stopped:
 
 ~~~bash
+: "$OPENSHIELD_POSTGRES_PASSWORD"
+export PGPASSWORD="$OPENSHIELD_POSTGRES_PASSWORD"
+
 NODE_WAS_RUNNING=false
 if docker compose ps --status running --services | grep -Fxq openshield-node; then
   NODE_WAS_RUNNING=true
@@ -115,8 +117,11 @@ docker compose stop openshield-node
 Capture the source manifest while writers are stopped:
 
 ~~~bash
+SOURCE_TEST_DATABASE_URL="host=openshield-db port=5432 dbname=openshield user=openshield"
 docker compose run --rm --no-deps \
   --user "$(id -u):$(id -g)" \
+  -e "OPENSHIELD_DATABASE_URL=$SOURCE_TEST_DATABASE_URL" \
+  -e PGPASSWORD \
   -v "$PWD/backups:/reports" openshield-test \
   python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 120000 capture \
@@ -124,6 +129,22 @@ docker compose run --rm --no-deps \
 ~~~
 
 The manifest contains database/version metadata, schema migration names/versions and exact row counts for all public base tables. It contains no event payloads, credentials, host identifiers or other row contents. The verifier creates the manifest atomically with mode 0600.
+
+Create a fresh temporary workspace inside PostgreSQL and make the backup from the same quiesced source:
+
+~~~bash
+CONTAINER_WORK_DIR="$(docker compose exec -T openshield-db mktemp -d /tmp/openshield-restore-drill.XXXXXX)"
+docker compose cp scripts/backup.sh "openshield-db:$CONTAINER_WORK_DIR/backup.sh"
+docker compose exec -T -e PGPASSWORD \
+  -e "OPENSHIELD_DATABASE_URL=host=127.0.0.1 port=5432 dbname=openshield user=openshield" \
+  openshield-db sh "$CONTAINER_WORK_DIR/backup.sh" "$CONTAINER_WORK_DIR"
+
+BACKUP_PATH="$(docker compose exec -T openshield-db sh -c \
+  'set -- "$1"/openshield-*.dump; [ -f "$1" ] && printf "%s\\n" "$1"' \
+  sh "$CONTAINER_WORK_DIR")"
+BACKUP_FILE="backups/$(basename "$BACKUP_PATH")"
+docker compose cp "openshield-db:$BACKUP_PATH" "$BACKUP_FILE"
+~~~
 
 Create a new, isolated restore target; never use the source database as the target:
 
@@ -133,7 +154,6 @@ RESTORE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=$RESTORE_DATABASE user=ope
 docker compose exec -T openshield-db createdb -U openshield "$RESTORE_DATABASE"
 
 docker compose cp scripts/restore.sh "openshield-db:$CONTAINER_WORK_DIR/restore.sh"
-
 docker compose exec -T \
   -e PGPASSWORD -e "OPENSHIELD_DATABASE_URL=$RESTORE_DATABASE_URL" \
   -e OPENSHIELD_RESTORE_CONFIRM=YES \
