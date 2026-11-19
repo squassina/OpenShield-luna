@@ -45,3 +45,54 @@ def test_metrics_registry_protects_internal_overflow_metric_name() -> None:
 
     with pytest.raises(ValueError, match="reserved for registry overflow"):
         metrics.increment(DROPPED_SAMPLES_METRIC)
+
+
+def test_metrics_registry_renders_gauges_and_persisted_counter_snapshots() -> None:
+    metrics = MetricsRegistry()
+    labels = {"gateway_id": "home-gateway"}
+    metrics.set_gauge("openshield_gateway_spool_pending_events", 12, labels)
+    metrics.set_counter("openshield_gateway_spool_dropped_events_total", 3, labels)
+
+    rendered = metrics.render()
+
+    assert (
+        '# TYPE openshield_gateway_spool_pending_events gauge\n'
+        'openshield_gateway_spool_pending_events{gateway_id="home-gateway"} 12'
+    ) in rendered
+    assert (
+        '# TYPE openshield_gateway_spool_dropped_events_total counter\n'
+        'openshield_gateway_spool_dropped_events_total{gateway_id="home-gateway"} 3'
+    ) in rendered
+
+
+def test_metrics_registry_shares_series_limit_between_counters_and_gauges() -> None:
+    metrics = MetricsRegistry(max_series=1)
+    metrics.set_gauge("spool_pending", 5)
+    metrics.set_counter("spool_dropped_total", 1)
+
+    rendered = metrics.render()
+
+    assert "spool_pending 5" in rendered
+    assert "spool_dropped_total" not in rendered
+    assert f"{DROPPED_SAMPLES_METRIC} 1" in rendered
+
+
+def test_metrics_registry_rejects_mixed_metric_types() -> None:
+    metrics = MetricsRegistry()
+    metrics.increment("requests_total")
+    with pytest.raises(ValueError, match="already registered as counter"):
+        metrics.set_gauge("requests_total", 1)
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5])
+def test_metrics_registry_rejects_invalid_counter_snapshots(value: object) -> None:
+    metrics = MetricsRegistry()
+    with pytest.raises(ValueError, match="non-negative integer"):
+        metrics.set_counter("spool_dropped_total", value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [True, float("nan"), float("inf")])
+def test_metrics_registry_rejects_invalid_gauges(value: object) -> None:
+    metrics = MetricsRegistry()
+    with pytest.raises(ValueError, match="finite number"):
+        metrics.set_gauge("spool_pending", value)  # type: ignore[arg-type]

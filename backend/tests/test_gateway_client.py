@@ -65,6 +65,55 @@ def test_connector_client_heartbeat_includes_gateway_identity() -> None:
     }
 
 
+def test_connector_client_heartbeat_includes_spool_stats() -> None:
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"status": "acknowledged", "gateway_id": "test-gateway"}
+    ).encode()
+    spool_stats = {
+        "pending_events": 3,
+        "capacity": 10,
+        "evicted_events": 2,
+        "coalesced_health_events": 1,
+        "dropped_events": 1,
+    }
+    with patch("openshield.gateway.client.urlopen", return_value=response) as mocked:
+        make_client().heartbeat(spool_stats)
+
+    request = mocked.call_args.args[0]
+    payload = json.loads(request.data)
+    assert payload["gateway_id"] == "test-gateway"
+    assert payload["spool_stats"] == spool_stats
+
+
+def test_connector_agent_sends_spool_stats_with_each_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from openshield.gateway import agent
+
+    class FakeClient:
+        reported_stats: dict[str, int] | None = None
+
+        def connect(self) -> dict[str, object]:
+            return {"gateway_id": "test-gateway"}
+
+        def heartbeat(
+            self, spool_stats: dict[str, int] | None = None,
+        ) -> dict[str, object]:
+            self.reported_stats = spool_stats
+            raise KeyboardInterrupt
+
+    spool = GatewayEventSpool(str(tmp_path / "heartbeat-stats.sqlite3"))
+    client = FakeClient()
+    monkeypatch.setattr(agent.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_agent(client, heartbeat_interval=5, spool=spool)
+
+    assert client.reported_stats == spool.stats()
+
+
 def test_connector_client_surfaces_transport_failures() -> None:
     from urllib.error import URLError
 

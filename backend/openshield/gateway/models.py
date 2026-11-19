@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openshield.integrations.models import Capability
 
@@ -24,11 +24,31 @@ class GatewayConnectRequest(BaseModel):
         return values
 
 
+_MAX_SPOOL_COUNTER = (1 << 63) - 1
+
+
+class GatewaySpoolStats(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pending_events: int = Field(ge=0, le=_MAX_SPOOL_COUNTER, strict=True)
+    capacity: int = Field(ge=1, le=_MAX_SPOOL_COUNTER, strict=True)
+    evicted_events: int = Field(ge=0, le=_MAX_SPOOL_COUNTER, strict=True)
+    coalesced_health_events: int = Field(ge=0, le=_MAX_SPOOL_COUNTER, strict=True)
+    dropped_events: int = Field(ge=0, le=_MAX_SPOOL_COUNTER, strict=True)
+
+    @model_validator(mode="after")
+    def validate_pending_capacity(self) -> Self:
+        if self.pending_events > self.capacity:
+            raise ValueError("Pending gateway spool events cannot exceed capacity")
+        return self
+
+
 class GatewayHeartbeatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     protocol_version: Literal["openshield.gateway.v1"]
     gateway_id: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{1,63}$")
+    spool_stats: GatewaySpoolStats | None = None
 
 
 class GatewayConnection(BaseModel):
