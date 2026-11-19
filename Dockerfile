@@ -25,6 +25,7 @@ FROM base AS dev
 RUN pip install --no-cache-dir --root-user-action=ignore ".[dev]"
 COPY backend/tests ./tests
 COPY scripts/ops ./scripts/ops
+COPY scripts/backup.sh scripts/restore.sh ./scripts/
 COPY scripts/update_cname_tracker_feed.py ./scripts/update_cname_tracker_feed.py
 
 # The official image already contains Chromium and its OS libraries.
