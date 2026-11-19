@@ -52,7 +52,11 @@ class FakeRegistry:
 
 
 class FakeGatewayConnections:
+    def __init__(self) -> None:
+        self.connected: set[str] = set()
+
     def connect(self, request):
+        self.connected.add(request.gateway_id)
         return SimpleNamespace(
             gateway_id=request.gateway_id,
             protocol_version=request.protocol_version,
@@ -60,26 +64,33 @@ class FakeGatewayConnections:
             connected_at=datetime.now(UTC),
         )
 
-    def heartbeat(self, _gateway_id: str):
-        return None
+    def heartbeat(self, gateway_id: str):
+        if gateway_id not in self.connected:
+            return None
+        return SimpleNamespace(gateway_id=gateway_id, last_seen_at=datetime.now(UTC))
 
     def list_status(self):
         return [{"gateway_id": "router-1", "status": "connected"}]
 
     def get_status(self, gateway_id: str):
         return {"gateway_id": gateway_id, "status": "connected"}
-
-
 class FakeMetrics:
     def __init__(self) -> None:
         self.counters = []
+        self.gauges = []
+        self.absolute_counters = []
 
     def increment(self, name: str) -> None:
         self.counters.append(name)
 
-    def render(self) -> str:
-        return "# HELP openshield_test_metric Test metric\n"
+    def set_gauge(self, name: str, value: float, labels=None) -> None:
+        self.gauges.append((name, value, labels))
 
+    def set_counter(self, name: str, value: int, labels=None) -> None:
+        self.absolute_counters.append((name, value, labels))
+
+    def render(self) -> str:
+        return "# HELP openshield_test_metric Test metric\\n"
 
 def test_health_router_is_independently_testable() -> None:
     class Store:
@@ -137,6 +148,27 @@ def test_gateway_router_is_independently_testable() -> None:
     assert response.json()["integration_id"] == "router-1"
     assert registry.registered[0].integration_id == "router-1"
     assert metrics.counters == ["openshield_gateway_connections_total"]
+    heartbeat = client.post("/api/v1/gateway/heartbeat", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "router-1",
+        "spool_stats": {
+            "pending_events": 4,
+            "capacity": 10000,
+            "evicted_events": 2,
+            "coalesced_health_events": 3,
+            "dropped_events": 1,
+        },
+    })
+    assert heartbeat.status_code == 200
+    assert metrics.gauges == [
+        ("openshield_gateway_spool_pending_events", 4, {"gateway_id": "router-1"}),
+        ("openshield_gateway_spool_capacity", 10000, {"gateway_id": "router-1"}),
+    ]
+    assert metrics.absolute_counters == [
+        ("openshield_gateway_spool_evicted_events_total", 2, {"gateway_id": "router-1"}),
+        ("openshield_gateway_spool_coalesced_health_events_total", 3, {"gateway_id": "router-1"}),
+        ("openshield_gateway_spool_dropped_events_total", 1, {"gateway_id": "router-1"}),
+    ]
     assert client.get("/api/v1/gateways").json() == [
         {"gateway_id": "router-1", "status": "connected"},
     ]
