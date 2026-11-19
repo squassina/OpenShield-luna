@@ -8,7 +8,7 @@ Tracks [Issue #18](https://github.com/squassina/OpenShield-luna/issues/18). Unit
 - Do not install or configure sensors on the OpenWrt router as part of this procedure.
 - Do not enable inline IPS, blocking, firewall changes or packet injection.
 - Do not send PCAPs or raw payloads to OpenShield. Forward supported JSON fields only.
-- Keep sensor ingestion reachable only from the trusted sensor network. Per-sensor authentication remains tracked by Issue #7.
+- Keep sensor ingestion reachable only from the trusted sensor network. Integration-scoped bearer credentials, rotation/revocation and ingestion rate/body limits were delivered by PRs #132 and #133; this does not replace network isolation or broader Business/SaaS user authorization.
 - Use a dedicated integration ID per sensor.
 
 ## 1. Environment record
