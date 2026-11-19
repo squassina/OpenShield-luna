@@ -63,7 +63,8 @@ def validate_deployment_database_credentials(
         or url_password is None
     ):
         raise DeploymentConfigurationError(
-            "OPENSHIELD_DATABASE_URL must include a PostgreSQL host, user and password in production"
+            "OPENSHIELD_DATABASE_URL must include a PostgreSQL host, user and "
+            "password in production"
         )
 
     if unquote(url_password) != postgres_password:
