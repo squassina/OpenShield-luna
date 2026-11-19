@@ -13,7 +13,10 @@ cleanup() {
     rm -f "$temporary_file"
   fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 temporary_file="$(mktemp "$BACKUP_DIR/.openshield-backup.XXXXXX")"
 temporary_name="${temporary_file##*/}"
