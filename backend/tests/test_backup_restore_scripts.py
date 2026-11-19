@@ -42,7 +42,7 @@ if [ "${1:-}" = "--list" ]; then
   fi
   exit 12
 fi
-printf '%s\\n' "$*" >> "${PG_RESTORE_LOG:?}"
+printf '%s\n' "$*" >> "${PG_RESTORE_LOG:?}"
 exit "${PG_RESTORE_EXIT_CODE:-0}"
 """,
         encoding="utf-8",
