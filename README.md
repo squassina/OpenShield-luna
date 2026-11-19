@@ -46,7 +46,7 @@ The P0–P6 software baseline is implemented and CI-validated. Remaining open wo
 - Durable audit records for integration registration, gateway connection, and event ingestion.
 - Prometheus `/metrics` endpoint.
 - Docker Compose development environment and GitHub Actions CI.
-- No firewall, routing, wireless, or forwarding changes.
+- The P0 discovery path makes no firewall, routing, wireless, VLAN, DNS, or forwarding changes; P5 enforcement is separate and explicitly opt-in.
 
 ### Current residential API behavior
 
@@ -158,7 +158,7 @@ For physical gateway testing, outage/restart drills, and acceptance evidence, fo
 
 The OpenWrt account should have only read access to `session.login`, `system.board`, `network.interface.dump`, `luci-rpc.getHostHints`, and `luci-rpc.getDHCPLeases`. Reuse the existing LuCI ACL groups; do not install packages, scripts, or ACL files on the router. Never grant `file.exec` or write permissions. Use HTTPS where supported. For HTTP-only management, isolate the management network because credentials are not encrypted in transit.
 
-No firewall, routing, wireless, or forwarding settings are modified. Real hardware compatibility remains unverified until tested against a supported OpenWrt device.
+The P0 discovery flow does not change firewall, routing, wireless, VLAN, DNS, or forwarding settings. The separate P5 policy path can make tightly scoped temporary firewall changes only after explicit authorization; real hardware compatibility and rollback remain unverified until tested against supported firmware.
 
 ## API quick reference
 
@@ -182,7 +182,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Node API and health checks | Implemented |
 | Integration registry and capability model | Implemented (PostgreSQL-backed) |
 | Automatic home gateway registration | Implemented |
-| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; physical validation tracked as technical debt #2) |
+| OpenWrt ubus adapter, board/interface discovery, health check | Implemented (connector-side read-only; physical validation tracked in #17) |
 | Versioned event schema and normalizer | Implemented |
 | Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
 | Residential admin authentication | Disabled by default; optional HTTP Basic, CSRF origin checks and failed-login rate limiting |
@@ -194,7 +194,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | SaaS multi-tenancy and billing | Future phase |
 | Docker-first runtime, lint, tests, and CI | Implemented |
 
-P0 software scope is complete and CI-validated. Physical OpenWrt compatibility and forwarding-independence validation are deferred to [technical debt issue #2](https://github.com/squassina/OpenShield/issues/2); this does not block the P0 software closeout.
+P0 software scope is complete and CI-validated. Physical OpenWrt compatibility and forwarding-independence validation remain open in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17); this does not block the P0 software closeout.
 
 ## P1 — Network Visibility
 
