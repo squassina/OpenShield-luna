@@ -356,8 +356,12 @@ class GatewayEventSpool:
                     raise ValueError("Gateway command result cannot be changed once persisted")
                 # Fernet encryption is randomized: compare the durable plaintext value,
                 # not ciphertext, so an identical retry remains idempotent.
-                persisted_result = json.loads(self._decode_payload(row[1])[0])
-                if persisted_result != result:
+                persisted_result = json.dumps(
+                    json.loads(self._decode_payload(row[1])[0]),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                if persisted_result != result_json:
                     raise ValueError("Gateway command result cannot be changed once persisted")
                 return False
         return True
