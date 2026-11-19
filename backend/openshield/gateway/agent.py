@@ -332,7 +332,7 @@ def run_agent(
 
 
 def main() -> None:
-    load_runtime_secrets(create=False, include_encryption=False)
+    load_runtime_secrets(create=False, include_encryption=True)
     logging.basicConfig(
         level=os.getenv("OPENSHIELD_LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -366,11 +366,18 @@ def main() -> None:
             password=openwrt_password,
         )
 
+    spool_encryption_key = os.getenv("OPENSHIELD_SECRET_KEY", "").strip()
+    if not spool_encryption_key:
+        raise SystemExit(
+            "OPENSHIELD_SECRET_KEY is required to encrypt the Gateway Connector spool"
+        )
     spool = GatewayEventSpool(
         os.getenv(
             "OPENSHIELD_GATEWAY_SPOOL_PATH",
             "/var/lib/openshield/gateway-spool.sqlite3",
-        )
+        ),
+        encryption_key=spool_encryption_key,
+        previous_encryption_keys=os.getenv("OPENSHIELD_SECRET_KEY_PREVIOUS", ""),
     )
     client = GatewayConnectorClient(
         node_url=node_url,
