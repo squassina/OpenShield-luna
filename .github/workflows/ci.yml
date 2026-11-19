@@ -26,9 +26,9 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - name: Build application and validation images
         run: docker compose build openshield-node openshield-gateway-connector openshield-test openshield-lint openshield-browser-test
-      - name: Verify previous encryption key is forwarded to Node
+      - name: Verify Fernet keys are shared with Node and Connector
         run: |
-          docker compose config --format json | python -c 'import json, sys; env = json.load(sys.stdin)["services"]["openshield-node"]["environment"]; assert "OPENSHIELD_SECRET_KEY_PREVIOUS" in env'
+          docker compose config --format json | python -c 'import json, sys; services = json.load(sys.stdin)["services"]; required = {"OPENSHIELD_SECRET_KEY", "OPENSHIELD_SECRET_KEY_PREVIOUS"}; assert required <= services["openshield-node"]["environment"].keys(); assert required <= services["openshield-gateway-connector"]["environment"].keys()'
       - name: Verify runtime images use the unprivileged account
         run: |
           test "$(docker compose run --rm --no-deps openshield-node id -u)" = "10001"
