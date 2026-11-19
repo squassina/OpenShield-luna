@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from cryptography.fernet import Fernet, InvalidToken
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -13,21 +14,45 @@ class SpoolFullError(RuntimeError):
     pass
 
 
+class SpoolEncryptionError(RuntimeError):
+    """The gateway spool cannot be decrypted with the configured key set."""
+
+
+_ENCRYPTED_PAYLOAD_PREFIX = "fernet:v1:"
+
+
 class GatewayEventSpool:
     """SQLite-backed durable outbox for events waiting to reach the Node."""
 
-    def __init__(self, path: str, max_events: int = 10_000) -> None:
+    def __init__(
+        self,
+        path: str,
+        max_events: int = 10_000,
+        *,
+        encryption_key: str | None = None,
+        previous_encryption_keys: str | None = None,
+    ) -> None:
         if max_events < 1:
             raise ValueError("Spool capacity must be positive")
         self._path = Path(path)
         if not self._path.is_absolute():
             raise ValueError("Gateway spool path must be absolute")
         self._max_events = max_events
+        try:
+            self._cipher = Fernet(encryption_key.encode("ascii")) if encryption_key else None
+            self._previous_ciphers = [
+                Fernet(value.strip().encode("ascii"))
+                for value in (previous_encryption_keys or "").split(",")
+                if value.strip()
+            ]
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise SpoolEncryptionError("Gateway spool encryption key configuration is invalid") from exc
         self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self._path.parent, 0o700)
         with self._connection() as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA secure_delete=ON")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS pending_events (
@@ -84,6 +109,10 @@ class GatewayEventSpool:
                 "CREATE INDEX IF NOT EXISTS pending_command_results_retry_idx "
                 "ON gateway_command_results (acknowledged_at, next_attempt_at, sequence)"
             )
+            connection.execute("BEGIN IMMEDIATE")
+            migrated_payloads = self._migrate_payloads(connection)
+        if migrated_payloads:
+            self._compact_encrypted_database()
 
     def _secure_file_permissions(self) -> None:
         sidecars = (Path(f"{self._path}-wal"), Path(f"{self._path}-shm"))
@@ -103,6 +132,67 @@ class GatewayEventSpool:
         except Exception:
             connection.rollback()
             raise
+        finally:
+            connection.close()
+            self._secure_file_permissions()
+
+    def _encode_payload(self, payload: str) -> str:
+        if self._cipher is None:
+            return payload
+        token = self._cipher.encrypt(payload.encode("utf-8")).decode("ascii")
+        return _ENCRYPTED_PAYLOAD_PREFIX + token
+
+    def _decode_payload(self, stored: str) -> tuple[str, str, bool]:
+        if not stored.startswith(_ENCRYPTED_PAYLOAD_PREFIX):
+            if self._cipher is None:
+                return stored, stored, False
+            return stored, self._encode_payload(stored), True
+        if self._cipher is None:
+            raise SpoolEncryptionError(
+                "Gateway spool is encrypted but OPENSHIELD_SECRET_KEY is not configured"
+            )
+        token = stored[len(_ENCRYPTED_PAYLOAD_PREFIX):].encode("ascii")
+        for index, cipher in enumerate((self._cipher, *self._previous_ciphers)):
+            try:
+                plaintext = cipher.decrypt(token).decode("utf-8")
+            except (InvalidToken, UnicodeDecodeError):
+                continue
+            if index == 0:
+                return plaintext, stored, False
+            return plaintext, self._encode_payload(plaintext), True
+        raise SpoolEncryptionError(
+            "Gateway spool data cannot be decrypted; verify OPENSHIELD_SECRET_KEY "
+            "and OPENSHIELD_SECRET_KEY_PREVIOUS"
+        )
+
+    def _migrate_payloads(self, connection: sqlite3.Connection) -> bool:
+        """Encrypt legacy plaintext rows and rotate payloads encrypted with old keys."""
+        changed = False
+        for table, column, key_column in (
+            ("pending_events", "payload", "event_id"),
+            ("gateway_command_results", "result", "command_id"),
+        ):
+            rows = connection.execute(
+                f"SELECT {key_column}, {column} FROM {table}"
+            ).fetchall()
+            for row_key, stored in rows:
+                _plaintext, replacement, migrated = self._decode_payload(str(stored))
+                if migrated:
+                    connection.execute(
+                        f"UPDATE {table} SET {column} = ? WHERE {key_column} = ?",
+                        (replacement, row_key),
+                    )
+                    changed = True
+        return changed
+
+    def _compact_encrypted_database(self) -> None:
+        """Reclaim old plaintext pages after the one-time spool encryption migration."""
+        connection = sqlite3.connect(self._path, timeout=30, isolation_level=None)
+        try:
+            connection.execute("PRAGMA secure_delete=ON")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            connection.execute("VACUUM")
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         finally:
             connection.close()
             self._secure_file_permissions()
@@ -149,7 +239,7 @@ class GatewayEventSpool:
 
     def enqueue(self, event: EventEnvelope) -> bool:
         payload_dict = event.model_dump(mode="json")
-        payload = json.dumps(payload_dict, separators=(",", ":"))
+        payload = self._encode_payload(json.dumps(payload_dict, separators=(",", ":")))
         created_at = datetime.now(UTC).isoformat()
         full = False
         with self._connection() as connection:
@@ -171,7 +261,7 @@ class GatewayEventSpool:
                 evict_id = next(
                     (
                         row[0] for row in rows
-                        if not self._protected_event(json.loads(row[1]))
+                        if not self._protected_event(json.loads(self._decode_payload(row[1])[0]))
                     ),
                     None,
                 )
@@ -186,7 +276,7 @@ class GatewayEventSpool:
                     compact_id = None
                     if incoming_key is not None:
                         for row in rows:
-                            existing = json.loads(row[1])
+                            existing = json.loads(self._decode_payload(row[1])[0])
                             if self._health_compaction_key(existing) == incoming_key:
                                 compact_id = row[0]
                                 break
@@ -228,7 +318,7 @@ class GatewayEventSpool:
                 (limit,),
             ).fetchall()
         return [
-            EventEnvelope.model_validate(json.loads(row[0]))
+            EventEnvelope.model_validate(json.loads(self._decode_payload(row[0])[0]))
             for row in rows
         ]
 
@@ -245,7 +335,7 @@ class GatewayEventSpool:
     def enqueue_command_result(
         self, command_id: str, status: str, result: dict[str, object],
     ) -> bool:
-        payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        payload = self._encode_payload(json.dumps(result, separators=(",", ":"), sort_keys=True))
         created_at = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             cursor = connection.execute(
@@ -280,7 +370,7 @@ class GatewayEventSpool:
         return {
             "command_id": row[0],
             "status": row[1],
-            "result": json.loads(row[2]),
+            "result": json.loads(self._decode_payload(row[2])[0]),
             "acknowledged": row[3] is not None,
         }
 
@@ -306,7 +396,7 @@ class GatewayEventSpool:
             pending.append({
                 "command_id": row[0],
                 "status": row[1],
-                "result": json.loads(row[2]),
+                "result": json.loads(self._decode_payload(row[2])[0]),
             })
         return pending
 
