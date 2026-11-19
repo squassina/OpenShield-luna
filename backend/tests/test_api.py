@@ -580,6 +580,8 @@ def test_api_basic_auth_and_csrf_protection(monkeypatch) -> None:
     credentials = base64.b64encode(b"admin:strong-test-password").decode()
     headers = {"Authorization": "Basic " + credentials}
     assert client.get("/api/v1/integrations", headers=headers).status_code == 200
+    assert client.get("/metrics").status_code == 401
+    assert client.get("/metrics", headers=headers).status_code == 200
     assert client.post(
         "/api/v1/integrations",
         headers={**headers, "Origin": "https://attacker.example"},
