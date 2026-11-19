@@ -47,6 +47,24 @@ def test_registry_rejects_negative_counter_values() -> None:
         MetricsRegistry().set_counter("events_total", -1)
 
 
+def test_registry_rejects_boolean_and_fractional_counters() -> None:
+    metrics = MetricsRegistry()
+    with pytest.raises(ValueError, match="non-negative integers"):
+        metrics.set_counter("events_total", True)
+    with pytest.raises(ValueError, match="non-negative integers"):
+        metrics.set_counter("events_total", 1.5)
+
+
+def test_registry_rejects_non_finite_gauges_without_creating_series() -> None:
+    metrics = MetricsRegistry()
+    metrics.set_gauge("queue_depth", float("nan"))
+    metrics.set_gauge("queue_depth", float("inf"))
+
+    rendered = metrics.render()
+    assert "queue_depth" not in rendered
+    assert "openshield_metrics_series_dropped_total 2" in rendered
+
+
 def test_registry_requires_positive_series_limit() -> None:
     with pytest.raises(ValueError, match="positive"):
         MetricsRegistry(max_series=0)
