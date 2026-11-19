@@ -317,7 +317,7 @@ Scope:
 - Unit and integration tests.
 - Node/gateway disconnection and recovery behavior.
 
-**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield-luna/issues/17).
+**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 ### P1 — Network Visibility
 
