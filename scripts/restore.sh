@@ -12,5 +12,5 @@ if [ "${OPENSHIELD_RESTORE_CONFIRM:-}" != "YES" ]; then
   exit 1
 fi
 pg_restore --list "$BACKUP_FILE" >/dev/null
-pg_restore --exit-on-error --no-owner --no-privileges --dbname "$OPENSHIELD_DATABASE_URL" "$BACKUP_FILE"
+pg_restore --single-transaction --exit-on-error --no-owner --no-privileges --dbname "$OPENSHIELD_DATABASE_URL" "$BACKUP_FILE"
 printf 'Restore completed from: %s\n' "$BACKUP_FILE"
