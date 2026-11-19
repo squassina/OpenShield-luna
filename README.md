@@ -52,7 +52,7 @@ The P0–P6 software baseline is implemented and CI-validated. Remaining open wo
 
 ### Current residential API behavior
 
-The default residential profile keeps admin API authentication disabled. Optional HTTP Basic authentication protects the dashboard and administrative API when `OPENSHIELD_API_AUTH_ENABLED=true`. UI-managed router credentials require a separate `OPENSHIELD_GATEWAY_TOKEN` shared by Node and connector; it is not an admin API key.
+The default residential profile keeps admin API authentication disabled. Optional HTTP Basic authentication protects the dashboard, administrative API, and `/metrics` endpoint when `OPENSHIELD_API_AUTH_ENABLED=true`. UI-managed router credentials require a separate `OPENSHIELD_GATEWAY_TOKEN` shared by Node and connector; it is not an admin API key.
 
 The connector defaults to gateway ID `home-gateway`. On its first `POST /api/v1/gateway/connect`, the Node creates an OpenWrt integration with the same ID. Heartbeats include the gateway ID. Discovery and health events use that ID as their source. Discovery runs on every heartbeat and updates the MAC-keyed device inventory; the dashboard groups online/offline devices by logical router interface.
 
@@ -192,7 +192,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Residential admin authentication | Disabled by default; optional HTTP Basic, CSRF origin checks and failed-login rate limiting |
 | Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass |
 | PostgreSQL persistence and initial audit records | Implemented; audit hardening/retention pending |
-| Structured logging and Prometheus metrics | Implemented (process-local counters) |
+| Structured logging and Prometheus metrics | Implemented (bounded process-local counters/gauges; gateway spool telemetry; optional Basic auth) |
 | On-device OpenWrt agent and secure bootstrap | Pending |
 | Business authentication, roles, and gateway enrollment | Future phase |
 | SaaS multi-tenancy and billing | Future phase |
