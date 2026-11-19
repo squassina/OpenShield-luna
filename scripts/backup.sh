@@ -13,7 +13,8 @@ cleanup() {
     rm -f "$temp_file"
   fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 pg_dump --format=custom --no-owner --no-acl --file "$temp_file" "$OPENSHIELD_DATABASE_URL"
 if ! pg_restore --list "$temp_file" >/dev/null; then
