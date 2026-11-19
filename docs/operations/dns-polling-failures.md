@@ -27,11 +27,13 @@ Malformed individual DNS records are handled separately: valid records are inges
 
 The privacy sources API includes **last_error_category**, **retryable**, and **last_rejected** alongside the last error and timestamps.
 
-Prometheus counters include:
+Prometheus counters use bounded labels only:
 
-- `openshield_dns_poll_attempts_total{integration_id,provider}`
-- `openshield_dns_poll_success_total{integration_id,provider}`
-- `openshield_dns_poll_failures_total{integration_id,provider,category}`
-- `openshield_dns_poll_records_total{integration_id,provider,outcome}`
+- `openshield_dns_poll_attempts_total{provider}`
+- `openshield_dns_poll_success_total{provider}`
+- `openshield_dns_poll_failures_total{provider,category}`
+- `openshield_dns_poll_records_total{provider,outcome}`
+
+The integration ID remains available in the privacy sources API and audit records, but is deliberately excluded from Prometheus labels to prevent one series per configured integration. `MetricsRegistry` accepts at most 4,096 distinct metric/label combinations by default. New series beyond the limit are dropped and counted by the fixed `openshield_metrics_series_dropped_total` metric; existing series continue to increment normally.
 
 Failure messages and audit records contain category codes, not provider response bodies, credentials, or raw DNS record values.
