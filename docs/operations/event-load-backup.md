@@ -98,7 +98,7 @@ Never overwrite the live database during acceptance. Use staging and stop Node p
 Load the PostgreSQL password from the deployment's secret manager. Record whether Node was already running so the procedure does not start a service that was intentionally stopped:
 
 ~~~bash
-: "$OPENSHIELD_POSTGRES_PASSWORD"
+: "${OPENSHIELD_POSTGRES_PASSWORD:?Load the PostgreSQL password from your secret manager}"
 export PGPASSWORD="$OPENSHIELD_POSTGRES_PASSWORD"
 
 NODE_WAS_RUNNING=false
