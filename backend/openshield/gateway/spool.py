@@ -1,11 +1,12 @@
 import json
 import os
 import sqlite3
-from cryptography.fernet import Fernet, InvalidToken
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from openshield.events.models import EventEnvelope
 
@@ -334,7 +335,8 @@ class GatewayEventSpool:
     def enqueue_command_result(
         self, command_id: str, status: str, result: dict[str, object],
     ) -> bool:
-        payload = self._encode_payload(json.dumps(result, separators=(",", ":"), sort_keys=True))
+        result_json = json.dumps(result, separators=(",", ":"), sort_keys=True)
+        payload = self._encode_payload(result_json)
         created_at = datetime.now(UTC).isoformat()
         with self._connection() as connection:
             cursor = connection.execute(
@@ -350,7 +352,12 @@ class GatewayEventSpool:
                     "SELECT status, result FROM gateway_command_results WHERE command_id = ?",
                     (command_id,),
                 ).fetchone()
-                if row != (status, payload):
+                if row is None or row[0] != status:
+                    raise ValueError("Gateway command result cannot be changed once persisted")
+                # Fernet encryption is randomized: compare the durable plaintext value,
+                # not ciphertext, so an identical retry remains idempotent.
+                persisted_result = json.loads(self._decode_payload(row[1])[0])
+                if persisted_result != result:
                     raise ValueError("Gateway command result cannot be changed once persisted")
                 return False
         return True
