@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `9dc80ffdfcc6b6afbad141c221412582a0caab27`  
+**Reviewed baseline:** `main` at `b6037fdae4a1834fabf933f4409a3e9fa8189f8b`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -18,7 +18,7 @@ This file is the canonical engineering backlog. Only items with current evidence
 | P5 — Policy and bounded response | Implemented; disabled by default | Physical UCI/firewall ACL, execution, TTL rollback and fail-safe acceptance before enabling |
 | P6 — Enterprise readiness baseline | Implemented | Not multi-tenant or enterprise identity-ready; RBAC and tenant isolation remain future scope |
 
-The latest main CI run at the reviewed baseline passed, including build, Ruff, mypy, pip-audit, Python tests, dashboard browser tests, PostgreSQL backup/restore drill, and non-root startup smoke tests. This is automated software evidence, not hardware or production acceptance.
+The latest main CI run at the reviewed baseline passed, including build, Ruff, mypy, pip-audit, Python tests, dashboard browser tests, PostgreSQL backup/restore drill, and non-root startup smoke tests. The implementation branch adds regression coverage for the fixes below; its full CI result is the acceptance gate for this batch. This remains automated software evidence, not hardware or production acceptance.
 
 ## Open GitHub acceptance issues
 
@@ -59,17 +59,17 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 ### P1 — Correctness, security and operational visibility
 
-- [ ] **Define and enforce the single-process assumption, or coordinate background workers.** DNS polling and the execution-expiration loop are started from FastAPI lifespan. Each Uvicorn worker/replica would start its own loops. Rate-limit windows and failed-admin-login counters are also in process memory. Until a PostgreSQL lease/advisory lock or dedicated worker exists, document and enforce one active scheduler instance; otherwise replicas can poll providers or process expiry concurrently and each process gets its own rate-limit budget. Evidence: `backend/openshield/api/main.py`, `backend/openshield/privacy/polling.py`, `backend/openshield/core/rate_limits.py`.
+- [x] **Coordinate background workers across Node replicas.** FastAPI lifespan now acquires a PostgreSQL session-level advisory lock before starting DNS polling and response-expiration workers. The lock is held by a dedicated connection, monitored, released on shutdown/loss, and reacquired after failure. Test coverage verifies mutual exclusion and release. Rate-limit windows and failed-admin-login counters remain process-local; do not treat them as distributed protection when running multiple API workers/replicas.
 
-- [ ] **Bound Prometheus metric cardinality.** `MetricsRegistry` stores every distinct label tuple indefinitely and has no maximum-series guard. DNS polling adds the user-configurable `integration_id` label, so adding/removing many integrations can grow process memory and leave stale series. Prefer bounded/static labels (provider and outcome), cap series, and test churn/deletion. Evidence: `backend/openshield/core/metrics.py`, `backend/openshield/privacy/polling.py`.
+- [x] **Bound Prometheus metric cardinality.** `MetricsRegistry` now enforces a global series ceiling, validates metric/label syntax and length, limits labels per series, rejects metric-type conflicts, and exports a dropped-series counter. DNS polling no longer labels series with the user-controlled `integration_id`; gateway spool telemetry uses the bounded gateway label.
 
-- [ ] **Expose gateway spool counters and alert on loss/pressure.** SQLite already maintains `pending_events`, `capacity`, `evicted_events`, `coalesced_health_events`, and `dropped_events`. Protected events include gateway health, command results, security/audit events and high/critical severity; duplicate health snapshots may be coalesced while state transitions remain durable. However, `GatewayEventSpool.stats()` is not wired to Node metrics or an operational API. Expose bounded counters/gauges and alert on drops, evictions and sustained high-water marks. Evidence: `backend/openshield/gateway/spool.py`, `backend/openshield/gateway/agent.py`.
+- [x] **Expose gateway spool counters and pressure.** The Connector now sends pending depth, capacity, evictions, health-snapshot coalescing, and dropped-event totals in its authenticated heartbeat. The Node exports bounded Prometheus gauges/counters by gateway. Alert-rule provisioning and a Prometheus deployment remain operator-owned.
 
-- [ ] **Make restore preflight fail closed.** `scripts/restore.sh` requires `OPENSHIELD_RESTORE_CONFIRM=YES`, but it does not verify that the target database is empty before running `pg_restore`. A non-empty target can retain unrelated objects or fail partway on conflicts. Check the target database/schema before restore and refuse unless it is demonstrably empty; add tests for empty, non-empty and wrong-target cases. Keep restore non-destructive; do not add automatic `--clean`/drop behavior.
+- [x] **Make restore preflight fail closed.** `scripts/restore.sh` still requires `OPENSHIELD_RESTORE_CONFIRM=YES` and now checks PostgreSQL catalogs for user relations, routines, custom types, large objects, and extra schemas before invoking `pg_restore`. It refuses non-empty targets and never drops existing objects. Script tests cover empty/non-empty targets and missing confirmation.
 
-- [ ] **Remove insecure Compose database fallback for production use.** `docker-compose.yml` falls back to the public development password `openshield-dev-password` when the variable is absent. Keep a convenient local-development path, but add an explicit production/preflight guard that rejects known defaults and documents mandatory unique credentials. Evidence: `docker-compose.yml`, `.env.example`, README deployment instructions.
+- [x] **Guard production deployments against development credentials.** The `production` deployment profile fails during Node import/startup unless admin Basic auth is enabled with a sufficiently long password, the PostgreSQL password is unique/long and matches the database URL, and the published bind address is a specific IP. The `home` profile retains current residential defaults; the Compose development fallback is therefore still present only for that profile.
 
-- [ ] **Decide and document spool encryption at rest.** The gateway SQLite outbox uses restrictive file permissions, WAL and FULL synchronous writes, but it is not encrypted. For deployments where the host/volume is not trusted, use encrypted host storage or an encrypted spool design; document the accepted Home threat model and backup requirements.
+- [x] **Encrypt the gateway spool at rest.** Event and command-result payloads are now Fernet-encrypted using the shared runtime key. Startup migrates legacy plaintext rows and re-encrypts rows using a previous key; the migration vacuums the SQLite database after checkpointing to reclaim old plaintext pages. Connector startup fails closed when the active key is missing or cannot decrypt the spool. The key and spool volume must be backed up together.
 
 - [ ] **Complete audit lifecycle hardening.** Audit records are durable, but retention, tamper-evident chaining/signatures and external immutable export are not implemented. Define retention and export requirements before using the audit log as a compliance evidence source.
 
@@ -83,16 +83,16 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Add documentation and dashboard static checks to CI.** Validate relative Markdown links and run a JavaScript syntax/lint check on the inline dashboard script. Browser tests already exercise the dashboard, but syntax checks and link validation would catch documentation drift earlier.
 
-- [ ] **Review backup artifact handling.** `scripts/backup.sh` uses second-resolution filenames and can leave a partial file if `pg_dump` fails before archive verification. Use collision-safe temporary output plus atomic rename and cleanup on failure.
+- [x] **Publish backups atomically.** `scripts/backup.sh` now dumps to a restrictive temporary file, verifies the archive, and atomically publishes a collision-safe final filename. Partial artifacts are cleaned on failure.
 
 ## Operational constraints to keep visible
 
 - Admin HTTP Basic is optional and disabled by default in the residential profile. When disabled, anyone able to reach the Node API can administer it; keep the API on loopback or a trusted LAN.
 - Gateway authentication and sensor bearer credentials are separate from user identity. They do not provide per-user roles or tenant boundaries.
-- Gateway spool contents are not encrypted at rest. Protect the host, volume and backups.
-- Prometheus counters and rate-limit state are process-local. They reset on restart and are not distributed.
+- Gateway spool event/command-result payloads are encrypted at rest, but SQLite metadata (event IDs, timestamps and counters) remains visible. Protect the runtime-secrets and spool volumes; restore them together.
+- Prometheus metrics and API rate-limit/admin-login failure windows are process-local and reset on restart. The worker lease is distributed through PostgreSQL; request throttling is not. Before horizontally scaling API workers, move rate-limit state to shared storage or an edge gateway.
 - DNS polling processes one provider page per integration per cycle; high-volume catch-up depends on the configured polling interval.
-- Backup ciphertext is not sufficient to recover provider credentials without the matching Fernet key. Back up the key separately and protect it.
+- Database ciphertext and encrypted spool payloads are not sufficient to recover credentials/events without the matching Fernet key. Back up `OPENSHIELD_SECRET_KEY`, any previous key still needed for rotation, the runtime-secrets volume, and gateway spool volume together.
 - Business/SaaS use remains blocked on user identity, RBAC, organization/site ownership, tenant isolation and a security review.
 
 ## Completed work — do not re-open as TODO without new evidence
@@ -103,6 +103,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - P3 CrowdSec/MISP enrichment, cache, deterministic risk scoring and audited incidents.
 - P4 local Ollama and opt-in sanitized OpenAI investigation, schema validation and audit.
 - P5 exact-match policies, approval, emergency stop, bounded DNS/OpenWrt execution, TTL and rollback logic; hardware validation remains a gate.
-- P6 multi-gateway summaries, loopback-by-default publishing and PostgreSQL backup/restore tooling.
+- P6 multi-gateway summaries, loopback-by-default publishing, production-profile credential preflight, safe PostgreSQL backup/restore scripts and encrypted gateway spool telemetry.
 - Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling and a disposable PostgreSQL restore round-trip in CI.
 - Playwright browser setup using the official browser image; no apt-based browser dependency installation is needed in CI.
+- PostgreSQL advisory-lock leadership for background workers, bounded Prometheus series, spool telemetry, production deployment preflight, restore emptiness checks, atomic backup publication, and encrypted gateway spool migration/rotation.
