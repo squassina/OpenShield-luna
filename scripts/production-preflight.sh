@@ -6,9 +6,9 @@ fail() {
   exit 1
 }
 
-password="\${OPENSHIELD_POSTGRES_PASSWORD:-}"
-database_url="\${OPENSHIELD_DATABASE_URL:-}"
-publish_address="\${OPENSHIELD_PUBLISH_ADDRESS:-127.0.0.1}"
+password="${OPENSHIELD_POSTGRES_PASSWORD:-}"
+database_url="${OPENSHIELD_DATABASE_URL:-}"
+publish_address="${OPENSHIELD_PUBLISH_ADDRESS:-127.0.0.1}"
 
 case "$password" in
   ""|openshield-dev-password|replace-with-a-local-db-password)
@@ -20,7 +20,7 @@ case "$password" in
     fail "PostgreSQL password must use URL-safe characters: letters, digits, '_' or '-'"
     ;;
 esac
-if [ "\${#password}" -lt 24 ]; then
+if [ "${#password}" -lt 24 ]; then
   fail "PostgreSQL password must contain at least 24 characters"
 fi
 

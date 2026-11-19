@@ -2,12 +2,12 @@
 set -eu
 umask 077
 
-: "\${OPENSHIELD_DATABASE_URL:?Set OPENSHIELD_DATABASE_URL to the target PostgreSQL database URL}"
-BACKUP_DIR="\${1:-./backups}"
+: "${OPENSHIELD_DATABASE_URL:?Set OPENSHIELD_DATABASE_URL to the target PostgreSQL database URL}"
+BACKUP_DIR="${1:-./backups}"
 mkdir -p "$BACKUP_DIR"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 temporary_file="$(mktemp "$BACKUP_DIR/.openshield-$timestamp.XXXXXX")"
-unique_suffix="\${temporary_file##*.}"
+unique_suffix="${temporary_file##*.}"
 backup_file="$BACKUP_DIR/openshield-$timestamp-$unique_suffix.dump"
 
 trap 'rm -f "$temporary_file"' EXIT

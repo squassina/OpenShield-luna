@@ -34,8 +34,8 @@ def _fake_db_commands(bin_dir: Path, restore_log: Path) -> None:
         "psql",
         """#!/bin/sh
 case "$*" in
-  *current_database*) printf '%s\\\\n' "\${FAKE_DB_NAME:-openshield_restore}" ;;
-  *) printf '%s\\\\n' "\${FAKE_DB_OBJECTS:-0}" ;;
+  *current_database*) printf '%s\\n' "$FAKE_DB_NAME" ;;
+  *) printf '%s\\n' "$FAKE_DB_OBJECTS" ;;
 esac
 """,
     )
@@ -43,7 +43,7 @@ esac
         bin_dir,
         "pg_restore",
         f"""#!/bin/sh
-printf '%s\\\\n' "$*" >> '{restore_log}'
+printf '%s\\n' "$*" >> '{restore_log}'
 exit 0
 """,
     )
@@ -64,6 +64,8 @@ def test_restore_runs_only_when_target_is_a_confirmed_empty_database(tmp_path: P
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "OPENSHIELD_DATABASE_URL": "postgresql://openshield:secret@db/openshield",
             "OPENSHIELD_RESTORE_CONFIRM": "YES",
+            "FAKE_DB_NAME": "openshield_restore",
+            "FAKE_DB_OBJECTS": "0",
         },
     )
 
@@ -112,7 +114,7 @@ def test_restore_refuses_nonempty_or_system_database(
 def test_backup_uses_unique_atomic_artifacts_and_private_permissions(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _executable(bin_dir, "date", "#!/bin/sh\\nprintf '20261119T120000Z\\\\n'\\n")
+    _executable(bin_dir, "date", "#!/bin/sh\nprintf '20261119T120000Z\\n'\n")
     _executable(
         bin_dir,
         "pg_dump",
@@ -121,18 +123,19 @@ while [ "$#" -gt 0 ]; do
   if [ "$1" = "--file" ]; then
     shift
     printf 'valid dump' > "$1"
-    exit "\${FAKE_DUMP_EXIT:-0}"
+    exit "$FAKE_DUMP_EXIT"
   fi
   shift
 done
 exit 2
 """,
     )
-    _executable(bin_dir, "pg_restore", "#!/bin/sh\\nexit 0\\n")
+    _executable(bin_dir, "pg_restore", "#!/bin/sh\nexit 0\n")
     output_dir = tmp_path / "backups"
     env = {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "OPENSHIELD_DATABASE_URL": "postgresql://openshield:secret@db/openshield",
+        "FAKE_DUMP_EXIT": "0",
     }
 
     first = _run("backup.sh", str(output_dir), env=env)
@@ -149,7 +152,7 @@ exit 2
 def test_backup_removes_partial_file_when_dump_fails(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _executable(bin_dir, "date", "#!/bin/sh\\nprintf '20261119T120000Z\\\\n'\\n")
+    _executable(bin_dir, "date", "#!/bin/sh\nprintf '20261119T120000Z\\n'\n")
     _executable(
         bin_dir,
         "pg_dump",
@@ -165,7 +168,7 @@ done
 exit 2
 """,
     )
-    _executable(bin_dir, "pg_restore", "#!/bin/sh\\nexit 0\\n")
+    _executable(bin_dir, "pg_restore", "#!/bin/sh\nexit 0\n")
     output_dir = tmp_path / "backups"
 
     result = _run(

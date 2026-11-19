@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-: "\${OPENSHIELD_DATABASE_URL:?Set OPENSHIELD_DATABASE_URL to the target PostgreSQL database URL}"
-BACKUP_FILE="\${1:?Usage: OPENSHIELD_RESTORE_CONFIRM=YES sh scripts/restore.sh BACKUP.dump}"
+: "${OPENSHIELD_DATABASE_URL:?Set OPENSHIELD_DATABASE_URL to the target PostgreSQL database URL}"
+BACKUP_FILE="${1:?Usage: OPENSHIELD_RESTORE_CONFIRM=YES sh scripts/restore.sh BACKUP.dump}"
 if [ ! -f "$BACKUP_FILE" ]; then
   echo "Backup file not found: $BACKUP_FILE" >&2
   exit 1
 fi
-if [ "\${OPENSHIELD_RESTORE_CONFIRM:-}" != "YES" ]; then
+if [ "${OPENSHIELD_RESTORE_CONFIRM:-}" != "YES" ]; then
   echo "Restore writes into the target database. Use a fresh, empty database and set OPENSHIELD_RESTORE_CONFIRM=YES." >&2
   exit 1
 fi
@@ -27,23 +27,23 @@ SELECT COUNT(*)
 FROM (
     SELECT 1
     FROM pg_catalog.pg_class AS relation
-    JOIN pg_catalog.pg_namespace AS schema
-      ON schema.oid = relation.relnamespace
-    WHERE schema.nspname NOT IN ('pg_catalog', 'information_schema')
-      AND schema.nspname NOT LIKE 'pg_toast%'
+    JOIN pg_catalog.pg_namespace AS nsp
+      ON nsp.oid = relation.relnamespace
+    WHERE nsp.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND nsp.nspname NOT LIKE 'pg_toast%'
       AND relation.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
     UNION ALL
     SELECT 1
     FROM pg_catalog.pg_proc AS routine
-    JOIN pg_catalog.pg_namespace AS schema
-      ON schema.oid = routine.pronamespace
-    WHERE schema.nspname NOT IN ('pg_catalog', 'information_schema')
+    JOIN pg_catalog.pg_namespace AS nsp
+      ON nsp.oid = routine.pronamespace
+    WHERE nsp.nspname NOT IN ('pg_catalog', 'information_schema')
     UNION ALL
     SELECT 1
     FROM pg_catalog.pg_type AS custom_type
-    JOIN pg_catalog.pg_namespace AS schema
-      ON schema.oid = custom_type.typnamespace
-    WHERE schema.nspname NOT IN ('pg_catalog', 'information_schema')
+    JOIN pg_catalog.pg_namespace AS nsp
+      ON nsp.oid = custom_type.typnamespace
+    WHERE nsp.nspname NOT IN ('pg_catalog', 'information_schema')
       AND custom_type.typtype IN ('d', 'e', 'r')
     UNION ALL
     SELECT 1
