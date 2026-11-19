@@ -187,22 +187,10 @@ def validate_and_deliver(
             encoding="utf-8",
         )
 
+        server_state = DeliveryState(expected)
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
-            _make_handler(
-                DeliveryState(expected),
-                SENSOR_PATHS[kind],
-                "/health/ready",
-            ),
-        )
-        # Keep the handler's state available to the caller for assertions.
-        state = server._openshield_state = getattr(
-            server, "_openshield_state", None
-        )
-        del state
-        server_state = DeliveryState(expected)
-        server.RequestHandlerClass = _make_handler(
-            server_state, SENSOR_PATHS[kind], "/health/ready"
+            _make_handler(server_state, SENSOR_PATHS[kind], "/health/ready"),
         )
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
