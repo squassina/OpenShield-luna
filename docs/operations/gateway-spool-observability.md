@@ -60,6 +60,14 @@ groups:
           severity: warning
         annotations:
           summary: "Gateway {{ $labels.gateway_id }} has not reported spool telemetry recently"
+
+      - alert: OpenShieldMetricSeriesDropped
+        expr: increase(openshield_metrics_samples_dropped_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OpenShield is dropping new metric series because the registry limit was reached"
 ```
 
 The stale threshold must exceed the configured heartbeat interval plus expected network delay. A newly connected gateway does not publish spool metrics until its first heartbeat with statistics.
