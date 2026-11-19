@@ -52,8 +52,8 @@ from openshield.core.rate_limits import RequestRateLimitMiddleware
 from openshield.core.request_limits import RequestBodyLimitMiddleware
 from openshield.core.secrets import SecretConfigurationError, SecretStore
 from openshield.core.storage import PostgresStore
+from openshield.core.worker_lock import run_coordinated_background_workers
 from openshield.core.tls import CABundleError, create_ssl_context
-from openshield.execution.worker import run_expiration_loop
 from openshield.gateway.registry import GatewayConnectionRegistry
 from openshield.integrations.ai import AIProviderAdapter
 from openshield.integrations.grafana import GrafanaAdapter
@@ -65,7 +65,6 @@ from openshield.integrations.registry import IntegrationRegistry
 from openshield.integrations.threat_intel import ThreatIntelAdapter
 from openshield.integrations.wazuh import WazuhAdapter
 from openshield.privacy.adapter import DnsPrivacyAdapter
-from openshield.privacy.polling import run_dns_polling_loop
 from openshield.visibility.adapter import NetworkSensorAdapter
 
 __all__ = ["AIInvestigationRequest", "AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "IncidentStatusRequest", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
@@ -83,21 +82,24 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     store.open()
-    task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
-    execution_task = asyncio.create_task(run_expiration_loop(store, registry))
+    worker_task = asyncio.create_task(
+        run_coordinated_background_workers(
+            os.getenv("OPENSHIELD_DATABASE_URL", ""),
+            registry,
+            store,
+            metrics,
+            interval,
+        )
+    )
     try:
         yield
     finally:
+        worker_task.cancel()
         try:
-            for background_task in (task, execution_task):
-                if background_task is not None:
-                    background_task.cancel()
-                    try:
-                        await background_task
-                    except asyncio.CancelledError:
-                        pass
-        finally:
-            store.close()
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+        store.close()
 
 
 app = FastAPI(
