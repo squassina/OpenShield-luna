@@ -317,7 +317,7 @@ Scope:
 - Unit and integration tests.
 - Node/gateway disconnection and recovery behavior.
 
-**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately as technical debt [#2](https://github.com/squassina/OpenShield/issues/2).
+**Software exit criteria:** OpenShield Node can establish a connection to the gateway connector using the versioned protocol, discover declared capabilities through the read-only adapter, and ingest validated events. The connector remains outside the packet-forwarding path by design. Physical forwarding continuity and target firmware/ACL compatibility are tracked separately in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 ### P1 — Network Visibility
 
@@ -740,5 +740,5 @@ Known limitations:
 - MAC identity is scoped to one gateway. Cross-source identity reconciliation with Suricata/Zeek, randomized-MAC handling, spoofing detection, and confidence scoring remain open.
 - The 90-second presence threshold is an initial heuristic and must be reviewed against real router behavior.
 
-Track physical gateway acceptance under [Issue #2](https://github.com/squassina/OpenShield/issues/2), broader identity enrichment under [Issue #5](https://github.com/squassina/OpenShield/issues/5), and richer topology semantics under [Issue #8](https://github.com/squassina/OpenShield/issues/8). See docs/technical-debt.md and docs/operations/openwrt-validation.md.
+Track physical gateway acceptance under [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17). Broader cross-source identity enrichment and complete Layer-2 topology remain known product limitations, not open GitHub issues. See docs/technical-debt.md and docs/operations/openwrt-validation.md.
 
