@@ -73,9 +73,14 @@ def main() -> int:
             target = _resolve_target(source, destination)
             if target is None:
                 continue
+            relative = source.relative_to(ROOT)
+            try:
+                target.relative_to(ROOT)
+            except ValueError:
+                failures.append(f"{relative}: link escapes repository root: {destination}")
+                continue
             checked += 1
             if not target.exists():
-                relative = source.relative_to(ROOT)
                 failures.append(f"{relative}: broken link target {destination}")
 
     if failures:
