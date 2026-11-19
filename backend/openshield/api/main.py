@@ -85,14 +85,30 @@ async def _monitor_worker_lock(connection: Connection) -> None:
         await asyncio.to_thread(lambda: connection.execute("SELECT 1").fetchone())
 
 
+async def _acquire_worker_lock() -> Connection | None:
+    """Acquire the lease without leaking a connection during task cancellation."""
+    acquisition = asyncio.create_task(asyncio.to_thread(
+        store.try_acquire_advisory_lock,
+        "openshield:background-workers",
+    ))
+    try:
+        return await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        try:
+            connection = await asyncio.shield(acquisition)
+        except Exception:
+            pass
+        else:
+            if connection is not None:
+                await asyncio.to_thread(connection.close)
+        raise
+
+
 async def _run_background_workers(interval_seconds: int) -> None:
     """Run database maintenance on one process across all Node replicas."""
     while True:
         try:
-            lock_connection = await asyncio.to_thread(
-                store.try_acquire_advisory_lock,
-                "openshield:background-workers",
-            )
+            lock_connection = await _acquire_worker_lock()
         except Exception:
             metrics.increment("openshield_background_worker_lock_failures_total")
             logger.exception("Unable to acquire background worker lease")
