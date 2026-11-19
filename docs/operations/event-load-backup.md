@@ -64,24 +64,16 @@ Export the database password through your secret manager (do not type the litera
 
 ~~~bash
 : "${OPENSHIELD_POSTGRES_PASSWORD:?Load the PostgreSQL password from your secret manager}"
-RUN_SUFFIX="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+export PGPASSWORD="$OPENSHIELD_POSTGRES_PASSWORD"
+RUN_SUFFIX="$(date -u +%Y%m%dT%H%M%SZ)-$"
 CONTAINER_WORK_DIR="/tmp/openshield-backup-$RUN_SUFFIX"
 mkdir -p backups
 
-make_database_url() {
-  DB_NAME="$1" DB_PASSWORD="$OPENSHIELD_POSTGRES_PASSWORD" python -c '
-import os
-from urllib.parse import quote
-name = quote(os.environ["DB_NAME"], safe="")
-password = quote(os.environ["DB_PASSWORD"], safe="")
-print(f"postgresql://openshield:{password}@127.0.0.1:5432/{name}")
-'
-}
-SOURCE_DATABASE_URL="$(make_database_url openshield)"
+SOURCE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=openshield user=openshield"
 
 docker compose exec -T openshield-db mkdir -p "$CONTAINER_WORK_DIR"
 docker compose cp scripts/backup.sh "openshield-db:$CONTAINER_WORK_DIR/backup.sh"
-docker compose exec -T -e OPENSHIELD_DATABASE_URL="$SOURCE_DATABASE_URL" \
+docker compose exec -T -e PGPASSWORD -e OPENSHIELD_DATABASE_URL \
   openshield-db sh "$CONTAINER_WORK_DIR/backup.sh" "$CONTAINER_WORK_DIR"
 ~~~
 
@@ -136,14 +128,14 @@ Create a new, isolated restore target; never use the source database as the targ
 
 ~~~bash
 RESTORE_DATABASE="openshield_restore_test"
-RESTORE_DATABASE_URL="$(make_database_url "$RESTORE_DATABASE")"
+RESTORE_DATABASE_URL="host=127.0.0.1 port=5432 dbname=$RESTORE_DATABASE user=openshield"
 docker compose exec -T openshield-db createdb -U openshield "$RESTORE_DATABASE"
 
 docker compose cp scripts/restore.sh "openshield-db:$CONTAINER_WORK_DIR/restore.sh"
 docker compose cp "$BACKUP_FILE" "openshield-db:$CONTAINER_WORK_DIR/source.dump"
 
 docker compose exec -T \
-  -e OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" \
+  -e PGPASSWORD -e OPENSHIELD_DATABASE_URL \
   -e OPENSHIELD_RESTORE_CONFIRM=YES \
   openshield-db sh "$CONTAINER_WORK_DIR/restore.sh" \
   "$CONTAINER_WORK_DIR/source.dump"
@@ -157,6 +149,7 @@ Compare the restored database with the source manifest:
 docker compose run --rm --no-deps \
   --user "$(id -u):$(id -g)" \
   -e OPENSHIELD_DATABASE_URL="$RESTORE_DATABASE_URL" \
+  -e PGPASSWORD \
   -v "$PWD/backups:/reports" openshield-test \
   python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 120000 verify \
