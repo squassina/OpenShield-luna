@@ -4,7 +4,11 @@ from typing import Self
 
 import pytest
 
-from openshield.core.storage import PostgresStore, StorageConfigurationError
+from openshield.core.storage import (
+    AdvisoryLockUnavailable,
+    PostgresStore,
+    StorageConfigurationError,
+)
 
 
 @pytest.fixture
@@ -79,13 +83,122 @@ def test_pool_configuration_is_bounded() -> None:
         PostgresStore("postgresql://test", pool_timeout=31)
 
 
-def test_application_lifespan_opens_and_closes_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_advisory_lock_uses_a_dedicated_session_and_releases_on_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openshield.core import storage
+
+    calls: list[object] = []
+
+    class FakeCursor:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: tuple[int]) -> None:
+            calls.append((query, params))
+
+        def fetchone(self) -> tuple[bool]:
+            return (True,)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls.append("commit")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        storage.psycopg,
+        "connect",
+        lambda _dsn, connect_timeout: connection,
+    )
+    store = PostgresStore("postgresql://test")
+
+    with store.advisory_lock(42):
+        calls.append("inside")
+
+    assert calls == [
+        ("SELECT pg_try_advisory_lock(%s)", (42,)),
+        "commit",
+        "inside",
+        ("SELECT pg_advisory_unlock(%s)", (42,)),
+        "commit",
+        "close",
+    ]
+
+
+def test_advisory_lock_rejects_a_second_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    from openshield.core import storage
+
+    calls: list[str] = []
+
+    class FakeCursor:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _query: str, _params: tuple[int]) -> None:
+            return None
+
+        def fetchone(self) -> tuple[bool]:
+            return (False,)
+
+    class FakeConnection:
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+        def commit(self) -> None:
+            calls.append("commit")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        storage.psycopg,
+        "connect",
+        lambda _dsn, connect_timeout: connection,
+    )
+    store = PostgresStore("postgresql://test")
+
+    with pytest.raises(AdvisoryLockUnavailable, match="already holds"):
+        with store.advisory_lock(42):
+            pytest.fail("A competing process must not acquire the lock")
+
+    assert calls == ["commit", "close"]
+
+
+def test_application_lifespan_holds_process_lock_until_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import contextmanager
+
     from openshield.api import main
 
     calls: list[str] = []
     monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "0")
     monkeypatch.setattr(main.store, "open", lambda: calls.append("open"))
     monkeypatch.setattr(main.store, "close", lambda: calls.append("close"))
+
+    @contextmanager
+    def process_lock(lock_id: int):
+        assert lock_id == main._NODE_PROCESS_LOCK_ID
+        calls.append("lock")
+        try:
+            yield
+        finally:
+            calls.append("unlock")
+
+    monkeypatch.setattr(main.store, "advisory_lock", process_lock)
 
     async def wait_for_shutdown(*_args: object) -> None:
         await asyncio.Event().wait()
@@ -94,7 +207,35 @@ def test_application_lifespan_opens_and_closes_pool(monkeypatch: pytest.MonkeyPa
 
     async def exercise_lifespan() -> None:
         async with main._dns_polling_lifespan(main.app):
-            assert calls == ["open"]
+            assert calls == ["open", "lock"]
+
+    asyncio.run(exercise_lifespan())
+    assert calls == ["open", "lock", "unlock", "close"]
+
+
+def test_application_lifespan_fails_if_another_node_process_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from contextlib import contextmanager
+
+    from openshield.api import main
+
+    calls: list[str] = []
+    monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "0")
+    monkeypatch.setattr(main.store, "open", lambda: calls.append("open"))
+    monkeypatch.setattr(main.store, "close", lambda: calls.append("close"))
+
+    @contextmanager
+    def busy_lock(_lock_id: int):
+        raise AdvisoryLockUnavailable("already held")
+        yield
+
+    monkeypatch.setattr(main.store, "advisory_lock", busy_lock)
+
+    async def exercise_lifespan() -> None:
+        with pytest.raises(RuntimeError, match="exactly one Node API process"):
+            async with main._dns_polling_lifespan(main.app):
+                pytest.fail("The API must not start without the process lock")
 
     asyncio.run(exercise_lifespan())
     assert calls == ["open", "close"]
