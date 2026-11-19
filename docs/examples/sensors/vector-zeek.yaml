@@ -1,0 +1,69 @@
+# Vector 0.62.0 — Zeek JSON logs to OpenShield.
+# Adjust include to the Zeek deployment's actual JSON log directory.
+# Mount the log directory read-only and persist /var/lib/vector across restarts.
+data_dir: /var/lib/vector
+
+sources:
+  zeek_json:
+    type: file
+    include:
+      - /var/log/zeek/current/*.log
+    read_from: beginning
+    ignore_checkpoints: false
+    fingerprint:
+      strategy: checksum
+    max_line_bytes: 262144
+
+transforms:
+  parse_supported_zeek:
+    type: remap
+    inputs:
+      - zeek_json
+    source: |
+      . = parse_json!(.message)
+      if ._path != "conn" && ._path != "dns" && ._path != "http" && ._path != "ssl" {
+        abort
+      }
+    drop_on_error: true
+    drop_on_abort: true
+    reroute_dropped: false
+
+sinks:
+  openshield_zeek:
+    type: http
+    inputs:
+      - parse_supported_zeek
+    method: post
+    uri: "${OPENSHIELD_NODE_URL}/api/v1/sensors/${OPENSHIELD_SENSOR_INTEGRATION_ID}/events"
+    healthcheck:
+      uri: "${OPENSHIELD_NODE_URL}/health/ready"
+    auth:
+      strategy: bearer
+      token: "${OPENSHIELD_SENSOR_TOKEN}"
+    request:
+      concurrency: 1
+      rate_limit_duration_secs: 60
+      rate_limit_num: 45
+      timeout_secs: 30
+      retry_initial_backoff_secs: 1
+      retry_max_duration_secs: 30
+      headers:
+        Content-Type: application/json
+    batch:
+      max_events: 100
+      max_bytes: 3000000
+      timeout_secs: 1
+    framing:
+      method: character_delimited
+      character_delimited:
+        delimiter: ","
+    payload_prefix: "["
+    payload_suffix: "]"
+    encoding:
+      codec: json
+    buffer:
+      type: disk
+      max_size: 1073741824
+      when_full: block
+    acknowledgements:
+      enabled: true
