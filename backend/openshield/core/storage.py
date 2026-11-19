@@ -1,3 +1,4 @@
+import hashlib
 import ipaddress
 import re
 import threading
@@ -90,6 +91,38 @@ class PostgresStore:
             self._pool = None
             if pool is not None and not pool.closed:
                 pool.close()
+
+    def try_acquire_advisory_lock(self, lock_name: str) -> psycopg.Connection | None:
+        """Acquire a session-level PostgreSQL lock on a dedicated connection.
+
+        The connection must remain open for the full lease. Closing it releases
+        the lock automatically, including after process termination.
+        """
+        if not lock_name or len(lock_name) > 200:
+            raise ValueError("Advisory lock name must contain 1 to 200 characters")
+        if not self._dsn:
+            raise StorageConfigurationError("OPENSHIELD_DATABASE_URL is required")
+        lock_id = int.from_bytes(
+            hashlib.sha256(lock_name.encode("utf-8")).digest()[:8],
+            byteorder="big",
+            signed=True,
+        )
+        connection = psycopg.connect(
+            self._dsn,
+            autocommit=True,
+            connect_timeout=5,
+        )
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+                acquired = bool(cursor.fetchone()[0])
+            if not acquired:
+                connection.close()
+                return None
+            return connection
+        except Exception:
+            connection.close()
+            raise
 
     def _connect(self):
         if not self._dsn:
