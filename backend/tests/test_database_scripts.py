@@ -126,7 +126,7 @@ def test_restore_refuses_non_empty_database_before_running_pg_restore(
 
     assert result.returncode != 0
     assert "target database is not empty" in result.stderr
-    assert log.read_text(encoding="utf-8") == ""
+    assert not log.exists()
 
 
 def test_restore_proceeds_only_when_target_is_empty(tmp_path: Path) -> None:
