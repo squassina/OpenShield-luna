@@ -28,6 +28,18 @@ OPENSHIELD_PUBLISH_ADDRESS=192.168.1.10
 
 Keep firewall rules restricted to trusted clients. Do not expose port 8000 to the public Internet. Enable API Basic authentication for shared environments and configure a strong, unique password. Gateway authentication remains separate.
 
+## Single Node process per database
+
+The Node API acquires a PostgreSQL session-level advisory lock during FastAPI startup and holds it for the full application lifespan. The lock uses a dedicated PostgreSQL connection outside the application pool. If another Node process already owns the lock, startup fails with an explicit error rather than starting duplicate DNS polling and execution-expiration loops.
+
+This is a deliberate single-instance constraint:
+
+- Run one Uvicorn worker and one Node replica per database.
+- Do not horizontally scale the Node service or start a second deployment against the same database.
+- The lock is released during graceful shutdown and automatically when PostgreSQL closes the lock session.
+
+Rate-limit and failed-admin-login counters remain in process memory and reset on restart. Prometheus metrics are also process-local. Multi-instance operation requires a shared rate-limit backend and a separately coordinated worker/lease design; the advisory lock is not a distributed-worker implementation.
+
 ## PostgreSQL backup
 
 Install PostgreSQL client utilities on the host. The backup contains network events, DNS metadata, incidents, policies, credentials ciphertext, and audit records; protect it as sensitive data.

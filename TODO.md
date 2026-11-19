@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `b6037fdae4a1834fabf933f4409a3e9fa8189f8b`  
+**Reviewed baseline:** `main` at `c7c7f393d0f0b1b7f317f0e1c44b2223b7f459a7`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -59,7 +59,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 ### P1 — Correctness, security and operational visibility
 
-- [ ] **Define and enforce the single-process assumption, or coordinate background workers.** DNS polling and the execution-expiration loop are started from FastAPI lifespan. Each Uvicorn worker/replica would start its own loops. Rate-limit windows and failed-admin-login counters are also in process memory. Until a PostgreSQL lease/advisory lock or dedicated worker exists, document and enforce one active scheduler instance; otherwise replicas can poll providers or process expiry concurrently and each process gets its own rate-limit budget. Evidence: `backend/openshield/api/main.py`, `backend/openshield/privacy/polling.py`, `backend/openshield/core/rate_limits.py`.
+- [ ] **Enforce the single-process Node assumption.** Implementation in review: FastAPI startup holds a PostgreSQL session-level advisory lock on a dedicated connection; a second Node process using the same database fails startup before starting DNS polling or execution-expiration loops. This also prevents process-local rate-limit and failed-login counters from diverging across Node replicas. Tests cover lock acquisition/release, contention and lifespan cleanup. One Uvicorn worker and one Node replica per database remain required; counters still reset on restart. Multi-instance support requires a shared limiter and a coordinated worker/lease design. Evidence: `backend/openshield/api/main.py`, `backend/openshield/core/storage.py`, `backend/openshield/core/rate_limits.py`.
 
 - [ ] **Bound Prometheus metric cardinality.** `MetricsRegistry` stores every distinct label tuple indefinitely and has no maximum-series guard. DNS polling adds the user-configurable `integration_id` label, so adding/removing many integrations can grow process memory and leave stale series. Prefer bounded/static labels (provider and outcome), cap series, and test churn/deletion. Evidence: `backend/openshield/core/metrics.py`, `backend/openshield/privacy/polling.py`.
 
