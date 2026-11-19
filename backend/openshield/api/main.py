@@ -47,6 +47,7 @@ from openshield.api.schemas import (
     WazuhCredentials,
 )
 from openshield.core.bootstrap import load_runtime_secrets
+from openshield.core.configuration import validate_deployment_configuration
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.rate_limits import RequestRateLimitMiddleware
@@ -71,6 +72,7 @@ from openshield.visibility.adapter import NetworkSensorAdapter
 
 __all__ = ["AIInvestigationRequest", "AIProviderCredentials", "AdGuardCredentials", "CrowdSecCredentials", "GrafanaCredentials", "IncidentStatusRequest", "MispCredentials", "OPNsenseCredentials", "OpenWrtCredentials", "PfSenseCredentials", "PiHoleCredentials", "PrometheusCredentials", "ThreatIntelCredentials", "WazuhCredentials"]
 
+validate_deployment_configuration()
 load_runtime_secrets(create=True)
 configure_logging()
 
