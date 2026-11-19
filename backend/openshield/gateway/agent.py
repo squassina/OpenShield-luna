@@ -285,7 +285,9 @@ def run_agent(
         while True:
             time.sleep(heartbeat_interval)
             try:
-                heartbeat = client.heartbeat()
+                heartbeat = (
+                    client.heartbeat(spool.stats()) if spool is not None else client.heartbeat()
+                )
                 if "openwrt_config" in heartbeat:
                     signature = _openwrt_config_signature(heartbeat["openwrt_config"])
                     if signature != openwrt_config_signature:
