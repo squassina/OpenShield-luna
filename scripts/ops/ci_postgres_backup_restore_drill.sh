@@ -81,7 +81,7 @@ docker compose exec -T openshield-db env \
   sh "$BACKUP_SCRIPT_IN_CONTAINER" "$CONTAINER_BACKUP_DIR"
 
 BACKUP_PATH="$(docker compose exec -T openshield-db sh -c \
-  'set -- "$1"/openshield-*.dump; [ -f "$1" ] && printf "%s\\n" "$1"' \
+  'set -- "$1"/openshield-*.dump; [ -f "$1" ] && printf "%s\n" "$1"' \
   sh "$CONTAINER_BACKUP_DIR")"
 test -n "$BACKUP_PATH"
 
