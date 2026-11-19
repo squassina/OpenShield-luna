@@ -365,7 +365,7 @@ Scope:
 - Incident timeline and investigation workflow.
 - Evidence provenance and false-positive handling.
 
-**Implementation status:** P3 software scope is implemented on the chained feature branch. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
+**Implementation status:** P3 software scope is implemented and CI-validated on `main`. CrowdSec CTI per-IP lookups and MISP REST attribute searches use encrypted API keys, bounded response sizes/timeouts, six-hour caching, and provider failure isolation. Enrichment is explicit and limited to 100 event IDs / 50 unique indicators per batch. Deterministic risk scores document source severity, CrowdSec reputation/score, MISP actionable attributes/threat level, and observation recency. Incidents preserve provider provenance and linked event timelines; acknowledge/close/false-positive states are audited, and false-positive decisions survive later enrichment. No automatic enforcement is permitted; P5 owns policy and response.
 
 ### P4 — Hybrid AI Network Intelligence
 
@@ -380,7 +380,7 @@ Scope:
 - Explanations, summaries, and recommendations.
 - AI governance, evaluation, and prompt-injection resilience.
 
-**Implementation status:** P4 software scope is implemented on the chained feature branch. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
+**Implementation status:** P4 software scope is implemented and CI-validated on `main`. Provider abstraction supports local Ollama `/api/chat` and optional OpenAI Responses API. OpenAI requires both global `OPENSHIELD_CLOUD_AI_ENABLED=true` and explicit per-integration consent. Cloud context excludes IP/domain values, hostnames, MACs, event IDs, integration IDs, and raw logs; local context uses allowlisted incident and normalized threat evidence. Investigation output is schema-validated, versioned, persisted, and audited. Prompts treat all evidence as untrusted data; no tools, policy changes, or response execution are exposed to the model. Automated tests cover provider contracts, privacy boundary, opt-in, output validation, and prompt-injection fixtures.
 
 ### P5 — Autonomous Response
 
@@ -397,13 +397,13 @@ Scope:
 - Emergency stop / kill switch.
 - Complete decision and execution audit.
 
-**Implementation status:** P5 software implementation is underway on the chained branch. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
+**Implementation status:** P5 software implementation is complete and CI-validated on `main`. Enforcement remains disabled by default; physical OpenWrt ACL, UCI behavior, TTL rollback and outage recovery are release gates before activation. The design is fail-closed: enforcement is disabled by default, the emergency stop is active by default, the global autonomy cap defaults to L0, and execution requires authenticated administration. Policies match exact indicators and risk thresholds; DNS blocks use Pi-hole/AdGuard list synchronization, while IP firewall changes are delivered as allowlisted commands through the authenticated Gateway Connector. All actions carry a maximum 24-hour TTL and are audited. Physical OpenWrt validation remains a release gate before enabling automatic enforcement.
 
 ### P6 — Enterprise Readiness
 
 **Goal:** support broader operational use where validated by demand.
 
-**Implementation status:** P6 baseline is underway on the chained branch. Current increment adds multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
+**Implementation status:** P6 self-hosted operational baseline is implemented and CI-validated on `main`. It is not a multi-tenant or SaaS platform; user identity, RBAC, organization ownership and tenant isolation remain deferred. Current increment adds multi-gateway operational reporting, PostgreSQL backup/restore tooling, and safer default host-port binding. Existing gateway IDs support multiple independent connectors. True multi-tenancy, RBAC, organization/site ownership, and centralized multi-Node management remain deferred until identity and authorization requirements are validated.
 
 Scope:
 - Multiple gateways and sites.
@@ -561,10 +561,10 @@ Current increment adds a read-only OpenWrt rpcd/ubus client used by the nearby-h
 - Health check verifies RPC reachability and returns basic device identity.
 - HTTP timeout is bounded to 5 seconds; response bodies are capped at 1 MiB.
 - TLS certificate verification uses Python's default HTTPS behavior.
-- Credentials are supplied only to the connector through deployment environment variables, never integration configuration.
+- Dashboard-managed router credentials are stored in the Node's encrypted secret store and delivered to the Connector only over the gateway Bearer-authenticated channel. Legacy environment-based credentials remain available as a fallback; plaintext credentials are never stored in integration JSON.
 - Integration configuration rejects secret-like field names to prevent accidental API disclosure.
 - The adapter advertises only `discover` and `health_check`; it does not claim event reading or enforcement.
-- No firewall, routing, wireless, or forwarding mutation is implemented.
+- This P0 discovery adapter is read-only and never mutates firewall, routing, wireless, or forwarding settings. P5 is a separate, allowlisted and explicitly opt-in UCI firewall path; physical ACL and rollback acceptance is required before enabling it.
 
 Environment:
 - `OPENSHIELD_OPENWRT_URL`
@@ -575,8 +575,8 @@ Environment:
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
 - Real OpenWrt hardware/version compatibility is not yet validated.
-- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node without an OpenShield API key.
-- P0 remains incomplete until a real normalized gateway event is verified on OpenWrt hardware, durable audit/recovery requirements are addressed, and gateway independence is validated.
+- The nearby-host connector performs discovery and forwards discovery/health envelopes using the separate gateway Bearer token. This token authenticates the connector, not an individual user.
+- P0 software scope is implemented and CI-validated. Physical firmware/ACL compatibility and forwarding-independence are separate acceptance work tracked in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17); CI and mocks do not satisfy this gate.
 
 
 ## P0 implementation status — connector event forwarding
@@ -589,7 +589,7 @@ The nearby-host connector now uses the OpenWrt RPC client locally, keeping the N
 - After each successful heartbeat, the agent emits a `gateway.health` event.
 - RPC failures produce a bounded health event (`status=unavailable`, `reason=rpc_unavailable`) without forwarding exception text or credentials.
 - Events use `openshield.event.v1`, include UTC timestamps and UUID event IDs, and preserve the configured integration ID as source provenance.
-- The Node validates integration existence and kind. Residential mode trusts callers on the local network; source identity is provenance, not an authentication boundary.
+- The Node validates the integration and event kind and requires the gateway Bearer token for OpenWrt source events. The shared connector token is not a per-user or per-gateway role system.
 - The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
 
 Required connector variables:
@@ -608,8 +608,8 @@ PostgreSQL 16 is now the source of truth for the initial Node state:
 - Integration registrations and capability/config metadata persist across Node restarts.
 - Versioned events persist with their complete envelope and source provenance.
 - Gateway connection records and heartbeat timestamps persist; the existing 90-second stale threshold is preserved.
-- Duplicate integration IDs and event IDs are rejected.
-- Schema creation is idempotent and performed automatically by the store.
+- Duplicate integration IDs are rejected; duplicate event IDs are handled idempotently and return HTTP 202 with `status=duplicate`.
+- Schema upgrades run through versioned, transaction-locked migrations recorded in `schema_migrations`; concurrent Node starts serialize the migration step.
 - Node readiness checks PostgreSQL connectivity; no API-key configuration is required.
 - Docker Compose provides PostgreSQL with a named data volume; stopping the stack does not remove this volume.
 - The CI test service starts PostgreSQL and exercises persistence through a newly created store instance.
@@ -618,10 +618,7 @@ Configuration:
 - `OPENSHIELD_POSTGRES_PASSWORD`
 - `OPENSHIELD_DATABASE_URL`
 
-Remaining:
-- Durable audit records are not implemented yet.
-- Formal versioned database migrations, backup/restore automation, pooling, and production hardening remain pending.
-- Local tests must run through Docker Compose so the PostgreSQL dependency is available.
+Implemented follow-up: bounded connection pooling, versioned/serialized migrations, production-profile credential preflight, guarded backup/restore scripts, and a disposable PostgreSQL restore round-trip in CI. Remaining: representative production load/query-plan measurements and restore against deployment data are tracked in [Issue #19](https://github.com/squassina/OpenShield-luna/issues/19).
 
 
 ## P0 implementation status — durable audit trail
@@ -632,23 +629,23 @@ The PostgreSQL audit log now records security-relevant successful operations and
 - `gateway.connected`: actor/gateway ID, connector version, and accepted capabilities.
 - `event.ingested`: actor, event ID, event type, severity, and source integration ID.
 - `authorization.denied`: gateway source-ID mismatch attempts.
-- State changes and their corresponding audit records are written in the same database transaction.
-- Audit reads are exposed through `GET /api/v1/audit`, restricted to the admin role, with a bounded limit (1–500).
+- Operations write durable audit records for covered state changes. Transactional coupling is implemented on selected workflows; do not treat the audit table as a tamper-proof or compliance-grade ledger.
+- Audit reads are exposed through `GET /api/v1/audit` with a bounded limit (1–500). When shared-admin HTTP Basic is enabled, the route requires those credentials; the Home profile has no user roles or per-user identity.
 - Audit records contain no OpenWrt credentials. Residential API requests have no authenticated actor identity.
 
 Remaining audit hardening:
-- Authentication-failure auditing is deferred with authentication itself.
+- Sensor credential failures are recorded with sanitized context. Failed shared-admin Basic attempts are currently rate-limited in process memory rather than written to the durable audit log.
 - Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
 
 
 ## P0 implementation status — operational metrics
 
-The Node now exposes an admin-protected Prometheus text endpoint at `GET /metrics`:
+The Node exposes a Prometheus text endpoint at `GET /metrics`. It follows optional shared-admin Basic authentication when `OPENSHIELD_API_AUTH_ENABLED=true`; the Home profile keeps the same trusted-LAN boundary as the rest of the API:
 
 - HTTP request counters grouped by method, FastAPI route template, and status code.
 - Event ingestion, gateway connection, gateway heartbeat, and gateway event-source denial counters.
-- Labels avoid raw resource IDs and request values to limit cardinality.
-- Metrics are process-local and thread-safe; no new runtime dependency was added.
+- Labels avoid raw request values; the registry enforces a global series cap, label syntax/length bounds, and metric-type consistency. Gateway spool pressure is exported using bounded gateway labels.
+- Metrics are process-local and thread-safe; counters reset on Node restart. Gateway spool counters are cumulative values replayed from the Connector heartbeat.
 
 Remaining:
 - Counters reset on process restart.
@@ -663,17 +660,14 @@ The nearby-host connector now uses a local SQLite outbox:
 - The connector drains pending events in batches and retries after reconnect.
 - When the Node is unavailable, the connector continues local OpenWrt discovery/health polling and queues resulting events.
 - Node event ingestion is idempotent: duplicate event IDs return HTTP 202 with `status=duplicate`, so retries after a lost response are safe.
-- Queue capacity is bounded at 10,000 pending events; the connector refuses new events when full rather than discarding older pending events.
-- SQLite uses WAL and FULL synchronous mode. The database file is chmod 0600; the spool directory is enforced at mode 0700.
+- Queue capacity is bounded at 10,000 pending events. At capacity, the Connector evicts the oldest unprotected low-priority event, coalesces identical health snapshots, and preserves health transitions, command results, security/audit events, and high/critical events. If only protected events remain, it rejects the incoming event and increments a durable dropped counter.
+- SQLite uses WAL/FULL synchronous mode and restrictive file permissions. Event and command-result payloads are Fernet-encrypted at rest; startup migrates plaintext and previous-key rows. SQLite metadata (IDs/timestamps/counters) remains visible.
 - Docker Compose mounts a named volume at `/var/lib/openshield`, preserving the spool across connector container restarts.
 
 Configuration:
 - `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`).
 
-Remaining:
-- Spool contents are not encrypted at rest; host/volume protection is required.
-- Queue capacity/usage metrics and alerting are pending.
-- A full hardware outage/recovery drill against a real OpenWrt router is pending.
+Implemented follow-up: Connector heartbeats report pending depth, capacity, evictions, health coalescing and dropped-event totals; Node exports bounded Prometheus gauges/counters. Operator alert rules remain deployment-specific. Real outage/recovery acceptance remains tracked in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 
 ## P0 hardware acceptance
@@ -688,19 +682,19 @@ Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) t
 - Spool and gateway recovery after connector container restart.
 - No firewall, routing, wireless, or forwarding changes.
 
-Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield/issues/2). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
+Physical hardware acceptance is deferred to [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
 
 
 ## P0 implementation checkpoint
 
 **Software scope: implemented and CI-validated.** The current branch covers trusted-LAN residential API access, automatic gateway registration, gateway handshake and presence, OpenWrt read-only discovery/health, versioned event normalization, PostgreSQL state/audit persistence, metrics, and durable connector-side event retry/recovery.
 
-**Physical gateway acceptance: deferred technical debt.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [issue #2](https://github.com/squassina/OpenShield/issues/2).
+**Physical gateway acceptance: deferred operational work.** P0 software is complete and CI-validated. Run the hardware validation runbook when the target OpenWrt device is available; CI cannot establish real rpcd ACL compatibility or prove forwarding continuity during a Node outage. Track evidence and closure in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 
 ## Residential deployment decision — current product stage
 
-The first product stage targets a single household and a trusted local network. OpenShield API authentication, user accounts, API keys, and RBAC are intentionally disabled. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
+The first product stage targets a single household and a trusted local network. User accounts, per-user API keys, and RBAC are not implemented. Optional shared-admin HTTP Basic authentication is disabled by default in Home; gateway and sensor bearer credentials are separate service identities. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
 
 This is a deployment simplification, not a claim that unauthenticated APIs are safe on untrusted networks. The Node API must remain reachable only from the trusted home LAN and must not be exposed directly to the Internet. OpenWrt's own RPC authentication remains enabled to protect router management access.
 
@@ -716,7 +710,7 @@ Business and SaaS authentication must be implemented and reviewed before those d
 
 **Network visibility software scope:** implemented as an API-first vertical slice. OpenShield accepts bounded Suricata EVE and Zeek JSON batches, normalizes supported records into the versioned event envelope, persists them idempotently, queries event filters and limits in PostgreSQL, and aggregates observed IP inventory and inferred topology in the database. Inventory validates IP addresses and labels IP version/scope. Sensor freshness is based on Node-side observation time.
 
-**Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. The interactive web dashboard remains P2. No traffic enforcement is introduced. Live sensor validation, identity enrichment, retention/scale, Business authentication, and richer topology remain tracked in [docs/technical-debt.md](docs/technical-debt.md).
+**Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. Interactive dashboard and privacy features are implemented in P2. P1 ingestion does not enforce traffic; P5 owns response. Live sensor validation (#18), hardware validation (#17), and database load/restore acceptance (#19) remain tracked operational gates.
 
 
 ## OpenWrt device inventory and logical topology — implementation checkpoint
