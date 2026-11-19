@@ -43,7 +43,6 @@ target_has_objects="$(
             ON namespace.oid = user_type.typnamespace
           WHERE namespace.nspname NOT IN ('pg_catalog', 'information_schema')
             AND namespace.nspname NOT LIKE 'pg_toast%'
-            AND user_type.typtype IN ('d', 'e', 'r')
         )
         OR EXISTS (
           SELECT 1
