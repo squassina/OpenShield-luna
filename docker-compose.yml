@@ -96,7 +96,7 @@ services:
       cache_to:
         - type=gha,scope=openshield-dev,mode=max
     profiles: ["tools"]
-    command: ["ruff", "check", "openshield", "tests", "scripts/ops"]
+    command: ["ruff", "check", "openshield", "tests", "scripts"]
 
   openshield-browser-test:
     container_name: openshield-luna-browser-test
