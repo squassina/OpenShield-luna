@@ -14,6 +14,8 @@ OpenShield will evolve in three deployment stages:
 
 Residential admin authentication remains disabled by default to preserve the home-user model. It can be enabled with HTTP Basic credentials; gateway-to-Node secret delivery uses a separate bearer token. **Do not expose the Node API to the public Internet.** Keep port 8000 on a trusted LAN and do not configure Internet port forwarding to it. OpenWrt's own RPC login remains enabled because it protects access to the router; this is separate from OpenShield API authentication.
 
+For a strict single-Node deployment preflight, set `OPENSHIELD_DEPLOYMENT_PROFILE=production`. Startup then requires enabled HTTP Basic authentication, an admin password of at least 20 characters, a unique PostgreSQL password of at least 24 characters matching `OPENSHIELD_DATABASE_URL`, and a specific IP bind address. The default `home` profile retains the residential development defaults.
+
 ## Architecture baseline
 
 - **Gateway-first:** a lightweight connector communicates with a separate OpenShield Node. Gateway forwarding never depends on Node availability.
@@ -68,9 +70,9 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - Restrict Node access to a trusted LAN. Do not publish port 8000 to the Internet.
 - OpenWrt credentials are entered through the dashboard and encrypted at rest with `OPENSHIELD_SECRET_KEY`. They are never returned by integration APIs or stored in integration JSON. The authenticated connector receives them on connect/heartbeat. Back up the encryption key securely.
 - P0 OpenWrt discovery is read-only and does not modify router configuration. Separate P5 enforcement can add or remove narrowly scoped temporary UCI firewall rules through authenticated gateway commands after explicit policy approval. It is disabled by default and requires physical firmware, ACL, and rollback validation before use.
-- PostgreSQL uses versioned schema migrations and a bounded connection pool. Automated backup/restore and production database hardening remain pending.
+- PostgreSQL uses versioned schema migrations and a bounded connection pool. Backup and restore helpers now publish verified dumps, refuse non-empty restore targets, and are covered by CI. Production scheduling, off-host backup durability, deployment-data restore evidence, and database hardening remain operational work.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
-- Metrics are process-local and reset on restart.
+- Metrics are process-local and reset on restart. The registry now caps total series, rejects invalid/oversized labels, and exposes a dropped-series counter.
 - The connector is a nearby-host Linux/Docker agent, not an on-device OpenWrt daemon.
 - Physical OpenWrt hardware/firmware compatibility and forwarding-independence validation remain open in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
@@ -130,6 +132,8 @@ docker compose down
 
 Do not use `docker compose down -v` for routine shutdown; it deletes the database and connector spool volumes.
 
+For a strict single-Node deployment, set `OPENSHIELD_DEPLOYMENT_PROFILE=production` in `.env`, set `OPENSHIELD_API_AUTH_ENABLED=true`, define a unique admin username/password (at least 20 characters), and set a unique `OPENSHIELD_POSTGRES_PASSWORD` (at least 24 characters) with the same password in `OPENSHIELD_DATABASE_URL`. Keep `OPENSHIELD_PUBLISH_ADDRESS` bound to loopback or the Node's specific trusted-LAN IP. Startup fails closed when these values are missing or inconsistent.
+
 ## Gateway connector
 
 The connector runs on a nearby Linux/Docker host. Configure the Node URL and, optionally, OpenWrt RPC access:
@@ -141,7 +145,7 @@ The connector runs on a nearby Linux/Docker host. Configure the Node URL and, op
 - `OPENSHIELD_GATEWAY_SPOOL_PATH` (default `/var/lib/openshield/gateway-spool.sqlite3`)
 - `OPENSHIELD_OPENWRT_URL`, `OPENSHIELD_OPENWRT_USERNAME`, `OPENSHIELD_OPENWRT_PASSWORD` (legacy environment-based fallback; prefer dashboard setup)
 
-For dashboard-managed credentials, set `OPENSHIELD_SECRET_KEY` on Node and the same `OPENSHIELD_GATEWAY_TOKEN` on Node and connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network. For safe Fernet key rotation, configure `OPENSHIELD_SECRET_KEY_PREVIOUS` on Node and follow the [secret key rotation runbook](docs/operations/secret-key-rotation.md).
+For dashboard-managed credentials, Node and Connector share the `openshield-runtime-secrets` volume. Node creates the Fernet key there; Connector reads it to encrypt its SQLite spool. When overriding the key with `OPENSHIELD_SECRET_KEY`, pass the same value (and any `OPENSHIELD_SECRET_KEY_PREVIOUS` values) to both services. Set the same `OPENSHIELD_GATEWAY_TOKEN` on Node and Connector. Enter the router URL, RPC username, and password in the dashboard; the connector receives the encrypted-at-rest configuration after authentication. The legacy OpenWrt environment variables remain supported but are not required for ordinary setup. Use HTTPS for Node/connector traffic outside a trusted isolated network. For safe Fernet key rotation, configure `OPENSHIELD_SECRET_KEY_PREVIOUS` on Node and follow the [secret key rotation runbook](docs/operations/secret-key-rotation.md).
 
 Start the optional connector profile:
 
@@ -150,7 +154,7 @@ docker compose --profile gateway up --build -d openshield-node openshield-gatewa
 docker compose logs -f openshield-gateway-connector
 ```
 
-The connector is outbound-only and does not sit in the packet-forwarding path. When the Node is unavailable, it continues local collection and queues events in SQLite. Events are removed from the spool only after the Node acknowledges them. The queue is bounded at 10,000 events. At capacity, it evicts the oldest unprotected low-priority event first; gateway health, command results, security/audit events, and high/critical-severity events are protected. Identical health snapshots may be coalesced, but health-state transitions remain durable. If all queued events are protected and no identical health snapshot can be compacted, the incoming event is rejected and a durable dropped counter is incremented. SQLite uses WAL and FULL synchronous mode; the database file is mode 0600 and its directory mode 0700. The spool is not encrypted at rest, so protect the host and Docker volume. Its durable counters are not yet exposed as metrics or alerts.
+The connector is outbound-only and does not sit in the packet-forwarding path. When the Node is unavailable, it continues local collection and queues events in SQLite. Events are removed from the spool only after the Node acknowledges them. The queue is bounded at 10,000 events. At capacity, it evicts the oldest unprotected low-priority event first; gateway health, command results, security/audit events, and high/critical-severity events are protected. Identical health snapshots may be coalesced, but health-state transitions remain durable. If all queued events are protected and no identical health snapshot can be compacted, the incoming event is rejected and a durable dropped counter is incremented. SQLite uses WAL, FULL synchronous mode, restrictive file permissions, and Fernet encryption for event and command-result payloads. Existing plaintext spool rows are encrypted on first startup; rows encrypted with a previous Fernet key are re-encrypted with the active key. The Connector reports pending depth, capacity, evictions, health coalescing, and dropped events in its heartbeat; Node exports them as bounded Prometheus gauges/counters. Protect the host, spool volume, runtime-secrets volume, and backups. Prometheus alert rules remain deployment-specific.
 
 ## OpenWrt read-only discovery
 
@@ -358,7 +362,7 @@ P4 implements a local Ollama runtime and an optional OpenAI Responses API adapte
 
 - Multiple gateway IDs are independently tracked by the Node; see `GET /api/v1/gateways`.
 - Bounded operational summary is available at `GET /api/v1/reports/operations`.
-- PostgreSQL custom-format backup and restore helpers are in `scripts/`. Restore requires explicit confirmation and an operator-supplied fresh, empty target database; the script does not yet preflight target emptiness (see TODO.md).
+- PostgreSQL custom-format backup and restore helpers are in `scripts/`. Backup output is verified before atomic publication; restore requires explicit confirmation and verifies the target has no user objects before running `pg_restore`. Back up the database and runtime-secrets/spool volumes; see [Enterprise readiness](docs/operations/enterprise-readiness.md).
 - Compose publishes the API on loopback by default; set `OPENSHIELD_PUBLISH_ADDRESS` to the Node's trusted-LAN address when remote LAN clients need access.
 - Deployment and recovery guidance: [Enterprise readiness runbook](docs/operations/enterprise-readiness.md).
 
