@@ -5,6 +5,7 @@ import os
 import secrets
 import threading
 import time
+from psycopg import Connection
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -74,6 +75,68 @@ load_runtime_secrets(create=True)
 configure_logging()
 
 @asynccontextmanager
+async def _monitor_worker_lock(connection: Connection) -> None:
+    """Detect a lost PostgreSQL session lock and stop this process's workers."""
+    while True:
+        await asyncio.sleep(10)
+        await asyncio.to_thread(lambda: connection.execute("SELECT 1").fetchone())
+
+
+async def _run_background_workers(interval_seconds: int) -> None:
+    """Run database maintenance on one process across all Node replicas."""
+    while True:
+        try:
+            lock_connection = await asyncio.to_thread(
+                store.try_acquire_advisory_lock,
+                "openshield:background-workers",
+            )
+        except Exception:
+            metrics.increment("openshield_background_worker_lock_failures_total")
+            logger.exception("Unable to acquire background worker lease")
+            await asyncio.sleep(5)
+            continue
+
+        if lock_connection is None:
+            metrics.increment("openshield_background_worker_lock_contention_total")
+            await asyncio.sleep(5)
+            continue
+
+        metrics.increment("openshield_background_worker_lease_acquired_total")
+        logger.info("Background worker lease acquired")
+        tasks = [asyncio.create_task(run_expiration_loop(store, registry))]
+        if interval_seconds:
+            tasks.append(asyncio.create_task(
+                run_dns_polling_loop(registry, store, metrics, interval_seconds)
+            ))
+        tasks.append(asyncio.create_task(_monitor_worker_lock(lock_connection)))
+
+        try:
+            done, _pending = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for completed in done:
+                error = completed.exception()
+                if error is not None:
+                    raise error
+            raise RuntimeError("Background worker or lease monitor stopped unexpectedly")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            metrics.increment("openshield_background_worker_restarts_total")
+            logger.exception("Background worker lease ended; retrying")
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.to_thread(lock_connection.close)
+            logger.warning("Background worker lease released")
+
+        await asyncio.sleep(5)
+
+
+@asynccontextmanager
 async def _dns_polling_lifespan(app: FastAPI):
     interval_raw = os.getenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "60")
     try:
@@ -83,19 +146,15 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
     store.open()
-    task = asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval)) if interval else None
-    execution_task = asyncio.create_task(run_expiration_loop(store, registry))
+    worker_task = asyncio.create_task(_run_background_workers(interval))
     try:
         yield
     finally:
+        worker_task.cancel()
         try:
-            for background_task in (task, execution_task):
-                if background_task is not None:
-                    background_task.cancel()
-                    try:
-                        await background_task
-                    except asyncio.CancelledError:
-                        pass
+            await worker_task
+        except asyncio.CancelledError:
+            pass
         finally:
             store.close()
 
