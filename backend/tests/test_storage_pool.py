@@ -40,6 +40,27 @@ def test_pool_reuses_physical_connections_and_closes(database_url: str) -> None:
     assert pool.closed
 
 
+def test_background_worker_advisory_lock_is_exclusive_and_released(database_url: str) -> None:
+    first = PostgresStore(database_url)
+    second = PostgresStore(database_url)
+    first_connection = second_connection = None
+    try:
+        first_connection = first.try_acquire_advisory_lock("test:singleton-worker")
+        assert first_connection is not None
+        assert second.try_acquire_advisory_lock("test:singleton-worker") is None
+        first_connection.close()
+        first_connection = None
+        second_connection = second.try_acquire_advisory_lock("test:singleton-worker")
+        assert second_connection is not None
+    finally:
+        if first_connection is not None:
+            first_connection.close()
+        if second_connection is not None:
+            second_connection.close()
+        first.close()
+        second.close()
+
+
 def test_pool_exhaustion_is_bounded_and_reports_not_ready(database_url: str) -> None:
     store = PostgresStore(
         database_url,
@@ -83,21 +104,35 @@ def test_application_lifespan_opens_and_closes_pool(monkeypatch: pytest.MonkeyPa
     from openshield.api import main
 
     calls: list[str] = []
+    worker_started = asyncio.Event()
+
+    class LockConnection:
+        def close(self) -> None:
+            calls.append("lock_close")
+
     monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "0")
     monkeypatch.setattr(main.store, "open", lambda: calls.append("open"))
     monkeypatch.setattr(main.store, "close", lambda: calls.append("close"))
+    monkeypatch.setattr(
+        main.store,
+        "try_acquire_advisory_lock",
+        lambda _name: (calls.append("lease_acquired"), LockConnection())[1],
+    )
 
     async def wait_for_shutdown(*_args: object) -> None:
+        calls.append("worker_started")
+        worker_started.set()
         await asyncio.Event().wait()
 
     monkeypatch.setattr(main, "run_expiration_loop", wait_for_shutdown)
 
     async def exercise_lifespan() -> None:
         async with main._dns_polling_lifespan(main.app):
-            assert calls == ["open"]
+            await asyncio.wait_for(worker_started.wait(), timeout=2)
+            assert calls[:3] == ["open", "lease_acquired", "worker_started"]
 
     asyncio.run(exercise_lifespan())
-    assert calls == ["open", "close"]
+    assert calls[-2:] == ["lock_close", "close"]
 
 
 def test_response_execution_listing_uses_one_query_and_preserves_rows(
