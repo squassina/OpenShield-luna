@@ -32,17 +32,20 @@ POSTGRES_PASSWORD="$(
     python -c 'import json, sys; print(json.load(sys.stdin)["services"]["openshield-db"]["environment"]["POSTGRES_PASSWORD"])'
 )"
 DATABASE_URL() {
-  DATABASE_NAME="$1" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" python -c '
+  DATABASE_NAME="$1" DATABASE_HOST="$2" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" python -c '
 import os
 from urllib.parse import quote
 password = quote(os.environ["POSTGRES_PASSWORD"], safe="")
 database = quote(os.environ["DATABASE_NAME"], safe="")
-print(f"postgresql://openshield:{password}@127.0.0.1:5432/{database}")
+host = os.environ["DATABASE_HOST"]
+print(f"postgresql://openshield:{password}@{host}:5432/{database}")
 '
 }
 
-SOURCE_URL="$(DATABASE_URL "$SOURCE_DB")"
-TARGET_URL="$(DATABASE_URL "$TARGET_DB")"
+SOURCE_DB_URL="$(DATABASE_URL "$SOURCE_DB" 127.0.0.1)"
+SOURCE_TEST_URL="$(DATABASE_URL "$SOURCE_DB" openshield-db)"
+TARGET_DB_URL="$(DATABASE_URL "$TARGET_DB" 127.0.0.1)"
+TARGET_TEST_URL="$(DATABASE_URL "$TARGET_DB" openshield-db)"
 
 docker compose exec -T openshield-db createdb -U "$DB_USER" "$SOURCE_DB"
 docker compose exec -T openshield-db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$SOURCE_DB" <<'SQL'
@@ -66,7 +69,7 @@ INSERT INTO public.backup_restore_fixture (fixture_id, payload) VALUES
 SQL
 
 docker compose run --rm --no-deps \
-  -e "OPENSHIELD_DATABASE_URL=$SOURCE_URL" \
+  -e "OPENSHIELD_DATABASE_URL=$SOURCE_TEST_URL" \
   -v "$REPORT_DIR:/reports" \
   openshield-test python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 30000 capture --output /reports/source-manifest.json
@@ -76,7 +79,7 @@ docker compose cp scripts/backup.sh "openshield-db:$BACKUP_SCRIPT_IN_CONTAINER"
 docker compose cp scripts/restore.sh "openshield-db:$RESTORE_SCRIPT_IN_CONTAINER"
 
 docker compose exec -T openshield-db env \
-  OPENSHIELD_DATABASE_URL="$SOURCE_URL" \
+  OPENSHIELD_DATABASE_URL="$SOURCE_DB_URL" \
   sh "$BACKUP_SCRIPT_IN_CONTAINER" "$CONTAINER_BACKUP_DIR"
 
 BACKUP_PATH="$(docker compose exec -T openshield-db sh -c \
@@ -86,12 +89,12 @@ test -n "$BACKUP_PATH"
 
 docker compose exec -T openshield-db createdb -U "$DB_USER" "$TARGET_DB"
 docker compose exec -T openshield-db env \
-  OPENSHIELD_DATABASE_URL="$TARGET_URL" \
+  OPENSHIELD_DATABASE_URL="$TARGET_DB_URL" \
   OPENSHIELD_RESTORE_CONFIRM=YES \
   sh "$RESTORE_SCRIPT_IN_CONTAINER" "$BACKUP_PATH"
 
 docker compose run --rm --no-deps \
-  -e "OPENSHIELD_DATABASE_URL=$TARGET_URL" \
+  -e "OPENSHIELD_DATABASE_URL=$TARGET_TEST_URL" \
   -v "$REPORT_DIR:/reports" \
   openshield-test python scripts/ops/verify_database_restore.py \
   --statement-timeout-ms 30000 verify --manifest /reports/source-manifest.json
