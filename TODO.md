@@ -61,9 +61,9 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [x] **Coordinate background workers across Node replicas.** FastAPI lifespan now acquires a PostgreSQL session-level advisory lock before starting DNS polling and response-expiration workers. The lock is held by a dedicated connection, monitored, released on shutdown/loss, and reacquired after failure. Test coverage verifies mutual exclusion and release. Rate-limit windows and failed-admin-login counters remain process-local; do not treat them as distributed protection when running multiple API workers/replicas.
 
-- [x] **Bound Prometheus metric cardinality.** `MetricsRegistry` now enforces a global series ceiling, validates metric/label syntax and length, limits labels per series, rejects metric-type conflicts, and exports a dropped-series counter. DNS polling no longer labels series with the user-controlled `integration_id`; gateway spool telemetry uses the bounded gateway label.
+- [x] **Bound Prometheus metric cardinality and validate samples.** `MetricsRegistry` enforces a global series ceiling, validates metric/label syntax and length, limits labels per series, rejects metric-type conflicts, boolean/fractional counters and non-finite gauges, and exports a dropped-series counter. DNS polling no longer labels series with the user-controlled `integration_id`; gateway spool telemetry uses the bounded gateway label.
 
-- [x] **Expose gateway spool counters and pressure.** The Connector now sends pending depth, capacity, evictions, health-snapshot coalescing, and dropped-event totals in its authenticated heartbeat. The Node exports bounded Prometheus gauges/counters by gateway. Alert-rule provisioning and a Prometheus deployment remain operator-owned.
+- [x] **Expose gateway spool counters and pressure.** The Connector sends pending depth, capacity, evictions, health-snapshot coalescing, and dropped-event totals in its authenticated heartbeat. The Node exports bounded Prometheus gauges/counters by gateway. Alert-rule provisioning and a Prometheus deployment remain operator-owned.
 
 - [x] **Make restore preflight fail closed.** `scripts/restore.sh` still requires `OPENSHIELD_RESTORE_CONFIRM=YES` and now checks PostgreSQL catalogs for user relations, routines, custom types, large objects, and extra schemas before invoking `pg_restore`. It refuses non-empty targets and never drops existing objects. Script tests cover empty/non-empty targets and missing confirmation.
 
@@ -77,13 +77,17 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Pin the complete build inputs.** Python dependencies use version ranges and base images are tag-pinned rather than digest-pinned. Add a reproducible dependency lock and pin runtime/build images by digest or a controlled update process. Keep Playwright client and browser image versions aligned.
 
-- [ ] **Reconcile PLAN.md with the merged implementation.** Some appended P3/P4/P5/P6 status text still says implementation is on a chained feature branch or underway, while the corresponding software is present on main. P1 checkpoint and earlier P0 notes also repeat older boundaries. Keep PLAN.md as product architecture/strategy, but update implementation checkpoints to match README and this TODO.
+- [x] **Reconcile PLAN.md with the merged implementation.** Phase implementation checkpoints now identify `main` as the software baseline, distinguish P0 discovery from P5 enforcement, update the connector/API/authentication and spool behavior, and point hardware/live-sensor/database acceptance to #17–#19.
 
 - [ ] **Reduce large-module maintenance cost incrementally.** `backend/openshield/core/storage.py` is a 2,200+ line persistence module and `backend/openshield/dashboard.html` is a single roughly 90 KB UI asset. Extract only when there is a clear seam and regression coverage; preserve current contracts and avoid a broad rewrite.
 
-- [ ] **Add documentation and dashboard static checks to CI.** Validate relative Markdown links and run a JavaScript syntax/lint check on the inline dashboard script. Browser tests already exercise the dashboard, but syntax checks and link validation would catch documentation drift earlier.
+- [x] **Add documentation and dashboard static checks to CI.** CI validates relative Markdown links (including repository-root traversal) and runs `node --check` over inline dashboard JavaScript. Browser tests remain the runtime UI regression layer.
 
-- [x] **Publish backups atomically.** `scripts/backup.sh` now dumps to a restrictive temporary file, verifies the archive, and atomically publishes a collision-safe final filename. Partial artifacts are cleaned on failure.
+- [x] **Publish backups atomically.** `scripts/backup.sh` dumps to a restrictive temporary file, verifies the archive, and atomically publishes a collision-safe final filename. Partial artifacts are cleaned on failure.
+
+- [x] **Preserve command-result idempotency with encrypted spool storage.** Fernet ciphertext is randomized, so retries compare canonical decrypted result JSON rather than ciphertext. Regression tests cover identical retries and conflicting results.
+
+- [x] **Protect metrics when admin authentication is enabled.** `/metrics` now follows the same optional shared-admin HTTP Basic middleware as the dashboard and administrative API; liveness/readiness remain unauthenticated.
 
 ## Operational constraints to keep visible
 
@@ -106,4 +110,4 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - P6 multi-gateway summaries, loopback-by-default publishing, production-profile credential preflight, safe PostgreSQL backup/restore scripts and encrypted gateway spool telemetry.
 - Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling and a disposable PostgreSQL restore round-trip in CI.
 - Playwright browser setup using the official browser image; no apt-based browser dependency installation is needed in CI.
-- PostgreSQL advisory-lock leadership for background workers, bounded Prometheus series, spool telemetry, production deployment preflight, restore emptiness checks, atomic backup publication, and encrypted gateway spool migration/rotation.
+- PostgreSQL advisory-lock leadership for background workers, bounded Prometheus series and sample validation, authenticated metrics, spool telemetry, production deployment preflight, restore emptiness checks, atomic backup publication, encrypted gateway spool migration/rotation, and idempotent encrypted command-result retries.
