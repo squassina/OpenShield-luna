@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `5c7c16951c37d4de3d4dc11d294ada645fb16b9c`  
+**Reviewed baseline:** `main` at `0908b1bdcdb36e308027d6bc5c7c964fd651ee0d`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -79,13 +79,13 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 ### P2 — Reproducibility and maintainability
 
-- [ ] **Pin the complete build inputs.** Python dependencies use version ranges and base images are tag-pinned rather than digest-pinned. Add a reproducible dependency lock and pin runtime/build images by digest or a controlled update process. Keep Playwright client and browser image versions aligned.
+- [x] **Pin the complete build inputs.** Python 3.12 runtime, development and build dependencies are resolved into hash-pinned `requirements.txt`, `requirements-dev.txt` and `requirements-build.txt` files. The Dockerfile installs only with `--require-hashes`; pip 26.3 and setuptools 84.1.0 are pinned, and setuptools is declared as the exact build backend. Python 3.12, Playwright 1.64.1 and PostgreSQL 16 Alpine image references carry registry manifest digests. Playwright package/image versions stay aligned. Dependabot updates pip, Docker and Actions inputs weekly; the scheduled refresh workflow opens a PR for lock and digest changes. Implemented on this branch; CI required. Evidence: `backend/pyproject.toml`, `backend/requirements*.txt`, `backend/requirements-build.in`, `Dockerfile`, `docker-compose.yml`, `.github/dependabot.yml`, `.github/workflows/resolve-python-locks.yml`, `docs/operations/build-reproducibility.md`.
 
 - [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
 - [ ] **Reduce large-module maintenance cost incrementally.** `backend/openshield/core/storage.py` is a 2,200+ line persistence module and `backend/openshield/dashboard.html` is a single roughly 90 KB UI asset. Extract only when there is a clear seam and regression coverage; preserve current contracts and avoid a broad rewrite.
 
-- [ ] **Add documentation and dashboard static checks to CI.** Implementation in review adds a standard-library checker for repository-relative Markdown links and extracts inline JavaScript from `backend/openshield/dashboard.html` for `node --check`. Unit tests cover image/link targets, fenced/inline code, balanced parentheses and inline/module scripts. Browser tests remain the behavioral layer; this adds cheap syntax and documentation drift checks.
+- [x] **Add documentation and dashboard static checks to CI.** CI runs `scripts/ops/check_static_assets.py` before container builds. The standard-library checker validates repository-relative Markdown links/images and runs `node --check` against inline JavaScript extracted from `backend/openshield/dashboard.html`; unit tests cover fenced/inline code, balanced parentheses, root/relative links, and inline/module scripts. Implemented in PR #151 (CI #1222 passed). Evidence: `scripts/ops/check_static_assets.py`, `backend/tests/test_static_checks.py`, `.github/workflows/ci.yml`.
 
 - [x] **Review backup artifact handling.** `scripts/backup.sh` writes to a collision-safe temporary file in the destination directory, validates it with `pg_restore --list`, enforces mode 0600, and publishes it with an atomic rename. An EXIT trap removes incomplete files after dump, validation, or publication failures. Tests cover unique names, permissions, and cleanup.
 

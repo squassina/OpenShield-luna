@@ -162,6 +162,15 @@ docker compose down
 
 Do not use `docker compose down -v` for routine shutdown; it deletes the database and connector spool volumes.
 
+
+### Reproducible build inputs
+
+Python 3.12 runtime, development and build dependencies are locked with
+distribution hashes, and the Python, Playwright and PostgreSQL container images
+are pinned by manifest digest. Dependabot and the scheduled lock-refresh
+workflow open review PRs for dependency, image and GitHub Actions updates.
+See the [build reproducibility runbook](docs/operations/build-reproducibility.md).
+
 ## Gateway connector
 
 The connector runs on a nearby Linux/Docker host. Configure the Node URL and, optionally, OpenWrt RPC access:
