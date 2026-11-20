@@ -114,7 +114,7 @@ def test_export_audit_snapshot_writes_verified_ndjson_checkpoint() -> None:
     assert [line["type"] for line in lines] == ["header", "record", "record", "checkpoint"]
     assert lines[-1]["head_hash"] == chain_head[1]
     record_bytes = "".join(
-        line + "\\n"
+        line + "\n"
         for line in output.getvalue().splitlines()
         if json.loads(line)["type"] == "record"
     ).encode("utf-8")
