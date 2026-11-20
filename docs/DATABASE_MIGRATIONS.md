@@ -40,8 +40,10 @@ in ascending `audit_id` order inside the migration transaction using canonical
 JSON and SHA-256. The migration fails closed if the chain state is not at its
 expected genesis value or legacy rows contain partial hashes. It then installs
 triggers that reject invalid predecessor inserts and UPDATE, DELETE, or TRUNCATE
-against audit records during normal operation. The test-only store reset sets a
-transaction-local flag before truncating and reseeding the chain.
+against audit records during normal operation. The test-only store reset uses
+database-owner privileges to disable and re-enable user triggers around its
+transactional truncate; the guard functions do not trust caller-controlled
+session variables.
 
 Every audit insert locks the chain-head row, allocates the next audit ID,
 hashes the record with its predecessor hash, and inserts the complete row.
