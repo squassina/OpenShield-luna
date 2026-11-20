@@ -270,6 +270,125 @@ def test_failed_cache_index_migration_rolls_back_version(
     assert store._schema_ready is False
 
 
+def test_upgrade_from_v3_backfills_legacy_audit_rows_in_chain_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 3
+    occurred_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    database.audit_rows = [
+        {
+            "audit_id": 4,
+            "occurred_at": occurred_at,
+            "actor_id": None,
+            "action": "integration.registered",
+            "target_id": "router-lab",
+            "details": {"kind": "openwrt", "enabled": True},
+            "previous_hash": None,
+            "record_hash": None,
+        },
+        {
+            "audit_id": 9,
+            "occurred_at": occurred_at,
+            "actor_id": "operator",
+            "action": "integration.updated",
+            "target_id": "router-lab",
+            "details": {"display_name": "Lab router"},
+            "previous_hash": None,
+            "record_hash": None,
+        },
+    ]
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    store.ensure_schema()
+
+    first, second = database.audit_rows
+    assert first["previous_hash"] == GENESIS_AUDIT_HASH
+    assert first["record_hash"] == audit_record_hash(
+        audit_id=4,
+        occurred_at=occurred_at,
+        actor_id=None,
+        action="integration.registered",
+        target_id="router-lab",
+        details={"kind": "openwrt", "enabled": True},
+        previous_hash=GENESIS_AUDIT_HASH,
+    )
+    assert second["previous_hash"] == first["record_hash"]
+    assert second["record_hash"] == audit_record_hash(
+        audit_id=9,
+        occurred_at=occurred_at,
+        actor_id="operator",
+        action="integration.updated",
+        target_id="router-lab",
+        details={"display_name": "Lab router"},
+        previous_hash=str(first["record_hash"]),
+    )
+    assert database.audit_chain_head == (9, second["record_hash"])
+    assert database.version == 4
+
+
+def test_failed_audit_chain_migration_rolls_back_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 3
+    occurred_at = datetime(2026, 1, 2, tzinfo=UTC)
+    legacy_row = {
+        "audit_id": 1,
+        "occurred_at": occurred_at,
+        "actor_id": None,
+        "action": "event.ingested",
+        "target_id": "router-lab",
+        "details": {},
+        "previous_hash": None,
+        "record_hash": None,
+    }
+    database.audit_rows = [dict(legacy_row)]
+    database.fail_on = "ALTER TABLE audit_records ALTER COLUMN previous_hash SET NOT NULL"
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    with pytest.raises(RuntimeError, match="simulated migration failure"):
+        store.ensure_schema()
+
+    assert database.version == 3
+    assert database.audit_rows == [legacy_row]
+    assert database.audit_chain_head is None
+    assert store._schema_ready is False
+
+
+def test_audit_chain_migration_rejects_partial_legacy_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = FakeDatabase()
+    database.version = 3
+    database.audit_rows = [
+        {
+            "audit_id": 1,
+            "occurred_at": datetime(2026, 1, 2, tzinfo=UTC),
+            "actor_id": None,
+            "action": "event.ingested",
+            "target_id": "router-lab",
+            "details": {},
+            "previous_hash": GENESIS_AUDIT_HASH,
+            "record_hash": None,
+        }
+    ]
+    install_fake_database(monkeypatch, database)
+    store = storage.PostgresStore("postgresql://test")
+
+    with pytest.raises(
+        storage.StorageConfigurationError,
+        match="unexpected chain hashes",
+    ):
+        store.ensure_schema()
+
+    assert database.version == 3
+    assert database.audit_chain_head is None
+    assert store._schema_ready is False
+
+
 def test_database_newer_than_application_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
