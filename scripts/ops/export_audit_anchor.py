@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Export a verified OpenShield audit chain to a private NDJSON file for WORM upload."""
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from pathlib import Path
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPOSITORY_ROOT / "backend"))
 
-from openshield.core.storage import PostgresStore  # noqa: E402
+from openshield.core.storage import PostgresStore
 
 
 def export_snapshot(database_url: str, output_path: Path) -> dict[str, object]:
