@@ -452,40 +452,52 @@ def test_audit_records_reject_update_delete_truncate_and_bad_predecessors() -> N
     client.post("/api/v1/gateway/connect", json=gateway_payload())
     record_id = client.get("/api/v1/audit").json()[0]["audit_id"]
 
-    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
-        with main.store._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "UPDATE audit_records SET action = 'tampered' WHERE audit_id = %s",
-                (record_id,),
-            )
+    with (
+        pytest.raises(psycopg.errors.RaiseException, match="append-only"),
+        main.store._connect() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute(
+            "UPDATE audit_records SET action = 'tampered' WHERE audit_id = %s",
+            (record_id,),
+        )
 
-    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
-        with main.store._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM audit_records WHERE audit_id = %s",
-                (record_id,),
-            )
+    with (
+        pytest.raises(psycopg.errors.RaiseException, match="append-only"),
+        main.store._connect() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute(
+            "DELETE FROM audit_records WHERE audit_id = %s",
+            (record_id,),
+        )
 
-    with pytest.raises(psycopg.errors.RaiseException, match="cannot be truncated"):
-        with main.store._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("TRUNCATE TABLE audit_records")
+    with (
+        pytest.raises(psycopg.errors.RaiseException, match="cannot be truncated"),
+        main.store._connect() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute("TRUNCATE TABLE audit_records")
 
-    with pytest.raises(psycopg.errors.RaiseException, match="does not extend"):
-        with main.store._connect() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO audit_records (
-                    audit_id, occurred_at, action, target_id, details,
-                    previous_hash, record_hash
-                )
-                VALUES (
-                    nextval(pg_get_serial_sequence('audit_records', 'audit_id')),
-                    NOW(), 'tampered', 'router-lab', '{}'::jsonb,
-                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
-                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
-                )
-                """
+    with (
+        pytest.raises(psycopg.errors.RaiseException, match="does not extend"),
+        main.store._connect() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute(
+            """
+            INSERT INTO audit_records (
+                audit_id, occurred_at, action, target_id, details,
+                previous_hash, record_hash
             )
+            VALUES (
+                nextval(pg_get_serial_sequence('audit_records', 'audit_id')),
+                NOW(), 'tampered', 'router-lab', '{}'::jsonb,
+                'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+            )
+            """
+        )
 
     assert client.get("/api/v1/audit/integrity").json()["valid"] is True
 
