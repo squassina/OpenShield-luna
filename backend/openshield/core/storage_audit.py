@@ -186,7 +186,6 @@ class PostgresAuditStoreMixin:
             for row in rows
         ]
 
-
     def export_audit_snapshot(self, destination: TextIO) -> dict[str, object]:
         """Write a complete, verified audit-chain snapshot as newline-delimited JSON."""
         generated_at = datetime.now(UTC)
