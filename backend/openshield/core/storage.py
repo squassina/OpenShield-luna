@@ -10,8 +10,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from openshield.core.audit_integrity import GENESIS_AUDIT_HASH, audit_record_hash
-from openshield.core.storage_policies import PostgresPolicyStoreMixin
 from openshield.core.storage_integrations import PostgresIntegrationStoreMixin
+from openshield.core.storage_policies import PostgresPolicyStoreMixin
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
 from openshield.integrations.models import Integration
