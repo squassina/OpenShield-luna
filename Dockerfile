@@ -38,7 +38,7 @@ COPY scripts/update_cname_tracker_feed.py ./scripts/update_cname_tracker_feed.py
 # The official image already contains Chromium and its OS libraries.
 # Avoid apt-get / Playwright's --with-deps downloads in CI, where mirror DNS
 # failures can make browser installation fail before tests even start.
-FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031 AS browser-test
+FROM mcr.microsoft.com/playwright/python:v1.65.2-noble@sha256:38dd67fc654b56b3cba611e4c8eb71cd33750e1cd29eea2a5dc00b484817a75f AS browser-test
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
