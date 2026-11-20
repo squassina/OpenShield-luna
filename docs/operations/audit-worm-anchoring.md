@@ -57,7 +57,7 @@ Use AWS credentials from the source/uploader account. The destination bucket
 owner must be a different 12-digit account ID:
 
 ~~~bash
-scripts/ops/upload_audit_anchor.sh \
+bash scripts/ops/upload_audit_anchor.sh \
   ./secure-audit-export/audit-YYYYMMDDTHHMMSSZ.ndjson \
   openshield-audit-archive \
   123456789012 \
