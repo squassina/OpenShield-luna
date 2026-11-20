@@ -20,6 +20,5 @@ def safe_urlopen(
     try:
         return build_opener(*handlers).open(request, timeout=timeout)
     except HTTPError as exc:
-        if 300 <= exc.code < 400:
-            exc.close()
+        exc.close()
         raise

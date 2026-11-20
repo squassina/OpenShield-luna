@@ -1,6 +1,6 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -42,7 +42,7 @@ def test_enqueue_uses_transactional_counter_instead_of_counting_rows(
         "COUNT(*)" in statement.upper() and "PENDING_EVENTS" in statement.upper()
         for statement in statements
     )
-    with sqlite3.connect(spool._path) as connection:
+    with closing(sqlite3.connect(spool._path)) as connection:
         count = connection.execute(
             "SELECT value FROM gateway_spool_counters WHERE name = 'pending_events'"
         ).fetchone()[0]
@@ -61,14 +61,14 @@ def test_spool_counter_stays_correct_across_acknowledgement_and_restart(
     assert spool.pending_count() == 1
 
     # Simulate stale metadata; startup reconciles it from the durable queue once.
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute(
             "UPDATE gateway_spool_counters SET value = 0 WHERE name = 'pending_events'"
         )
         connection.commit()
 
     restarted = GatewayEventSpool(str(path), max_events=2)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         count = connection.execute(
             "SELECT value FROM gateway_spool_counters WHERE name = 'pending_events'"
         ).fetchone()[0]
@@ -91,7 +91,7 @@ def test_concurrent_enqueues_never_exceed_capacity_or_corrupt_counter(
         list(executor.map(enqueue, range(80)))
 
     assert spools[0].pending_count() == capacity
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         count = connection.execute(
             "SELECT value FROM gateway_spool_counters WHERE name = 'pending_events'"
         ).fetchone()[0]
