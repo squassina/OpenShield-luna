@@ -46,6 +46,7 @@ from openshield.api.schemas import (
     WazuhCredentials,
 )
 from openshield.core.bootstrap import load_runtime_secrets
+from openshield.core.deployment import validate_deployment_database_credentials
 from openshield.core.logging import configure_logging
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.rate_limits import RequestRateLimitMiddleware
@@ -86,6 +87,11 @@ async def _dns_polling_lifespan(app: FastAPI):
     if interval < 0 or interval > 86400:
         raise RuntimeError("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS must be between 0 and 86400")
 
+    validate_deployment_database_credentials(
+        os.getenv("OPENSHIELD_DEPLOYMENT_MODE", "development"),
+        os.getenv("OPENSHIELD_DATABASE_URL", ""),
+        os.getenv("OPENSHIELD_POSTGRES_PASSWORD", ""),
+    )
     store.open()
     try:
         with store.advisory_lock(_NODE_PROCESS_LOCK_ID):

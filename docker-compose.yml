@@ -5,13 +5,24 @@ services:
     container_name: openshield-luna-db
     image: postgres:16-alpine
     environment:
+      OPENSHIELD_DEPLOYMENT_MODE: ${OPENSHIELD_DEPLOYMENT_MODE:-development}
       POSTGRES_USER: openshield
       POSTGRES_PASSWORD: ${OPENSHIELD_POSTGRES_PASSWORD:-openshield-dev-password}
       POSTGRES_DB: openshield
     volumes:
       - openshield-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openshield -d openshield"]
+      test:
+        - CMD-SHELL
+        - >-
+          if [ "$$OPENSHIELD_DEPLOYMENT_MODE" = "production" ]; then
+            case "$$POSTGRES_PASSWORD" in
+              openshield-dev-password|replace-with-a-local-db-password|password|postgres|changeme|change-me|'')
+                echo "Insecure PostgreSQL password is forbidden in production";
+                exit 1;;
+            esac;
+          fi;
+          pg_isready -U openshield -d openshield
       interval: 5s
       timeout: 3s
       retries: 10
@@ -28,6 +39,8 @@ services:
       cache_to:
         - type=gha,scope=openshield-runtime,mode=max
     environment:
+      OPENSHIELD_DEPLOYMENT_MODE: ${OPENSHIELD_DEPLOYMENT_MODE:-development}
+      OPENSHIELD_POSTGRES_PASSWORD: ${OPENSHIELD_POSTGRES_PASSWORD:-openshield-dev-password}
       OPENSHIELD_DATABASE_URL: ${OPENSHIELD_DATABASE_URL:-postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield}
       OPENSHIELD_DB_POOL_MIN_SIZE: ${OPENSHIELD_DB_POOL_MIN_SIZE:-1}
       OPENSHIELD_DB_POOL_MAX_SIZE: ${OPENSHIELD_DB_POOL_MAX_SIZE:-10}

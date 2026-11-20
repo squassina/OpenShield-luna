@@ -92,11 +92,26 @@ Docker Engine and the Docker Compose plugin are the only local runtime/test prer
 
 1. Copy `.env.example` to `.env`.
 2. Set a local PostgreSQL password and keep `OPENSHIELD_DATABASE_URL` in sync.
-3. Build and start the API:
+3. Leave `OPENSHIELD_DEPLOYMENT_MODE=development` for local development. Compose retains the historical development fallback only in this mode.
+4. Build and start the API:
 
 ```bash
 docker compose up --build -d openshield-node
 ```
+
+### Production database credentials
+
+Set `OPENSHIELD_DEPLOYMENT_MODE=production`, provide a unique secret of at least 16 characters in `OPENSHIELD_POSTGRES_PASSWORD`, and put the same password (URL-encoded) in `OPENSHIELD_DATABASE_URL`. Do not use the example placeholder or the development fallback.
+
+For example, keep the values in a secret manager or protected `.env` file rather than committing them:
+
+```dotenv
+OPENSHIELD_DEPLOYMENT_MODE=production
+OPENSHIELD_POSTGRES_PASSWORD=<unique-secret-from-secret-manager>
+OPENSHIELD_DATABASE_URL=postgresql://openshield:<url-encoded-same-secret>@openshield-db:5432/openshield
+```
+
+The PostgreSQL container healthcheck refuses known development/default passwords. Node independently validates the deployment mode, password length, denylist, PostgreSQL URL structure, and password match before opening its database pool. A mismatch or unsafe value prevents startup. Existing PostgreSQL volumes retain their initialized database password; changing it requires rotating the role password in PostgreSQL and updating both environment values together.
 
 The Node and Gateway Connector runtime images run as UID/GID 10001 (`openshield`). The image pre-creates the runtime-secrets and gateway-spool mount points with ownership restricted to this user. New named volumes inherit these permissions.
 
