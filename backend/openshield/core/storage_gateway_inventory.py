@@ -1,6 +1,24 @@
+import ipaddress
+import re
 from datetime import datetime
 
 from psycopg.types.json import Jsonb
+
+
+def _has_valid_device_address(device: dict[str, object]) -> bool:
+    candidates = [device.get("ip_address")]
+    for field in ("ipv4_addresses", "ipv6_addresses"):
+        values = device.get(field)
+        if isinstance(values, list):
+            candidates.extend(values)
+    for value in candidates:
+        if isinstance(value, str):
+            try:
+                ipaddress.ip_address(value)
+                return True
+            except ValueError:
+                continue
+    return False
 
 
 class PostgresGatewayInventoryStoreMixin:
