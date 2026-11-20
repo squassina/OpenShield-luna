@@ -12,8 +12,8 @@ database itself immutable.
 - The bucket belongs to an AWS account different from the AWS identity used to
   run the upload.
 - The uploader identity can call STS GetCallerIdentity and has only the
-  required cross-account S3 permissions: GetObjectLockConfiguration,
-  GetBucketVersioning, PutObject and GetObjectRetention.
+  required cross-account S3 permissions: s3:GetBucketObjectLockConfiguration,
+  s3:GetBucketVersioning, s3:PutObject and s3:GetObjectRetention.
 - An approved retention period. The upload command requires it explicitly;
   COMPLIANCE retention cannot be shortened or bypassed before expiry.
 
