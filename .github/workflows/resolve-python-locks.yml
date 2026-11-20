@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - build/reproducible-dependency-lock-and-image-updates
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
