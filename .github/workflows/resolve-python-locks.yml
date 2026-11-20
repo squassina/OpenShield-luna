@@ -8,7 +8,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   resolve:
@@ -28,7 +28,18 @@ jobs:
             --output-file requirements.txt pyproject.toml
           pip-compile --resolver=backtracking --generate-hashes --extra dev \
             --output-file requirements-dev.txt pyproject.toml
-      - name: Publish resolved lock files
+      - name: Commit resolved lock files to the pull request branch
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/requirements.txt backend/requirements-dev.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "build: add hash-pinned Python dependencies"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          fi
+      - name: Publish lock files for inspection
         uses: actions/upload-artifact@v4
         with:
           name: python-dependency-locks
