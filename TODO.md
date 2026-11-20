@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `1adae7341119e104cbf55e4fe2ab3f4772ea52a0`  
+**Reviewed baseline:** `main` at `76d19c5c71348e6229abd8e8c567d6ffbcc0d3d5`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -69,7 +69,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [ ] **Remove insecure Compose database fallback for production use.** Implementation in review: development mode retains the existing convenience fallback; `production` mode rejects known defaults in the PostgreSQL healthcheck and the Node startup guard requires an explicit password of at least 16 characters, rejects whitespace-wrapped/default values, validates the PostgreSQL URL, and requires URL/password equality. README documents secret-manager configuration and existing-volume password rotation. Evidence: `docker-compose.yml`, `backend/openshield/core/deployment.py`, `backend/openshield/api/main.py`, `backend/tests/test_deployment.py`.
 
-- [ ] **Decide and document spool encryption at rest.** The gateway SQLite outbox uses restrictive file permissions, WAL and FULL synchronous writes, but it is not encrypted. For deployments where the host/volume is not trusted, use encrypted host storage or an encrypted spool design; document the accepted Home threat model and backup requirements.
+- [x] **Decide and document spool encryption at rest.** Accepted Home boundary: the single-administrator deployment trusts the connector host; OpenShield does not encrypt the SQLite spool. Directory/database/WAL/SHM permissions and UID 10001 limit access by unrelated unprivileged host users but do not protect against host root, Docker-daemon access, host compromise or disk theft. Deployments outside that boundary must use encrypted host/volume storage and encrypted backups. The runbook documents SQLite online backup (WAL-safe), restore ownership/modes, command-result receipt risk, and validation. This closes the design/documentation decision, not the residual at-rest encryption risk. Evidence: `backend/openshield/gateway/spool.py`, `docker-compose.yml`, `docs/operations/gateway-spool-storage.md`.
 
 - [ ] **Complete audit lifecycle hardening.** Audit records are durable, but retention, tamper-evident chaining/signatures and external immutable export are not implemented. Define retention and export requirements before using the audit log as a compliance evidence source.
 
