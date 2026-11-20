@@ -251,10 +251,10 @@ def test_application_lifespan_holds_process_lock_until_shutdown(
 
     async def exercise_lifespan() -> None:
         async with main._dns_polling_lifespan(main.app):
-            assert calls == ["open", "lock"]
+            assert calls == ["lock", "open"]
 
     asyncio.run(exercise_lifespan())
-    assert calls == ["open", "lock", "unlock", "close"]
+    assert calls == ["lock", "open", "close", "unlock"]
 
 
 def test_application_lifespan_fails_if_another_node_process_is_active(
@@ -282,7 +282,8 @@ def test_application_lifespan_fails_if_another_node_process_is_active(
                 pytest.fail("The API must not start without the process lock")
 
     asyncio.run(exercise_lifespan())
-    assert calls == ["open", "close"]
+    # A contending Node fails before opening a pool or applying schema migrations.
+    assert calls == []
 
 
 def test_response_execution_listing_uses_one_query_and_preserves_rows(

@@ -71,7 +71,7 @@ curl -X POST http://localhost:8000/api/v1/integrations \
 - PostgreSQL uses versioned schema migrations and a bounded connection pool. Verified custom-format backup and fail-closed restore scripts are included; CI exercises a real PostgreSQL backup/restore round-trip. Deployment-specific backup retention, off-host encryption, staging recovery evidence, and production database hardening remain operational responsibilities.
 - Audit retention, tamper-evidence, and external immutable export remain pending.
 - Metrics are process-local and reset on restart.
-- Exactly one OpenShield Node process may use a PostgreSQL database at a time. Startup holds a session-level advisory lock on a dedicated database connection and fails if another Node is active. Run one Uvicorn worker and one Node replica per database; horizontal scaling is not supported.
+- Exactly one OpenShield Node process may use a PostgreSQL database at a time. Startup acquires a session-level advisory lock on a dedicated connection **before opening the store or applying schema migrations** and fails if another Node is active. Run one Uvicorn worker and one Node replica per database; horizontal scaling is not supported.
 - Rate-limit and failed-admin-login counters remain process-local and reset on restart. A shared limiter and dedicated worker service are prerequisites for future multi-instance operation.
 - The connector is a nearby-host Linux/Docker agent, not an on-device OpenWrt daemon.
 - Physical OpenWrt hardware/firmware compatibility and forwarding-independence validation remain open in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
