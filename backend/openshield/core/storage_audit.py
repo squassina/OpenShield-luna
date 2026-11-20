@@ -201,7 +201,7 @@ class PostgresAuditStoreMixin:
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                + "\\n"
+                + "\n"
             ).encode("utf-8")
             destination.write(encoded.decode("utf-8"))
             if is_audit_record:
