@@ -4,6 +4,7 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote
@@ -44,7 +45,7 @@ def strip_markdown_code(source: str) -> str:
         offset += len(line)
 
     without_fences = "".join(output)
-    inline_code = re.compile(r"(?<!\`)(\`+)(?!\`)([\\s\\S]*?)(?<!\`)\\1(?!\`)")
+    inline_code = re.compile(r"(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)")
     return inline_code.sub(
         lambda match: _mask(match.group(0), 0, len(match.group(0))),
         without_fences,
@@ -60,7 +61,7 @@ def _is_escaped(source: str, index: int) -> bool:
     return backslashes % 2 == 1
 
 
-def iter_markdown_destinations(source: str):
+def iter_markdown_destinations(source: str) -> Iterator[tuple[str, int]]:
     """Yield (destination, line) pairs from inline Markdown links and images."""
     masked = strip_markdown_code(source)
     index = 0
