@@ -10,6 +10,11 @@ timestamp. A migration is committed together with its version record; if any
 statement fails, PostgreSQL rolls the transaction back and the migration remains
 eligible for retry on the next startup.
 
+The Node acquires its dedicated session-level process advisory lock before
+opening the store. This prevents a second Node process from running schema
+migrations while another Node instance is active; the transaction-scoped
+migration lock additionally serializes schema upgrades themselves.
+
 ## Existing installations
 
 The first migration is the idempotent baseline schema already used by previous
