@@ -15,7 +15,7 @@ _INSECURE_DATABASE_PASSWORDS = frozenset(
         "change-me",
     }
 )
-_PRODUCTION_DATABASE_MODES = {"production", "prod"}
+_PRODUCTION_DATABASE_MODES = {"production"}
 _SUPPORTED_DEPLOYMENT_MODES = {"development", *_PRODUCTION_DATABASE_MODES}
 
 
