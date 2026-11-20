@@ -166,7 +166,7 @@ def test_failed_migration_does_not_record_version_or_mark_schema_ready(
 
     database.fail_on = None
     store.ensure_schema()
-    assert database.version == 3
+    assert database.version == 4
     assert store._schema_ready is True
 
 
@@ -179,7 +179,7 @@ def test_legacy_database_without_migration_history_runs_baseline(
 
     store.ensure_schema()
 
-    assert database.version == 3
+    assert database.version == 4
     assert any(
         "CREATE TABLE IF NOT EXISTS integrations" in item
         for item in database.applied_statements
@@ -196,7 +196,7 @@ def test_upgrade_from_v1_backfills_typed_event_timestamps_and_indexes(
 
     store.ensure_schema()
 
-    assert database.version == 3
+    assert database.version == 4
     statements = database.applied_statements
     assert any(
         "ALTER TABLE events ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ" in item
@@ -246,7 +246,7 @@ def test_upgrade_from_v2_adds_threat_intel_cache_expiry_index(
 
     store.ensure_schema()
 
-    assert database.version == 3
+    assert database.version == 4
     assert any(
         "threat_intel_cache_expires_at_idx" in item
         and "ON threat_intel_cache (expires_at)" in item
