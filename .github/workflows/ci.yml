@@ -15,7 +15,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Validate Markdown links and dashboard JavaScript
         run: python scripts/ops/check_static_assets.py
       - name: Validate audit anchoring shell script
