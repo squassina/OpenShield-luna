@@ -52,6 +52,8 @@ def _request(url: str, *, method: str = "GET", headers: dict[str, str] | None = 
         with opener as response:
             payload = response.read(MAX_RESPONSE_BYTES + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        if isinstance(exc, HTTPError):
+            exc.close()
         raise DnsProviderError(f"DNS provider request failed: {type(exc).__name__}") from exc
     if len(payload) > MAX_RESPONSE_BYTES:
         raise DnsProviderError("DNS provider response exceeds 5 MiB")
