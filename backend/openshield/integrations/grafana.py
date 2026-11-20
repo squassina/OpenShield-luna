@@ -68,6 +68,7 @@ class GrafanaClient:
             with opener.open(request, timeout=self._timeout) as response:
                 raw = response.read(self.MAX_RESPONSE_BYTES + 1)
         except HTTPError as exc:
+            exc.close()
             if exc.code in {401, 403}:
                 raise GrafanaError(
                     "Grafana rejected the configured credentials or permissions"
