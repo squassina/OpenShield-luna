@@ -1,8 +1,7 @@
 import os
-
-import pytest
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from openshield.api.main import app
