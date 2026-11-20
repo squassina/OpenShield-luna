@@ -21,7 +21,8 @@ rolls back both the operation and its audit row/head update.
 The migration backfills existing records in ascending `audit_id` order and
 refuses a non-genesis or partially hashed starting state. It does not delete or
 rewrite the business meaning of legacy records. Database triggers reject
-invalid predecessor inserts, UPDATE, DELETE, and TRUNCATE against
+invalid predecessor inserts, atomically advance the chain head after every
+insert, and reject UPDATE, DELETE, and TRUNCATE against
 `audit_records` during normal operation. The test-only `PostgresStore.reset()`
 uses a transaction-local reset flag and re-seeds the genesis head.
 
