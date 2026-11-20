@@ -614,9 +614,6 @@ CREATE TABLE IF NOT EXISTS events (
                 LANGUAGE plpgsql
                 AS '
                 BEGIN
-                    IF current_setting(''openshield.audit_reset'', true) = ''on'' THEN
-                        RETURN OLD;
-                    END IF;
                     RAISE EXCEPTION ''audit_records are append-only'';
                 END;
                 '
@@ -634,10 +631,7 @@ CREATE TABLE IF NOT EXISTS events (
                 LANGUAGE plpgsql
                 AS '
                 BEGIN
-                    IF current_setting(''openshield.audit_reset'', true) IS DISTINCT FROM ''on'' THEN
-                        RAISE EXCEPTION ''audit_records cannot be truncated'';
-                    END IF;
-                    RETURN NULL;
+                    RAISE EXCEPTION ''audit_records cannot be truncated'';
                 END;
                 '
                 """,
@@ -706,7 +700,8 @@ CREATE TABLE IF NOT EXISTS events (
 
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT set_config('openshield.audit_reset', 'on', true)")
+            # Test-only operation: the database owner temporarily disables triggers.
+            cursor.execute("ALTER TABLE audit_records DISABLE TRIGGER USER")
             cursor.execute(
                 "TRUNCATE TABLE integrations, integration_secrets, events, threat_intel_cache, "
                 "incidents, incident_events, incident_investigations, policies, policy_decisions, "
@@ -715,6 +710,7 @@ CREATE TABLE IF NOT EXISTS events (
                 "gateway_discovery_snapshots, network_devices, network_device_address_observations, "
                 "threat_indicators, audit_records, audit_chain_state RESTART IDENTITY CASCADE"
             )
+            cursor.execute("ALTER TABLE audit_records ENABLE TRIGGER USER")
             cursor.execute(
                 """
                 INSERT INTO audit_chain_state (chain_id, last_audit_id, last_hash)
