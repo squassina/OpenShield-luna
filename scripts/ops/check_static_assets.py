@@ -44,37 +44,11 @@ def strip_markdown_code(source: str) -> str:
         offset += len(line)
 
     without_fences = "".join(output)
-    chars = list(without_fences)
-    index = 0
-    while index < len(chars):
-        if chars[index] != "`" or _is_escaped(without_fences, index):
-            index += 1
-            continue
-        run_end = index
-        while run_end < len(chars) and chars[run_end] == "`":
-            run_end += 1
-        run_length = run_end - index
-        closing = run_end
-        while closing < len(chars):
-            candidate = without_fences.find("`" * run_length, closing)
-            if candidate < 0:
-                break
-            before_is_tick = candidate > 0 and without_fences[candidate - 1] == "`"
-            after = candidate + run_length
-            after_is_tick = after < len(chars) and without_fences[after] == "`"
-            if not before_is_tick and not after_is_tick:
-                for position in range(index, after):
-                    if chars[position] != "\n":
-                        chars[position] = " "
-                index = after
-                break
-            closing = candidate + 1
-        else:
-            index = run_end
-            continue
-        if closing >= len(chars):
-            index = run_end
-    return "".join(chars)
+    inline_code = re.compile(r"(?<!\`)(\`+)(?!\`)([\\s\\S]*?)(?<!\`)\\1(?!\`)")
+    return inline_code.sub(
+        lambda match: _mask(match.group(0), 0, len(match.group(0))),
+        without_fences,
+    )
 
 
 def _is_escaped(source: str, index: int) -> bool:
