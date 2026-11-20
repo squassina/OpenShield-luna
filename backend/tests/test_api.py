@@ -473,6 +473,17 @@ def test_audit_records_reject_update_delete_truncate_and_bad_predecessors() -> N
         )
 
     with (
+        pytest.raises(psycopg.errors.RaiseException, match="append-only"),
+        main.store._connect() as connection,
+        connection.cursor() as cursor,
+    ):
+        cursor.execute("SELECT set_config('openshield.audit_reset', 'on', true)")
+        cursor.execute(
+            "DELETE FROM audit_records WHERE audit_id = %s",
+            (record_id,),
+        )
+
+    with (
         pytest.raises(psycopg.errors.RaiseException, match="cannot be truncated"),
         main.store._connect() as connection,
         connection.cursor() as cursor,
