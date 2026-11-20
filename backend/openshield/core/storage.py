@@ -6287,14 +6287,43 @@ CREATE TABLE IF NOT EXISTS events (
                 CREATE OR REPLACE FUNCTION openshield_guard_audit_record_mutation()
                 RETURNS trigger
                 LANGUAGE plpgsql
-                AS $
+                AS $fn$
                 BEGIN
                     IF current_setting('openshield.audit_reset', true) = 'on' THEN
                         RETURN OLD;
                     END IF;
                     RAISE EXCEPTION 'audit_records are append-only';
                 END;
-                $
+                $fn$
+                """,
+                CREATE OR REPLACE FUNCTION openshield_check_audit_record_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $fn$
+                DECLARE
+                    chain_head_id BIGINT;
+                    chain_head_hash TEXT;
+                BEGIN
+                    SELECT last_audit_id, last_hash
+                    INTO chain_head_id, chain_head_hash
+                    FROM audit_chain_state
+                    WHERE chain_id = 1
+                    FOR UPDATE;
+                    IF chain_head_id IS NULL
+                       OR NEW.audit_id <= chain_head_id
+                       OR NEW.previous_hash IS DISTINCT FROM chain_head_hash THEN
+                        RAISE EXCEPTION 'audit record does not extend the current chain head';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $fn$
+                """,
+                "DROP TRIGGER IF EXISTS audit_records_chain_insert ON audit_records",
+                """
+                CREATE TRIGGER audit_records_chain_insert
+                BEFORE INSERT ON audit_records
+                FOR EACH ROW
+                EXECUTE FUNCTION openshield_check_audit_record_insert()
                 """,
                 "DROP TRIGGER IF EXISTS audit_records_immutable_update_delete ON audit_records",
                 """
