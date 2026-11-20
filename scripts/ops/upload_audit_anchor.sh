@@ -13,18 +13,23 @@ expected_owner=$3
 region=$4
 retention_days=$5
 prefix=${6:-openshield/audit}
+[[ "$prefix" != /* && "$prefix" != *".."* ]] || { echo "PREFIX must be a relative S3 key prefix without .." >&2; exit 1; }
 
 [[ -f "$file" && ! -L "$file" ]] || { echo "Export must be a regular, non-symlink file" >&2; exit 1; }
 [[ "$expected_owner" =~ ^[0-9]{12}$ ]] || { echo "EXPECTED_BUCKET_OWNER must be a 12-digit AWS account ID" >&2; exit 1; }
-[[ "$retention_days" =~ ^[0-9]+$ ]] && (( retention_days >= 1 && retention_days <= 36500 )) || {
+[[ "$retention_days" =~ ^[1-9][0-9]*$ ]] && (( retention_days >= 1 && retention_days <= 36500 )) || {
   echo "RETENTION_DAYS must be between 1 and 36500; choose an approved retention period" >&2
   exit 1
 }
 command -v aws >/dev/null || { echo "AWS CLI v2 is required" >&2; exit 1; }
+aws_version=$(aws --version 2>&1)
+[[ "$aws_version" == aws-cli/2.* ]] || { echo "AWS CLI v2 is required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "Python 3 is required" >&2; exit 1; }
 command -v openssl >/dev/null || { echo "OpenSSL is required" >&2; exit 1; }
 
 chmod 600 "$file"
+file_size=$(wc -c < "$file")
+(( file_size <= 5368709120 )) || { echo "S3 single-request upload limit is 5 GiB" >&2; exit 1; }
 
 # Validate the export independently before sending it to the immutable destination.
 python3 - "$file" <<'PY'
