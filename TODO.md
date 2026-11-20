@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `1012764736abfee7e47c91bc6753435ed6ddbbc3`  
+**Reviewed baseline:** `main` at `07d8bd30f977ef978b6c388f472ae8ba7c2409fb`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -71,7 +71,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [x] **Decide and document spool encryption at rest.** Accepted Home boundary: the single-administrator deployment trusts the connector host; OpenShield does not encrypt the SQLite spool. Directory/database/WAL/SHM permissions and UID 10001 limit access by unrelated unprivileged host users but do not protect against host root, Docker-daemon access, host compromise or disk theft. Deployments outside that boundary must use encrypted host/volume storage and encrypted backups. The runbook documents SQLite online backup (WAL-safe), restore ownership/modes, command-result receipt risk, and validation. This closes the design/documentation decision, not the residual at-rest encryption risk. Evidence: `backend/openshield/gateway/spool.py`, `docker-compose.yml`, `docs/operations/gateway-spool-storage.md`.
 
-- [ ] **Complete audit lifecycle hardening.** Audit records are durable, but retention, tamper-evident chaining/signatures and external immutable export are not implemented. Define retention and export requirements before using the audit log as a compliance evidence source.
+- [ ] **Complete audit lifecycle hardening.** Implementation in review adds a SHA-256 hash chain over canonical record fields, a persisted chain head, migration/backfill for existing rows, append-only UPDATE/DELETE/TRUNCATE guards, and `GET /api/v1/audit/integrity`. This detects record edits/reordering and accidental mutation, but a privileged database administrator can still rewrite the full chain and head. External immutable/WORM anchoring and an approved retention/archival policy are still required before using the audit log as compliance evidence. No automatic deletion is enabled. Evidence: `backend/openshield/core/audit_integrity.py`, `backend/openshield/core/storage.py`, `backend/openshield/api/routers/audit.py`.
 
 ### P2 — Reproducibility and maintainability
 
