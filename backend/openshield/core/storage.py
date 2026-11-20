@@ -2437,6 +2437,8 @@ CREATE TABLE IF NOT EXISTS events (
         stored_head_hash: str | None = None
 
         with self._connect() as connection, connection.cursor() as cursor:
+            # Both the record scan and chain-head read must see one database snapshot.
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             cursor.execute(
                 """
                 SELECT audit_id, occurred_at, actor_id, action, target_id, details,
