@@ -194,6 +194,33 @@ def test_postgres_advisory_lock_is_exclusive_across_connections(
         pass
 
 
+def test_application_lifespan_rejects_insecure_production_database_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openshield.api import main
+    from openshield.core.deployment import DeploymentConfigurationError
+
+    monkeypatch.setenv("OPENSHIELD_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("OPENSHIELD_POSTGRES_PASSWORD", "openshield-dev-password")
+    monkeypatch.setenv(
+        "OPENSHIELD_DATABASE_URL",
+        "postgresql://openshield:openshield-dev-password@openshield-db:5432/openshield",
+    )
+    monkeypatch.setenv("OPENSHIELD_DNS_POLL_INTERVAL_SECONDS", "0")
+
+    def unexpected_database_open() -> None:
+        pytest.fail("Unsafe production credentials must be rejected before opening PostgreSQL")
+
+    monkeypatch.setattr(main.store, "open", unexpected_database_open)
+
+    async def exercise_lifespan() -> None:
+        with pytest.raises(DeploymentConfigurationError, match="development/default"):
+            async with main._dns_polling_lifespan(main.app):
+                pytest.fail("The Node must not start with a development database password")
+
+    asyncio.run(exercise_lifespan())
+
+
 def test_application_lifespan_holds_process_lock_until_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
