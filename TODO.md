@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `76d19c5c71348e6229abd8e8c567d6ffbcc0d3d5`  
+**Reviewed baseline:** `main` at `1012764736abfee7e47c91bc6753435ed6ddbbc3`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -59,7 +59,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 ### P1 — Correctness, security and operational visibility
 
-- [x] **Enforce the single-process Node assumption.** FastAPI startup holds a PostgreSQL session-level advisory lock on a dedicated connection; a second Node process using the same database fails startup before starting DNS polling or execution-expiration loops. Tests cover acquisition/release, contention and lifespan cleanup. One Uvicorn worker and one Node replica per database remain required; counters still reset on restart. Multi-instance support requires a shared limiter and coordinated worker/lease design. Implemented in PR #144. Evidence: `backend/openshield/api/main.py`, `backend/openshield/core/storage.py`, `backend/tests/test_storage_pool.py`.
+- [x] **Enforce the single-process Node assumption.** FastAPI startup acquires a PostgreSQL session-level advisory lock on a dedicated connection before opening the pool or applying schema migrations; a second Node fails before it can migrate or start background loops. Tests cover lock-before-open ordering, contention, release, and lifespan cleanup. One Uvicorn worker and one Node replica per database remain required; multi-instance support still needs shared rate limiting and coordinated workers. Base guard implemented in PR #144; migration-order hardening in PR #149. Evidence: `backend/openshield/api/main.py`, `backend/openshield/core/storage.py`, `backend/tests/test_storage_pool.py`.
 
 - [x] **Bound Prometheus metric cardinality.** DNS polling uses only bounded provider/category/outcome labels and omits user-controlled `integration_id`. `MetricsRegistry` caps distinct metric/label series at 4,096 by default and reports rejected new series through `openshield_metrics_samples_dropped_total`. Tests cover cap enforcement, overflow visibility, and stable series reuse. Implemented in PR #145. Evidence: `backend/openshield/core/metrics.py`, `backend/openshield/privacy/polling.py`, `backend/tests/test_metrics_registry.py`.
 
