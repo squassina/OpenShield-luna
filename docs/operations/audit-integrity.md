@@ -24,7 +24,9 @@ rewrite the business meaning of legacy records. Database triggers reject
 invalid predecessor inserts, atomically advance the chain head after every
 insert, and reject UPDATE, DELETE, and TRUNCATE against
 `audit_records` during normal operation. The test-only `PostgresStore.reset()`
-uses a transaction-local reset flag and re-seeds the genesis head.
+temporarily disables user triggers with database-owner privileges, truncates
+test state, and re-enables the triggers in the same transaction. No session
+variable or caller-controlled GUC bypass is accepted by the audit guards.
 
 ## Verify the chain
 
