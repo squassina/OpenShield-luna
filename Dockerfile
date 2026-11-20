@@ -1,11 +1,16 @@
 FROM python:3.12-slim AS base
 
-RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2,<27"
-
 WORKDIR /app
 COPY backend/pyproject.toml ./pyproject.toml
+COPY backend/requirements-build.txt backend/requirements.txt ./
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+        --require-hashes -r requirements-build.txt \
+    && python -m pip install --disable-pip-version-check --no-cache-dir \
+        --require-hashes -r requirements.txt
+
 COPY backend/openshield ./openshield
-RUN pip install --no-cache-dir --root-user-action=ignore .
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+    --no-build-isolation --no-deps --root-user-action=ignore .
 
 FROM base AS runtime
 
@@ -22,7 +27,9 @@ CMD ["uvicorn", "openshield.api.main:app", "--host", "0.0.0.0", "--port", "8000"
 
 FROM base AS dev
 
-RUN pip install --no-cache-dir --root-user-action=ignore ".[dev]"
+COPY backend/requirements-dev.txt ./requirements-dev.txt
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+    --require-hashes -r requirements-dev.txt
 COPY backend/tests ./tests
 COPY scripts/ops ./scripts/ops
 COPY scripts/backup.sh scripts/restore.sh ./scripts/
@@ -37,7 +44,12 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 COPY backend/pyproject.toml ./pyproject.toml
+COPY backend/requirements-build.txt backend/requirements-dev.txt ./
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+        --require-hashes -r requirements-build.txt \
+    && python -m pip install --disable-pip-version-check --no-cache-dir \
+        --require-hashes -r requirements-dev.txt
 COPY backend/openshield ./openshield
-RUN python -m pip install --no-cache-dir --upgrade "pip>=26.2,<27" \
-    && pip install --no-cache-dir --root-user-action=ignore ".[dev]"
+RUN python -m pip install --disable-pip-version-check --no-cache-dir \
+    --no-build-isolation --no-deps --root-user-action=ignore .
 COPY tests/dashboard ./dashboard-tests
