@@ -7,6 +7,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from openshield.core.audit_integrity import GENESIS_AUDIT_HASH
 from openshield.core.storage_audit import PostgresAuditStoreMixin, StorageConfigurationError
 from openshield.core.storage_execution import PostgresExecutionStoreMixin
 from openshield.core.storage_gateway_inventory import PostgresGatewayInventoryStoreMixin
