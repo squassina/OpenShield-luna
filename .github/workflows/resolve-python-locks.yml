@@ -24,17 +24,44 @@ jobs:
       - name: Resolve runtime and development dependency graphs
         working-directory: backend
         run: |
-          pip-compile --resolver=backtracking --generate-hashes \
+          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes \
             --output-file requirements.txt pyproject.toml
-          pip-compile --resolver=backtracking --generate-hashes --extra dev \
+          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes --extra dev \
             --output-file requirements-dev.txt pyproject.toml
+          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes \
+            --output-file requirements-build.txt requirements-build.in
+      - name: Pin container images by resolved manifest digest
+        run: |
+          resolve_ref() {
+            local ref="$1"
+            local repository="${ref%:*}"
+            docker pull "$ref" >/dev/null
+            local resolved
+            resolved="$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "${repository}@sha256:" | head -n 1)"
+            if [ -z "$resolved" ]; then
+              echo "Could not resolve manifest digest for $ref" >&2
+              return 1
+            fi
+            printf '%s@%s\n' "$ref" "${resolved##*@}"
+          }
+
+          python_image="$(resolve_ref python:3.12-slim)"
+          playwright_image="$(resolve_ref mcr.microsoft.com/playwright/python:v1.64.1-noble)"
+          postgres_image="$(resolve_ref postgres:16-alpine)"
+
+          sed -i "s#^FROM python:3.12-slim AS base$#FROM ${python_image} AS base#" Dockerfile
+          sed -i "s#^FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS browser-test$#FROM ${playwright_image} AS browser-test#" Dockerfile
+          sed -i "s#^    image: postgres:16-alpine$#    image: ${postgres_image}#" docker-compose.yml
+          grep -F "${python_image}" Dockerfile
+          grep -F "${playwright_image}" Dockerfile
+          grep -F "${postgres_image}" docker-compose.yml
       - name: Commit resolved lock files to the pull request branch
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/requirements.txt backend/requirements-dev.txt
+          git add backend/pyproject.toml backend/requirements-build.in backend/requirements-build.txt backend/requirements.txt backend/requirements-dev.txt Dockerfile docker-compose.yml
           if ! git diff --cached --quiet; then
             git commit -m "build: add hash-pinned Python dependencies"
             git push origin "HEAD:${TARGET_BRANCH}"
@@ -47,3 +74,4 @@ jobs:
           path: |
             backend/requirements.txt
             backend/requirements-dev.txt
+            backend/requirements-build.txt
