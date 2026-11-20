@@ -15,8 +15,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          if [ "$$OPENSHIELD_DEPLOYMENT_MODE" = "production" ] ||
-             [ "$$OPENSHIELD_DEPLOYMENT_MODE" = "prod" ]; then
+          if [ "$OPENSHIELD_DEPLOYMENT_MODE" = "production" ]; then
             case "$$POSTGRES_PASSWORD" in
               openshield-dev-password|replace-with-a-local-db-password|password|postgres|changeme|change-me|'')
                 echo "Insecure PostgreSQL password is forbidden in production";
