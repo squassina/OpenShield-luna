@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -608,7 +609,7 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
 
     # Simulate process restart and make the persisted retry immediately due.
     restarted = GatewayEventSpool(str(path))
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute(
             "UPDATE gateway_command_results SET next_attempt_at = ?",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(),),
@@ -683,7 +684,7 @@ def test_gateway_command_result_retry_backoff_is_bounded(tmp_path: Path) -> None
     for _ in range(10):
         spool.defer_command_result("command-backoff")
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         attempts, next_attempt_at = connection.execute(
             """
             SELECT attempts, next_attempt_at
@@ -712,7 +713,7 @@ def test_gateway_command_result_backoff_does_not_reorder_outbox(tmp_path: Path) 
 
     assert spool.pending_command_results() == []
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.execute(
             "UPDATE gateway_command_results SET next_attempt_at = ? WHERE command_id = ?",
             ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), "command-first"),
