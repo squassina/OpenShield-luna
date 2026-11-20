@@ -115,7 +115,7 @@ def iter_markdown_destinations(source: str) -> Iterator[tuple[str, int]]:
 def resolve_local_target(root: Path, source_file: Path, destination: str) -> Path | None:
     """Resolve a relative or repository-root Markdown destination; ignore external URLs."""
     destination = destination.strip()
-    if not destination or destination.startswith("#") or destination.startswith("//"):
+    if not destination or destination.startswith(("#", "//")):
         return None
     if _SCHEME.match(destination):
         return None
