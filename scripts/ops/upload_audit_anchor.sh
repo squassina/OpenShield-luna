@@ -43,7 +43,7 @@ checkpoint = None
 
 with open(path, "rb") as stream:
     for raw_line in stream:
-        if not raw_line.endswith(b"\\n"):
+        if not raw_line.endswith(b"\n"):
             raise SystemExit("Invalid audit export: line is not newline-terminated")
         item = json.loads(raw_line)
         if header is None:
