@@ -393,7 +393,7 @@ def test_database_newer_than_application_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = FakeDatabase()
-    database.version = 4
+    database.version = 5
     install_fake_database(monkeypatch, database)
     store = storage.PostgresStore("postgresql://test")
 
