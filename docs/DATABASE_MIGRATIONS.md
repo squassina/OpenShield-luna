@@ -34,6 +34,31 @@ The background expiration worker removes expired cache entries in batches of at
 most 500 rows using row locks with `SKIP LOCKED`; concurrent refreshes are not
 deleted, and cleanup counts are logged when rows are removed.
 
+Migration version 4 adds `previous_hash` and `record_hash` to `audit_records`
+and creates the singleton `audit_chain_state` head. Existing rows are backfilled
+in ascending `audit_id` order inside the migration transaction using canonical
+JSON and SHA-256. The migration fails closed if the chain state is not at its
+expected genesis value or legacy rows contain partial hashes. It then installs
+triggers that reject invalid predecessor inserts and UPDATE, DELETE, or TRUNCATE
+against audit records during normal operation. The test-only store reset uses
+database-owner privileges to disable and re-enable user triggers around its
+transactional truncate; the guard functions do not trust caller-controlled
+session variables.
+
+Every audit insert locks the chain-head row, allocates the next audit ID,
+hashes the record with its predecessor hash, and inserts the complete row.
+Database BEFORE/AFTER INSERT triggers validate the predecessor and advance the
+persisted head in the same transaction, including for any direct database insert.
+`GET /api/v1/audit/integrity` verifies the record hashes, predecessor links,
+and persisted head.
+
+The local hash chain detects row edits, reordering, and accidental application
+mutation. It is not a digital signature or external trust anchor: a privileged
+database administrator able to alter the rows, triggers, and head can recompute
+the chain. External immutable/WORM export and a retention/archival policy remain
+separate operational requirements. No automatic audit retention or deletion
+is enabled.
+
 Do not delete the PostgreSQL volume to upgrade the schema. Back up the database
 using the normal PostgreSQL backup procedure before upgrading production systems.
 

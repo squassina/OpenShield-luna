@@ -9,6 +9,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool, PoolTimeout
 
+from openshield.core.audit_integrity import GENESIS_AUDIT_HASH, audit_record_hash
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
 from openshield.integrations.models import Integration
@@ -143,6 +144,77 @@ class PostgresStore:
         if pool is None:
             raise StorageConfigurationError("Database connection pool is not available")
         return pool.connection(timeout=self._pool_timeout)
+
+    @staticmethod
+    def _backfill_audit_chain(cursor: psycopg.Cursor) -> None:
+        """Backfill legacy audit rows in bounded batches inside the migration transaction."""
+        cursor.execute(
+            """
+            SELECT last_audit_id, last_hash
+            FROM audit_chain_state
+            WHERE chain_id = 1
+            FOR UPDATE
+            """
+        )
+        state = cursor.fetchone()
+        if state is None or int(state[0]) != 0 or state[1] != GENESIS_AUDIT_HASH:
+            raise StorageConfigurationError(
+                "Audit chain state is not at its expected migration baseline"
+            )
+
+        last_audit_id = 0
+        previous_hash = GENESIS_AUDIT_HASH
+        while True:
+            cursor.execute(
+                """
+                SELECT audit_id, occurred_at, actor_id, action, target_id, details,
+                       previous_hash, record_hash
+                FROM audit_records
+                WHERE audit_id > %s
+                ORDER BY audit_id
+                LIMIT 500
+                FOR UPDATE
+                """,
+                (last_audit_id,),
+            )
+            rows = cursor.fetchall()
+            if not rows:
+                break
+
+            for row in rows:
+                if row[6] is not None or row[7] is not None:
+                    raise StorageConfigurationError(
+                        "Legacy audit records contain unexpected chain hashes"
+                    )
+                audit_id = int(row[0])
+                record_hash = audit_record_hash(
+                    audit_id=audit_id,
+                    occurred_at=row[1],
+                    actor_id=row[2],
+                    action=str(row[3]),
+                    target_id=row[4],
+                    details=row[5],
+                    previous_hash=previous_hash,
+                )
+                cursor.execute(
+                    """
+                    UPDATE audit_records
+                    SET previous_hash = %s, record_hash = %s
+                    WHERE audit_id = %s
+                    """,
+                    (previous_hash, record_hash, audit_id),
+                )
+                last_audit_id = audit_id
+                previous_hash = record_hash
+
+        cursor.execute(
+            """
+            UPDATE audit_chain_state
+            SET last_audit_id = %s, last_hash = %s
+            WHERE chain_id = 1
+            """,
+            (last_audit_id, previous_hash),
+        )
 
     def ensure_schema(self) -> None:
         if self._schema_ready:
@@ -447,10 +519,135 @@ CREATE TABLE IF NOT EXISTS events (
                 ON threat_intel_cache (expires_at)
                 """,
             )
+            audit_chain_migration = (
+                "ALTER TABLE audit_records ADD COLUMN IF NOT EXISTS previous_hash TEXT",
+                "ALTER TABLE audit_records ADD COLUMN IF NOT EXISTS record_hash TEXT",
+                """
+                CREATE TABLE IF NOT EXISTS audit_chain_state (
+                    chain_id SMALLINT PRIMARY KEY CHECK (chain_id = 1),
+                    last_audit_id BIGINT NOT NULL DEFAULT 0 CHECK (last_audit_id >= 0),
+                    last_hash TEXT NOT NULL
+                        CHECK (
+                            char_length(last_hash) = 64
+                            AND last_hash ~ '^[0-9a-f]{64}'
+                        )
+                )
+                """,
+                """
+                INSERT INTO audit_chain_state (chain_id, last_audit_id, last_hash)
+                VALUES (1, 0, %s)
+                ON CONFLICT (chain_id) DO NOTHING
+                """,
+            )
+            audit_chain_finalize = (
+                "ALTER TABLE audit_records ALTER COLUMN previous_hash SET NOT NULL",
+                "ALTER TABLE audit_records ALTER COLUMN record_hash SET NOT NULL",
+                """
+                ALTER TABLE audit_records
+                ADD CONSTRAINT audit_records_previous_hash_check
+                CHECK (
+                    char_length(previous_hash) = 64
+                    AND previous_hash ~ '^[0-9a-f]{64}'
+                )
+                """,
+                """
+                ALTER TABLE audit_records
+                ADD CONSTRAINT audit_records_record_hash_check
+                CHECK (
+                    char_length(record_hash) = 64
+                    AND record_hash ~ '^[0-9a-f]{64}'
+                )
+                """,
+                """
+                CREATE OR REPLACE FUNCTION openshield_check_audit_record_insert()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS '
+                DECLARE
+                    chain_head_id BIGINT;
+                    chain_head_hash TEXT;
+                BEGIN
+                    SELECT last_audit_id, last_hash
+                    INTO chain_head_id, chain_head_hash
+                    FROM audit_chain_state
+                    WHERE chain_id = 1
+                    FOR UPDATE;
+                    IF chain_head_id IS NULL
+                       OR NEW.audit_id <= chain_head_id
+                       OR NEW.previous_hash IS DISTINCT FROM chain_head_hash THEN
+                        RAISE EXCEPTION ''audit record does not extend the current chain head'';
+                    END IF;
+                    RETURN NEW;
+                END;
+                '
+                """,
+                "DROP TRIGGER IF EXISTS audit_records_chain_insert ON audit_records",
+                """
+                CREATE TRIGGER audit_records_chain_insert
+                BEFORE INSERT ON audit_records
+                FOR EACH ROW
+                EXECUTE FUNCTION openshield_check_audit_record_insert()
+                """,
+                "DROP TRIGGER IF EXISTS audit_records_advance_head ON audit_records",
+                """
+                CREATE OR REPLACE FUNCTION openshield_advance_audit_chain_head()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS '
+                BEGIN
+                    UPDATE audit_chain_state
+                    SET last_audit_id = NEW.audit_id, last_hash = NEW.record_hash
+                    WHERE chain_id = 1;
+                    RETURN NEW;
+                END;
+                '
+                """,
+                """
+                CREATE TRIGGER audit_records_advance_head
+                AFTER INSERT ON audit_records
+                FOR EACH ROW
+                EXECUTE FUNCTION openshield_advance_audit_chain_head()
+                """,
+                """
+                CREATE OR REPLACE FUNCTION openshield_guard_audit_record_mutation()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS '
+                BEGIN
+                    RAISE EXCEPTION ''audit_records are append-only'';
+                END;
+                '
+                """,
+                "DROP TRIGGER IF EXISTS audit_records_immutable_update_delete ON audit_records",
+                """
+                CREATE TRIGGER audit_records_immutable_update_delete
+                BEFORE UPDATE OR DELETE ON audit_records
+                FOR EACH ROW
+                EXECUTE FUNCTION openshield_guard_audit_record_mutation()
+                """,
+                """
+                CREATE OR REPLACE FUNCTION openshield_guard_audit_record_truncate()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS '
+                BEGIN
+                    RAISE EXCEPTION ''audit_records cannot be truncated'';
+                END;
+                '
+                """,
+                "DROP TRIGGER IF EXISTS audit_records_immutable_truncate ON audit_records",
+                """
+                CREATE TRIGGER audit_records_immutable_truncate
+                BEFORE TRUNCATE ON audit_records
+                FOR EACH STATEMENT
+                EXECUTE FUNCTION openshield_guard_audit_record_truncate()
+                """,
+            )
             migrations = (
                 (1, "initial schema", statements),
                 (2, "typed event occurrence timestamps", event_timestamp_migration),
                 (3, "threat intelligence cache expiry index", threat_intel_cache_migration),
+                (4, "tamper-evident audit record chain", audit_chain_migration),
             )
             with (
                 psycopg.connect(self._dsn, connect_timeout=5) as connection,
@@ -479,7 +676,14 @@ CREATE TABLE IF NOT EXISTS events (
                     if version <= current_version:
                         continue
                     for statement in migration_statements:
-                        cursor.execute(statement)
+                        if version == 4 and "INSERT INTO audit_chain_state" in statement:
+                            cursor.execute(statement, (GENESIS_AUDIT_HASH,))
+                        else:
+                            cursor.execute(statement)
+                    if version == 4:
+                        self._backfill_audit_chain(cursor)
+                        for statement in audit_chain_finalize:
+                            cursor.execute(statement)
                     cursor.execute(
                         "INSERT INTO schema_migrations (version, name) VALUES (%s, %s)",
                         (version, name),
@@ -496,8 +700,23 @@ CREATE TABLE IF NOT EXISTS events (
 
     def reset(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
+            # Test-only operation: the database owner temporarily disables triggers.
+            cursor.execute("ALTER TABLE audit_records DISABLE TRIGGER USER")
             cursor.execute(
-                "TRUNCATE TABLE integrations, integration_secrets, events, threat_intel_cache, incidents, incident_events, incident_investigations, policies, policy_decisions, response_executions, gateway_commands, runtime_controls, integration_poll_cursors, privacy_lists, privacy_classification_overrides, gateway_connections, gateway_discovery_snapshots, network_devices, network_device_address_observations, threat_indicators, audit_records RESTART IDENTITY CASCADE"
+                "TRUNCATE TABLE integrations, integration_secrets, events, threat_intel_cache, "
+                "incidents, incident_events, incident_investigations, policies, policy_decisions, "
+                "response_executions, gateway_commands, runtime_controls, integration_poll_cursors, "
+                "privacy_lists, privacy_classification_overrides, gateway_connections, "
+                "gateway_discovery_snapshots, network_devices, network_device_address_observations, "
+                "threat_indicators, audit_records, audit_chain_state RESTART IDENTITY CASCADE"
+            )
+            cursor.execute("ALTER TABLE audit_records ENABLE TRIGGER USER")
+            cursor.execute(
+                """
+                INSERT INTO audit_chain_state (chain_id, last_audit_id, last_hash)
+                VALUES (1, 0, %s)
+                """,
+                (GENESIS_AUDIT_HASH,),
             )
 
     def create_incident_investigation(
@@ -2115,11 +2334,57 @@ CREATE TABLE IF NOT EXISTS events (
     ) -> None:
         cursor.execute(
             """
-            INSERT INTO audit_records (action, actor_id, target_id, details)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (action, actor_id, target_id, Jsonb(details)),
+            SELECT last_audit_id, last_hash
+            FROM audit_chain_state
+            WHERE chain_id = 1
+            FOR UPDATE
+            """
         )
+        head = cursor.fetchone()
+        if head is None:
+            raise StorageConfigurationError("Audit chain state is missing")
+        last_audit_id, previous_hash = int(head[0]), str(head[1])
+
+        cursor.execute(
+            "SELECT nextval(pg_get_serial_sequence('audit_records', 'audit_id'))"
+        )
+        sequence_row = cursor.fetchone()
+        if sequence_row is None:
+            raise StorageConfigurationError("Audit record sequence is unavailable")
+        audit_id = int(sequence_row[0])
+        if audit_id <= last_audit_id:
+            raise StorageConfigurationError("Audit record sequence is behind the chain head")
+
+        occurred_at = datetime.now(UTC)
+        record_hash = audit_record_hash(
+            audit_id=audit_id,
+            occurred_at=occurred_at,
+            actor_id=actor_id,
+            action=action,
+            target_id=target_id,
+            details=details,
+            previous_hash=previous_hash,
+        )
+        cursor.execute(
+            """
+            INSERT INTO audit_records (
+                audit_id, occurred_at, actor_id, action, target_id, details,
+                previous_hash, record_hash
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                audit_id,
+                occurred_at,
+                actor_id,
+                action,
+                target_id,
+                Jsonb(details),
+                previous_hash,
+                record_hash,
+            ),
+        )
+        # The AFTER INSERT trigger advances the persisted chain head atomically.
 
     def write_audit(
         self,
@@ -2135,7 +2400,8 @@ CREATE TABLE IF NOT EXISTS events (
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT audit_id, occurred_at, actor_id, action, target_id, details
+                SELECT audit_id, occurred_at, actor_id, action, target_id, details,
+                       previous_hash, record_hash
                 FROM audit_records
                 ORDER BY audit_id DESC
                 LIMIT %s
@@ -2151,9 +2417,85 @@ CREATE TABLE IF NOT EXISTS events (
                 "action": row[3],
                 "target_id": row[4],
                 "details": row[5],
+                "previous_hash": row[6],
+                "record_hash": row[7],
             }
             for row in rows
         ]
+
+    def verify_audit_chain(self) -> dict[str, object]:
+        """Verify record ordering, hashes, and the persisted chain head."""
+        previous_hash = GENESIS_AUDIT_HASH
+        last_audit_id = 0
+        records_checked = 0
+        error: str | None = None
+        stored_head_id: int | None = None
+        stored_head_hash: str | None = None
+
+        with self._connect() as connection, connection.cursor() as cursor:
+            # Both the record scan and chain-head read must see one database snapshot.
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            cursor.execute(
+                """
+                SELECT audit_id, occurred_at, actor_id, action, target_id, details,
+                       previous_hash, record_hash
+                FROM audit_records
+                ORDER BY audit_id
+                """
+            )
+            while rows := cursor.fetchmany(500):
+                for row in rows:
+                    records_checked += 1
+                    audit_id = int(row[0])
+                    if row[6] != previous_hash:
+                        error = "previous_hash_mismatch"
+                        break
+                    try:
+                        calculated_hash = audit_record_hash(
+                            audit_id=audit_id,
+                            occurred_at=row[1],
+                            actor_id=row[2],
+                            action=str(row[3]),
+                            target_id=row[4],
+                            details=row[5],
+                            previous_hash=previous_hash,
+                        )
+                    except (TypeError, ValueError):
+                        error = "record_payload_invalid"
+                        break
+                    if row[7] != calculated_hash:
+                        error = "record_hash_mismatch"
+                        break
+                    previous_hash = calculated_hash
+                    last_audit_id = audit_id
+                if error is not None:
+                    break
+
+            cursor.execute(
+                """
+                SELECT last_audit_id, last_hash
+                FROM audit_chain_state
+                WHERE chain_id = 1
+                """
+            )
+            head = cursor.fetchone()
+            if head is None:
+                error = error or "chain_head_missing"
+            else:
+                stored_head_id = int(head[0])
+                stored_head_hash = str(head[1])
+                if (stored_head_id, stored_head_hash) != (last_audit_id, previous_hash):
+                    error = error or "chain_head_mismatch"
+
+        return {
+            "valid": error is None,
+            "records_checked": records_checked,
+            "last_audit_id": last_audit_id,
+            "computed_head_hash": previous_hash,
+            "stored_head_audit_id": stored_head_id,
+            "stored_head_hash": stored_head_hash,
+            "error": error,
+        }
 
 
     def upsert_threat_indicators(
