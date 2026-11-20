@@ -92,15 +92,19 @@ async def _dns_polling_lifespan(app: FastAPI):
         os.getenv("OPENSHIELD_DATABASE_URL", ""),
         os.getenv("OPENSHIELD_POSTGRES_PASSWORD", ""),
     )
-    store.open()
     try:
+        # Acquire the process lease before opening the store: open() applies
+        # schema migrations, which must not run beside another Node instance.
         with store.advisory_lock(_NODE_PROCESS_LOCK_ID):
-            task = (
-                asyncio.create_task(run_dns_polling_loop(registry, store, metrics, interval))
-                if interval else None
-            )
-            execution_task = asyncio.create_task(run_expiration_loop(store, registry))
+            task: asyncio.Task[None] | None = None
+            execution_task: asyncio.Task[None] | None = None
             try:
+                store.open()
+                if interval:
+                    task = asyncio.create_task(
+                        run_dns_polling_loop(registry, store, metrics, interval)
+                    )
+                execution_task = asyncio.create_task(run_expiration_loop(store, registry))
                 yield
             finally:
                 for background_task in (task, execution_task):
@@ -110,13 +114,12 @@ async def _dns_polling_lifespan(app: FastAPI):
                             await background_task
                         except asyncio.CancelledError:
                             pass
+                store.close()
     except AdvisoryLockUnavailable as exc:
         raise RuntimeError(
             "Another OpenShield Node process is already using this database; "
             "run exactly one Node API process per database"
         ) from exc
-    finally:
-        store.close()
 
 
 app = FastAPI(
