@@ -64,6 +64,16 @@ def test_production_mode_rejects_known_default_passwords(password: str) -> None:
         )
 
 
+def test_production_mode_rejects_passwords_with_outer_whitespace() -> None:
+    password = f" {_VALID_PASSWORD}"
+    database_url = (
+        "postgresql://openshield:%20production-password-with-entropy-2026"
+        "@db.internal:5432/openshield"
+    )
+    with pytest.raises(DeploymentConfigurationError, match="whitespace"):
+        validate_deployment_database_credentials("production", database_url, password)
+
+
 def test_production_mode_requires_at_least_16_password_characters() -> None:
     password = "short-secret"
     with pytest.raises(DeploymentConfigurationError, match="at least 16"):
