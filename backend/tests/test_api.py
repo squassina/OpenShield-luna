@@ -1,4 +1,6 @@
 import os
+
+import pytest
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
@@ -423,6 +425,70 @@ def test_audit_records_registration_connection_and_event_ingestion() -> None:
         "event.ingested", "gateway.connected", "integration.registered",
     ]
     assert all(record["actor_id"] is None for record in records[:3])
+
+
+def test_audit_records_include_hashes_and_integrity_endpoint_verifies() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    assert client.post(
+        "/api/v1/events", json=sample_event(integration_id="home-gateway")
+    ).status_code == 202
+
+    records = client.get("/api/v1/audit").json()
+    assert records
+    assert all(len(record["previous_hash"]) == 64 for record in records)
+    assert all(len(record["record_hash"]) == 64 for record in records)
+
+    integrity = client.get("/api/v1/audit/integrity")
+    assert integrity.status_code == 200
+    assert integrity.json()["valid"] is True
+    assert integrity.json()["records_checked"] >= 3
+    assert integrity.json()["error"] is None
+
+
+def test_audit_records_reject_update_delete_truncate_and_bad_predecessors() -> None:
+    import psycopg
+
+    from openshield.api import main
+
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    record_id = client.get("/api/v1/audit").json()[0]["audit_id"]
+
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with main.store._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE audit_records SET action = 'tampered' WHERE audit_id = %s",
+                (record_id,),
+            )
+
+    with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+        with main.store._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM audit_records WHERE audit_id = %s",
+                (record_id,),
+            )
+
+    with pytest.raises(psycopg.errors.RaiseException, match="cannot be truncated"):
+        with main.store._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("TRUNCATE TABLE audit_records")
+
+    with pytest.raises(psycopg.errors.RaiseException, match="does not extend"):
+        with main.store._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO audit_records (
+                    audit_id, occurred_at, action, target_id, details,
+                    previous_hash, record_hash
+                )
+                VALUES (
+                    nextval(pg_get_serial_sequence('audit_records', 'audit_id')),
+                    NOW(), 'tampered', 'router-lab', '{}'::jsonb,
+                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+                )
+                """
+            )
+
+    assert client.get("/api/v1/audit/integrity").json()["valid"] is True
 
 
 def test_audit_limit_is_bounded() -> None:
