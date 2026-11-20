@@ -588,6 +588,26 @@ CREATE TABLE IF NOT EXISTS events (
                 FOR EACH ROW
                 EXECUTE FUNCTION openshield_check_audit_record_insert()
                 """,
+                "DROP TRIGGER IF EXISTS audit_records_advance_head ON audit_records",
+                """
+                CREATE OR REPLACE FUNCTION openshield_advance_audit_chain_head()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS '
+                BEGIN
+                    UPDATE audit_chain_state
+                    SET last_audit_id = NEW.audit_id, last_hash = NEW.record_hash
+                    WHERE chain_id = 1;
+                    RETURN NEW;
+                END;
+                '
+                """,
+                """
+                CREATE TRIGGER audit_records_advance_head
+                AFTER INSERT ON audit_records
+                FOR EACH ROW
+                EXECUTE FUNCTION openshield_advance_audit_chain_head()
+                """,
                 """
                 CREATE OR REPLACE FUNCTION openshield_guard_audit_record_mutation()
                 RETURNS trigger
@@ -2368,14 +2388,7 @@ CREATE TABLE IF NOT EXISTS events (
                 record_hash,
             ),
         )
-        cursor.execute(
-            """
-            UPDATE audit_chain_state
-            SET last_audit_id = %s, last_hash = %s
-            WHERE chain_id = 1
-            """,
-            (audit_id, record_hash),
-        )
+        # The AFTER INSERT trigger advances the persisted chain head atomically.
 
     def write_audit(
         self,
