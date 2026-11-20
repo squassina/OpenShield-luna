@@ -14,7 +14,6 @@ from openshield.core.storage_integrations import PostgresIntegrationStoreMixin
 from openshield.core.storage_policies import PostgresPolicyStoreMixin
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
-from openshield.integrations.models import Integration
 
 
 def _has_valid_device_address(device: dict[str, object]) -> bool:
