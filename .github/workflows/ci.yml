@@ -20,7 +20,7 @@ jobs:
         run: python scripts/ops/check_static_assets.py
       - name: Validate audit anchoring shell script
         run: bash -n scripts/ops/upload_audit_anchor.sh
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build application and validation images
         run: docker compose build openshield-node openshield-gateway-connector openshield-test openshield-lint openshield-browser-test
       - name: Verify previous encryption key is forwarded to Node
