@@ -1,9 +1,8 @@
 name: Refresh Python dependency locks and image digests
 
 on:
-  push:
-    branches:
-      - build/reproducible-dependency-lock-and-image-updates
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "0 12 * * 1"
   workflow_dispatch:
@@ -14,6 +13,7 @@ permissions:
 
 jobs:
   refresh:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.ref == 'build/reproducible-dependency-lock-and-image-updates'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -90,17 +90,19 @@ jobs:
           compose.write_text("\n".join(compose_lines) + "\n", encoding="utf-8")
           PY
       - name: Commit refreshed locks to the active implementation branch
-        if: github.ref_name == 'build/reproducible-dependency-lock-and-image-updates'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'build/reproducible-dependency-lock-and-image-updates'
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add backend/requirements-build.txt
           if ! git diff --cached --quiet; then
             git commit -m "build: update patched setuptools lock"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
+            git push origin "HEAD:${TARGET_BRANCH}"
           fi
       - name: Open dependency and image refresh pull request
-        if: github.ref_name != 'build/reproducible-dependency-lock-and-image-updates'
+        if: github.event_name != 'pull_request'
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
