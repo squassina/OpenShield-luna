@@ -10,7 +10,7 @@ dependencies are resolved into separate, hash-pinned lock files:
 | `backend/requirements-build.in` | Explicit bootstrap/build tool constraints |
 | `backend/requirements-build.txt` | Hashed bootstrap/build tool lock |
 
-The build lock pins `pip==26.3` and `setuptools==80.9.0`. The same exact
+The build lock pins `pip==26.3` and `setuptools==84.1.0`. The same exact
 setuptools version is declared in `pyproject.toml` as the build backend
 requirement. The Dockerfile installs all Python packages with
 `pip install --require-hashes`, then installs the local OpenShield package
