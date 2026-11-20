@@ -62,8 +62,11 @@ non-repudiation evidence.
 
 For stronger evidence, export verified records and their chain head to an
 independent immutable/WORM destination controlled separately from the Node and
-PostgreSQL administrators. That export/anchoring workflow is not implemented
-by this change and remains open engineering work.
+PostgreSQL administrators. OpenShield provides a verified NDJSON export and an
+AWS S3 Object Lock COMPLIANCE uploader; see
+[external WORM anchoring](audit-worm-anchoring.md). The first deployment-specific
+upload and bucket access review must still be completed before claiming an
+external anchor is active.
 
 ## Retention and archival
 

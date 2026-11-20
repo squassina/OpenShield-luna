@@ -645,7 +645,8 @@ The PostgreSQL audit log now records security-relevant successful operations and
 
 Remaining audit hardening:
 - Authentication-failure auditing is deferred with authentication itself.
-- Retention, export, tamper-evident chaining/signatures, and external immutable storage are pending.
+- The local SHA-256 chain and verified NDJSON export are implemented. AWS S3 Object Lock COMPLIANCE upload tooling is available; first deployment to a separately controlled bucket and retrieval/restore validation remain operational acceptance work.
+- Audit retention and archival policy remain pending; automatic deletion is disabled until legal hold, retention periods, access controls and chain continuation are approved.
 
 
 ## P0 implementation status — operational metrics
