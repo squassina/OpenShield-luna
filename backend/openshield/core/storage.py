@@ -1,5 +1,3 @@
-import ipaddress
-import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,22 +14,6 @@ from openshield.core.storage_integrations import PostgresIntegrationStoreMixin
 from openshield.core.storage_policies import PostgresPolicyStoreMixin
 from openshield.events.models import EventEnvelope
 from openshield.gateway.models import GatewayConnection
-
-
-def _has_valid_device_address(device: dict[str, object]) -> bool:
-    candidates = [device.get("ip_address")]
-    for field in ("ipv4_addresses", "ipv6_addresses"):
-        values = device.get(field)
-        if isinstance(values, list):
-            candidates.extend(values)
-    for value in candidates:
-        if isinstance(value, str):
-            try:
-                ipaddress.ip_address(value)
-                return True
-            except ValueError:
-                continue
-    return False
 
 
 class StorageConfigurationError(RuntimeError):
