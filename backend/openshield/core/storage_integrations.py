@@ -1,5 +1,7 @@
 from psycopg.types.json import Jsonb
 
+from openshield.integrations.models import Integration
+
 
 class PostgresIntegrationStoreMixin:
     """Integration, secret and polling-cursor persistence for the PostgreSQL store."""
