@@ -248,6 +248,13 @@ class PostgresAuditStoreMixin:
                             details=row[5],
                             previous_hash=previous_hash,
                         )
+                    except (TypeError, ValueError):
+                        error = "record_payload_invalid"
+                        break
+                    if row[7] != calculated_hash:
+                        error = "record_hash_mismatch"
+                        break
+                    try:
                         occurred_at = row[1].astimezone(UTC).isoformat()
                         write_line(
                             {
@@ -265,9 +272,6 @@ class PostgresAuditStoreMixin:
                         )
                     except (TypeError, ValueError):
                         error = "record_payload_invalid"
-                        break
-                    if row[7] != calculated_hash:
-                        error = "record_hash_mismatch"
                         break
                     previous_hash = calculated_hash
                     last_audit_id = audit_id
