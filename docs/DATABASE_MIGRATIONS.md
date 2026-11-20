@@ -43,10 +43,12 @@ triggers that reject invalid predecessor inserts and UPDATE, DELETE, or TRUNCATE
 against audit records during normal operation. The test-only store reset sets a
 transaction-local flag before truncating and reseeding the chain.
 
-Every audit insert locks the chain-head row, allocates the next audit ID, hashes
-the record with its predecessor hash, inserts the complete row, and updates
-the head in the same transaction. `GET /api/v1/audit/integrity` verifies the
-record hashes, predecessor links, and persisted head.
+Every audit insert locks the chain-head row, allocates the next audit ID,
+hashes the record with its predecessor hash, and inserts the complete row.
+Database BEFORE/AFTER INSERT triggers validate the predecessor and advance the
+persisted head in the same transaction, including for any direct database insert.
+`GET /api/v1/audit/integrity` verifies the record hashes, predecessor links,
+and persisted head.
 
 The local hash chain detects row edits, reordering, and accidental application
 mutation. It is not a digital signature or external trust anchor: a privileged
