@@ -29,7 +29,7 @@ command -v openssl >/dev/null || { echo "OpenSSL is required" >&2; exit 1; }
 
 chmod 600 "$file"
 file_size=$(wc -c < "$file")
-(( file_size <= 5368709120 )) || { echo "S3 single-request upload limit is 5 GiB" >&2; exit 1; }
+(( file_size <= 5000000000 )) || { echo "S3 single-request upload limit is 5 GB" >&2; exit 1; }
 
 # Validate the export independently before sending it to the immutable destination.
 python3 - "$file" <<'PY'
