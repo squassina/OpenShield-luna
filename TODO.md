@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `0908b1bdcdb36e308027d6bc5c7c964fd651ee0d`  
+**Reviewed baseline:** `main` at `4829db443c044b13596068c34b6419f309a95757`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -83,7 +83,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
-- [ ] **Reduce large-module maintenance cost incrementally.** `backend/openshield/core/storage.py` is a 2,200+ line persistence module and `backend/openshield/dashboard.html` is a single roughly 90 KB UI asset. Extract only when there is a clear seam and regression coverage; preserve current contracts and avoid a broad rewrite.
+- [ ] **Reduce large-module maintenance cost incrementally.** First safe seam extracted in review: the eight policy and policy-decision persistence methods now live in `backend/openshield/core/storage_policies.py`; `PostgresStore` composes the mixin and retains the same public methods and transaction/audit behavior. This removes roughly 176 lines from `storage.py` without changing SQL or callers. Further storage slices and the single roughly 90 KB dashboard asset remain; extract only where there is a clear seam and regression coverage.
 
 - [x] **Add documentation and dashboard static checks to CI.** CI runs `scripts/ops/check_static_assets.py` before container builds. The standard-library checker validates repository-relative Markdown links/images and runs `node --check` against inline JavaScript extracted from `backend/openshield/dashboard.html`; unit tests cover fenced/inline code, balanced parentheses, root/relative links, and inline/module scripts. Implemented in PR #151 (CI #1222 passed). Evidence: `scripts/ops/check_static_assets.py`, `backend/tests/test_static_checks.py`, `.github/workflows/ci.yml`.
 
