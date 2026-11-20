@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `1753848a2cdfe3393e976b1db450a25974c97cd7`  
+**Reviewed baseline:** `main` at `308484cd909049587ace3d1632e7142848084dde`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -83,7 +83,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
-- [ ] **Reduce large-module maintenance cost incrementally.** Two cohesive storage slices are in review: eight policy/decision persistence methods in `backend/openshield/core/storage_policies.py`, and 13 integration/secret/poll-cursor methods in `backend/openshield/core/storage_integrations.py`. `PostgresStore` composes both mixins and retains the same public methods, SQL, transaction boundaries and audit behavior. Together they remove roughly 366 lines from `storage.py` (about 2,613 to 2,247 lines) without changing callers. Further storage slices and the single roughly 90 KB dashboard asset remain; extract only where a clear seam and regression coverage exist.
+- [ ] **Reduce large-module maintenance cost incrementally.** Three slices merged: eight policy/decision persistence methods in `storage_policies.py`, 13 integration/secret/poll-cursor methods in `storage_integrations.py`, and seven incident/investigation methods in `storage_incidents.py`. A fourth slice is in review: gateway discovery snapshots, MAC-based device inventory and identity observations in `storage_gateway_inventory.py`. `PostgresStore` composes these mixins while preserving public method names, SQL, transaction boundaries, per-indicator advisory locking and audit behavior. The current review reduces `storage.py` from roughly 2,613 to 1,863 lines (~750 lines) without changing callers. Further storage slices and the single roughly 90 KB dashboard asset remain; extract only where a clear seam and regression coverage exist.
 
 - [x] **Add documentation and dashboard static checks to CI.** CI runs `scripts/ops/check_static_assets.py` before container builds. The standard-library checker validates repository-relative Markdown links/images and runs `node --check` against inline JavaScript extracted from `backend/openshield/dashboard.html`; unit tests cover fenced/inline code, balanced parentheses, root/relative links, and inline/module scripts. Implemented in PR #151 (CI #1222 passed). Evidence: `scripts/ops/check_static_assets.py`, `backend/tests/test_static_checks.py`, `.github/workflows/ci.yml`.
 
