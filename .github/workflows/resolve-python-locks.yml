@@ -1,17 +1,16 @@
-name: Resolve Python dependency locks
+name: Refresh Python dependency locks and image digests
 
 on:
-  push:
-    branches:
-      - build/reproducible-dependency-lock-and-image-updates
-  pull_request:
-    branches: [main]
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  resolve:
+  refresh:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -21,16 +20,17 @@ jobs:
           cache: pip
       - name: Install pinned lock generator
         run: python -m pip install --disable-pip-version-check "pip==26.3" "pip-tools==7.7.0"
-      - name: Resolve runtime and development dependency graphs
+      - name: Refresh runtime, development and build dependency locks
         working-directory: backend
         run: |
-          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
+          pip-compile --upgrade --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
             --output-file requirements.txt pyproject.toml
-          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes --extra dev \
+          pip-compile --upgrade --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes --extra dev \
             --output-file requirements-dev.txt pyproject.toml
-          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
+          pip-compile --upgrade --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
             --output-file requirements-build.txt requirements-build.in
-      - name: Pin container images by resolved manifest digest
+      - name: Resolve current image manifest digests
+        id: images
         run: |
           resolve_ref() {
             local ref="$1"
@@ -49,56 +49,54 @@ jobs:
           playwright_image="$(resolve_ref mcr.microsoft.com/playwright/python:v1.64.1-noble)"
           postgres_image="$(resolve_ref postgres:16-alpine)"
 
-          python - "${python_image}" "${playwright_image}" "${postgres_image}" <<'PY'
+          python - "$python_image" "$playwright_image" "$postgres_image" <<'PY'
           from pathlib import Path
           import sys
 
           python_image, playwright_image, postgres_image = sys.argv[1:]
           dockerfile = Path("Dockerfile")
           docker_lines = dockerfile.read_text(encoding="utf-8").splitlines()
-          replacements = {
-              "FROM python:3.12-slim AS base": f"FROM {python_image} AS base",
-              "FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS browser-test": (
-                  f"FROM {playwright_image} AS browser-test"
+          pinned = {
+              "FROM python:3.12-slim": f"FROM {python_image}",
+              "FROM mcr.microsoft.com/playwright/python:v1.64.1-noble": (
+                  f"FROM {playwright_image}"
               ),
           }
           for index, line in enumerate(docker_lines):
-              if line in replacements:
-                  docker_lines[index] = replacements[line]
-          if not all(value in docker_lines for value in replacements.values()):
-              raise SystemExit("Expected Dockerfile base-image lines were not all replaced")
+              for prefix, replacement in pinned.items():
+                  suffix = " AS base" if prefix.endswith("python:3.12-slim") else " AS browser-test"
+                  if line.startswith(prefix) and line.endswith(suffix):
+                      docker_lines[index] = replacement + suffix
+                      break
+          if not any(line == f"FROM {python_image} AS base" for line in docker_lines):
+              raise SystemExit("Python image digest was not applied to Dockerfile")
+          if not any(
+              line == f"FROM {playwright_image} AS browser-test" for line in docker_lines
+          ):
+              raise SystemExit("Playwright image digest was not applied to Dockerfile")
           dockerfile.write_text("\n".join(docker_lines) + "\n", encoding="utf-8")
 
           compose = Path("docker-compose.yml")
-          compose_text = compose.read_text(encoding="utf-8")
-          old_image = "    image: postgres:16-alpine"
-          if old_image not in compose_text:
-              raise SystemExit("Expected PostgreSQL image line was not found")
-          compose.write_text(
-              compose_text.replace(old_image, f"    image: {postgres_image}", 1),
-              encoding="utf-8",
-          )
-          print(f"Pinned Python base: {python_image}")
-          print(f"Pinned Playwright base: {playwright_image}")
-          print(f"Pinned PostgreSQL image: {postgres_image}")
+          compose_lines = compose.read_text(encoding="utf-8").splitlines()
+          for index, line in enumerate(compose_lines):
+              if line.strip().startswith("image: postgres:16-alpine"):
+                  compose_lines[index] = f"    image: {postgres_image}"
+                  break
+          else:
+              raise SystemExit("PostgreSQL image was not found in docker-compose.yml")
+          compose.write_text("\n".join(compose_lines) + "\n", encoding="utf-8")
           PY
-      - name: Commit resolved lock files to the pull request branch
-        env:
-          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/pyproject.toml backend/requirements-build.in backend/requirements-build.txt backend/requirements.txt backend/requirements-dev.txt Dockerfile docker-compose.yml
-          if ! git diff --cached --quiet; then
-            git commit -m "build: add hash-pinned Python dependencies"
-            git push origin "HEAD:${TARGET_BRANCH}"
-          fi
-      - name: Publish lock files for inspection
-        uses: actions/upload-artifact@v4
+      - name: Open dependency and image refresh pull request
+        uses: peter-evans/create-pull-request@v7
         with:
-          name: python-dependency-locks
-          if-no-files-found: error
-          path: |
-            backend/requirements.txt
-            backend/requirements-dev.txt
-            backend/requirements-build.txt
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "build: refresh Python locks and container image digests"
+          branch: maintenance/python-locks-and-image-digests
+          delete-branch: true
+          title: "build: refresh Python locks and container image digests"
+          body: |
+            Automated weekly refresh of the Python 3.12 runtime, development and build locks,
+            including package hashes, plus the pinned Python, Playwright and PostgreSQL
+            container manifest digests.
+
+            CI must pass before merging. Review dependency changelogs and image release notes.
