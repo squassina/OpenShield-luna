@@ -8,7 +8,11 @@ class PostgresPolicyStoreMixin:
 
     def create_policy(self, policy: dict[str, object]) -> dict[str, object]:
         created_at = datetime.now(UTC)
-        payload = {**policy, "created_at": created_at.isoformat(), "updated_at": created_at.isoformat()}
+        payload = {
+            **policy,
+            "created_at": created_at.isoformat(),
+            "updated_at": created_at.isoformat(),
+        }
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
