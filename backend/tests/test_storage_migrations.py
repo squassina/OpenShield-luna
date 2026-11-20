@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Self
 
 import pytest
 
 from openshield.core import storage
+from openshield.core.audit_integrity import GENESIS_AUDIT_HASH, audit_record_hash
 
 
 class FakeDatabase:
@@ -12,12 +14,15 @@ class FakeDatabase:
         self.version = 0
         self.applied_statements: list[str] = []
         self.fail_on: str | None = None
+        self.audit_rows: list[dict[str, object]] = []
+        self.audit_chain_head: tuple[int, str] | None = None
 
 
 class FakeCursor:
     def __init__(self, database: FakeDatabase) -> None:
         self.database = database
-        self.row: tuple[int] | None = None
+        self.row: tuple[object, ...] | None = None
+        self.rows: list[tuple[object, ...]] = []
 
     def __enter__(self) -> Self:
         return self
@@ -34,12 +39,57 @@ class FakeCursor:
             assert params is not None
             self.database.version = int(params[0])
             return
+        if normalized.startswith("INSERT INTO audit_chain_state"):
+            if self.database.audit_chain_head is None:
+                assert params is not None
+                self.database.audit_chain_head = (0, str(params[0]))
+            return
+        if normalized.startswith("SELECT last_audit_id, last_hash FROM audit_chain_state"):
+            self.row = self.database.audit_chain_head
+            return
+        if normalized.startswith("SELECT audit_id, occurred_at, actor_id, action, target_id, details,"):
+            assert params is not None
+            after_id, limit = int(params[0]), int(params[1])
+            selected = sorted(
+                (
+                    item for item in self.database.audit_rows
+                    if int(item["audit_id"]) > after_id
+                ),
+                key=lambda item: int(item["audit_id"]),
+            )[:limit]
+            self.rows = [
+                (
+                    item["audit_id"], item["occurred_at"], item["actor_id"],
+                    item["action"], item["target_id"], item["details"],
+                    item["previous_hash"], item["record_hash"],
+                )
+                for item in selected
+            ]
+            return
+        if normalized.startswith("UPDATE audit_records SET previous_hash"):
+            assert params is not None
+            previous_hash, record_hash, audit_id = params
+            for item in self.database.audit_rows:
+                if int(item["audit_id"]) == int(audit_id):
+                    item["previous_hash"] = previous_hash
+                    item["record_hash"] = record_hash
+                    break
+            else:
+                raise AssertionError(f"Unknown fake audit row {audit_id}")
+            return
+        if normalized.startswith("UPDATE audit_chain_state SET last_audit_id"):
+            assert params is not None
+            self.database.audit_chain_head = (int(params[0]), str(params[1]))
+            return
         if self.database.fail_on and self.database.fail_on in normalized:
             raise RuntimeError("simulated migration failure")
         self.database.applied_statements.append(normalized)
 
-    def fetchone(self) -> tuple[int] | None:
+    def fetchone(self) -> tuple[object, ...] | None:
         return self.row
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self.rows
 
 
 class FakeConnection:
@@ -47,6 +97,8 @@ class FakeConnection:
         self.database = database
         self.version_before = database.version
         self.statements_before = len(database.applied_statements)
+        self.audit_rows_before = [dict(item) for item in database.audit_rows]
+        self.audit_chain_head_before = database.audit_chain_head
 
     def __enter__(self) -> Self:
         return self
@@ -55,6 +107,8 @@ class FakeConnection:
         if exc_type is not None:
             self.database.version = self.version_before
             del self.database.applied_statements[self.statements_before:]
+            self.database.audit_rows = self.audit_rows_before
+            self.database.audit_chain_head = self.audit_chain_head_before
 
     def cursor(self) -> FakeCursor:
         return FakeCursor(self.database)
@@ -85,7 +139,7 @@ def test_initial_schema_is_recorded_and_not_reapplied(
     store._schema_ready = False
     store.ensure_schema()
 
-    assert database.version == 3
+    assert database.version == 4
     assert migration_statements
     assert [
         statement
