@@ -1,4 +1,6 @@
 import os
+
+import pytest
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
