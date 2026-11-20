@@ -24,11 +24,11 @@ jobs:
       - name: Resolve runtime and development dependency graphs
         working-directory: backend
         run: |
-          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes \
+          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
             --output-file requirements.txt pyproject.toml
-          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes --extra dev \
+          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes --extra dev \
             --output-file requirements-dev.txt pyproject.toml
-          pip-compile --resolver=backtracking --allow-unsafe --generate-hashes \
+          pip-compile --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
             --output-file requirements-build.txt requirements-build.in
       - name: Pin container images by resolved manifest digest
         run: |
@@ -49,12 +49,39 @@ jobs:
           playwright_image="$(resolve_ref mcr.microsoft.com/playwright/python:v1.64.1-noble)"
           postgres_image="$(resolve_ref postgres:16-alpine)"
 
-          sed -i "s#^FROM python:3.12-slim AS base$#FROM ${python_image} AS base#" Dockerfile
-          sed -i "s#^FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS browser-test$#FROM ${playwright_image} AS browser-test#" Dockerfile
-          sed -i "s#^    image: postgres:16-alpine$#    image: ${postgres_image}#" docker-compose.yml
-          grep -F "${python_image}" Dockerfile
-          grep -F "${playwright_image}" Dockerfile
-          grep -F "${postgres_image}" docker-compose.yml
+          python - "${python_image}" "${playwright_image}" "${postgres_image}" <<'PY'
+          from pathlib import Path
+          import sys
+
+          python_image, playwright_image, postgres_image = sys.argv[1:]
+          dockerfile = Path("Dockerfile")
+          docker_lines = dockerfile.read_text(encoding="utf-8").splitlines()
+          replacements = {
+              "FROM python:3.12-slim AS base": f"FROM {python_image} AS base",
+              "FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS browser-test": (
+                  f"FROM {playwright_image} AS browser-test"
+              ),
+          }
+          for index, line in enumerate(docker_lines):
+              if line in replacements:
+                  docker_lines[index] = replacements[line]
+          if not all(value in docker_lines for value in replacements.values()):
+              raise SystemExit("Expected Dockerfile base-image lines were not all replaced")
+          dockerfile.write_text("\n".join(docker_lines) + "\n", encoding="utf-8")
+
+          compose = Path("docker-compose.yml")
+          compose_text = compose.read_text(encoding="utf-8")
+          old_image = "    image: postgres:16-alpine"
+          if old_image not in compose_text:
+              raise SystemExit("Expected PostgreSQL image line was not found")
+          compose.write_text(
+              compose_text.replace(old_image, f"    image: {postgres_image}", 1),
+              encoding="utf-8",
+          )
+          print(f"Pinned Python base: {python_image}")
+          print(f"Pinned Playwright base: {playwright_image}")
+          print(f"Pinned PostgreSQL image: {postgres_image}")
+          PY
       - name: Commit resolved lock files to the pull request branch
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
