@@ -84,11 +84,11 @@ PY
 
 container_id="$(docker compose --profile gateway ps -q openshield-gateway-connector)"
 mkdir -p backups
-docker cp "$container_id:/var/lib/openshield/gateway-spool-backup.sqlite3" \
-  "backups/gateway-spool-$(date -u +%Y%m%dT%H%M%SZ).sqlite3"
+backup_file="backups/gateway-spool-$(date -u +%Y%m%dT%H%M%SZ).sqlite3"
+docker cp "$container_id:/var/lib/openshield/gateway-spool-backup.sqlite3" "$backup_file"
 docker compose --profile gateway exec -T openshield-gateway-connector \
   rm -f /var/lib/openshield/gateway-spool-backup.sqlite3
-chmod 0600 backups/gateway-spool-*.sqlite3
+chmod 0600 "$backup_file"
 ~~~
 
 Encrypt the exported snapshot before moving it off the trusted host. Keep the
