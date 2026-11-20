@@ -14,4 +14,8 @@ def create_audit_router(*, store: PostgresStore) -> APIRouter:
     ) -> list[dict[str, object]]:
         return store.list_audit(limit)
 
+    @router.get("/api/v1/audit/integrity", tags=["audit"])
+    def verify_audit_integrity() -> dict[str, object]:
+        return store.verify_audit_chain()
+
     return router
