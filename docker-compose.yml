@@ -3,7 +3,7 @@ name: openshield-luna
 services:
   openshield-db:
     container_name: openshield-luna-db
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857
     environment:
       OPENSHIELD_DEPLOYMENT_MODE: ${OPENSHIELD_DEPLOYMENT_MODE:-development}
       POSTGRES_USER: openshield
