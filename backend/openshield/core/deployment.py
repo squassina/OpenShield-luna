@@ -37,13 +37,17 @@ def validate_deployment_database_credentials(
         raise DeploymentConfigurationError(
             "OPENSHIELD_POSTGRES_PASSWORD is required in production"
         )
-    if len(postgres_password) < 16:
+    if postgres_password != postgres_password.strip():
         raise DeploymentConfigurationError(
-            "Production PostgreSQL passwords must contain at least 16 characters"
+            "Production PostgreSQL passwords cannot start or end with whitespace"
         )
     if postgres_password.casefold() in _INSECURE_DATABASE_PASSWORDS:
         raise DeploymentConfigurationError(
             "A known development/default PostgreSQL password cannot be used in production"
+        )
+    if len(postgres_password) < 16:
+        raise DeploymentConfigurationError(
+            "Production PostgreSQL passwords must contain at least 16 characters"
         )
 
     try:
