@@ -1,7 +1,7 @@
 # OpenShield — Engineering TODO and audit findings
 
 **Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `d3ba2d42744b9dcdba8728c619a207958f47a036`  
+**Reviewed baseline:** `main` at `1adae7341119e104cbf55e4fe2ab3f4772ea52a0`  
 **Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
@@ -67,7 +67,7 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 - [x] **Make restore preflight fail closed.** `scripts/restore.sh` requires `OPENSHIELD_RESTORE_CONFIRM=YES`, verifies that the archive is readable, and uses `psql` to reject targets containing user tables/views/sequences, functions, custom types, or non-default schemas. Query failure or an unexpected result is rejected; restore runs with `pg_restore --single-transaction --exit-on-error`. Tests cover empty and non-empty targets, unknown preflight output, confirmation, and transactional failure. No automatic drop/clean behavior is used.
 
-- [ ] **Remove insecure Compose database fallback for production use.** `docker-compose.yml` falls back to the public development password `openshield-dev-password` when the variable is absent. Keep a convenient local-development path, but add an explicit production/preflight guard that rejects known defaults and documents mandatory unique credentials. Evidence: `docker-compose.yml`, `.env.example`, README deployment instructions.
+- [ ] **Remove insecure Compose database fallback for production use.** Implementation in review: development mode retains the existing convenience fallback; `production` mode rejects known defaults in the PostgreSQL healthcheck and the Node startup guard requires an explicit password of at least 16 characters, rejects whitespace-wrapped/default values, validates the PostgreSQL URL, and requires URL/password equality. README documents secret-manager configuration and existing-volume password rotation. Evidence: `docker-compose.yml`, `backend/openshield/core/deployment.py`, `backend/openshield/api/main.py`, `backend/tests/test_deployment.py`.
 
 - [ ] **Decide and document spool encryption at rest.** The gateway SQLite outbox uses restrictive file permissions, WAL and FULL synchronous writes, but it is not encrypted. For deployments where the host/volume is not trusted, use encrypted host storage or an encrypted spool design; document the accepted Home threat model and backup requirements.
 
