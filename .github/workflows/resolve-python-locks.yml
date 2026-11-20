@@ -87,7 +87,7 @@ jobs:
           compose.write_text("\n".join(compose_lines) + "\n", encoding="utf-8")
           PY
       - name: Open dependency and image refresh pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "build: refresh Python locks and container image digests"
