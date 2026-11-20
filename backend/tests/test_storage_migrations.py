@@ -49,7 +49,7 @@ class FakeCursor:
             return
         if normalized.startswith("SELECT audit_id, occurred_at, actor_id, action, target_id, details,"):
             assert params is not None
-            after_id, limit = int(params[0]), int(params[1])
+            after_id, limit = int(params[0]), 500
             selected = sorted(
                 (
                     item for item in self.database.audit_rows
