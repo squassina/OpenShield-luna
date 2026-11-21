@@ -147,7 +147,7 @@ P0 hardware acceptance requires these checks on the actual target gateway. CI pa
 5. The connector retrieves the configuration using its separate `OPENSHIELD_GATEWAY_TOKEN` and applies it on the next connect/heartbeat.
 6. The dashboard checks the latest gateway and router health event after saving. Status `connector_connected` means the connector is online but has not reported its next RPC check yet; `router_rpc_connected` confirms a successful RPC health check; `router_rpc_failed` means the connector is reachable but router RPC failed. Inspect discovery/health events for board and firmware details.
 
-Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration uses HTTP Basic authentication, state-changing cross-origin requests are rejected, and failed logins are rate limited. Health and metrics endpoints remain public for container orchestration/monitoring.
+Set `OPENSHIELD_API_AUTH_ENABLED=true` only after configuring the admin username/password and gateway token on both Node and connector. When enabled, browser administration and `/metrics` use HTTP Basic authentication; state-changing cross-origin requests are rejected, and failed logins are rate limited. Health endpoints remain public for container orchestration. Configure Prometheus scrapers with the same Basic credentials and restrict scrape access to the monitoring network. When admin authentication is disabled, `/metrics` is public and must be isolated at the network/proxy layer.
 
 
 ## 10. Device inventory using native LuCI ubus

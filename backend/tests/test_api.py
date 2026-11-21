@@ -406,6 +406,46 @@ def test_event_analytics_uses_composite_timestamp_index() -> None:
     assert "occurred_at" in plan
 
 
+def test_duplicate_gateway_discovery_cannot_mutate_inventory() -> None:
+    client.post("/api/v1/gateway/connect", json=gateway_payload())
+    event = sample_event("duplicate-discovery", integration_id="home-gateway")
+    event["event_type"] = "gateway.discovery"
+    event["payload"] = {
+        "board": {"hostname": "router-original"},
+        "interfaces": [],
+        "devices": [{
+            "mac_address": "aa:bb:cc:dd:ee:ff",
+            "name": "desktop",
+            "ip_address": "192.0.2.10",
+            "ipv4_addresses": ["192.0.2.10"],
+            "ipv6_addresses": [],
+            "device": "br-lan",
+            "interface": "lan",
+            "source": "luci-rpc",
+        }],
+    }
+    assert client.post("/api/v1/events", json=event).json()["status"] == "accepted"
+    before = client.get("/api/v1/inventory/router-devices").json()
+
+    replay = {
+        **event,
+        "observed_at": datetime.now(UTC).isoformat(),
+        "payload": {
+            "board": {"hostname": "router-tampered"},
+            "interfaces": [],
+            "devices": [{
+                **event["payload"]["devices"][0],
+                "ip_address": "203.0.113.77",
+                "ipv4_addresses": ["203.0.113.77"],
+            }],
+        },
+    }
+    duplicate = client.post("/api/v1/events", json=replay)
+    assert duplicate.status_code == 202
+    assert duplicate.json()["status"] == "duplicate"
+    assert client.get("/api/v1/inventory/router-devices").json() == before
+
+
 def test_duplicate_event_id_is_acknowledged_idempotently() -> None:
     register_integration()
     event = sample_event()
@@ -752,6 +792,59 @@ def test_gateway_token_is_required_even_when_admin_auth_is_disabled(monkeypatch)
         headers={"Authorization": "Bearer connector-test-token"},
     )
     assert response.status_code == 201
+
+
+def test_machine_event_ingestion_uses_bearer_with_admin_auth_enabled(monkeypatch) -> None:
+    import base64
+
+    register_integration("home-gateway")
+    client.post("/api/v1/integrations", json={
+        "integration_id": "dns-provider", "kind": "pihole", "display_name": "DNS",
+    })
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
+    event = sample_event("gateway-bearer-with-admin-auth", "home-gateway")
+
+    response = client.post(
+        "/api/v1/events",
+        json=event,
+        headers={"Authorization": "Bearer connector-test-token"},
+    )
+    assert response.status_code == 202
+    assert client.get("/api/v1/integrations").status_code == 401
+    credentials = base64.b64encode(b"admin:strong-test-password").decode()
+    assert client.get(
+        "/api/v1/integrations",
+        headers={"Authorization": f"Basic {credentials}"},
+    ).status_code == 200
+
+    # Bearer on generic ingestion must not authorize non-machine event sources.
+    dns = {
+        **event,
+        "event_id": "dns-event-requires-admin",
+        "source": {"integration_id": "dns-provider", "kind": "pihole"},
+    }
+    denied = client.post(
+        "/api/v1/events", json=dns,
+        headers={"Authorization": "Bearer connector-test-token"},
+    )
+    assert denied.status_code == 401
+
+
+def test_metrics_requires_admin_auth_when_enabled(monkeypatch) -> None:
+    import base64
+
+    monkeypatch.setenv("OPENSHIELD_API_AUTH_ENABLED", "true")
+    monkeypatch.setenv("OPENSHIELD_API_USERNAME", "admin")
+    monkeypatch.setenv("OPENSHIELD_API_PASSWORD", "strong-test-password")
+
+    assert client.get("/health/live").status_code == 200
+    assert client.get("/metrics").status_code == 401
+    credentials = base64.b64encode(b"admin:strong-test-password").decode()
+    assert client.get(
+        "/metrics", headers={"Authorization": f"Basic {credentials}"},
+    ).status_code == 200
 
 
 def test_openwrt_event_ingestion_requires_gateway_token(monkeypatch) -> None:
