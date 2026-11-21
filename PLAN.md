@@ -133,7 +133,7 @@ OpenShield should reduce this fragmentation while preserving the strengths of th
 
 **Selected approach:** Gateway Connector + OpenShield Node.
 
-- The **Gateway Connector** is a lightweight adapter deployed on the gateway when feasible, or on a nearby host when not. It exposes only supported, authorized capabilities.
+- The **Gateway Connector** is a lightweight adapter deployed on the gateway when feasible, or on a nearby host when not. The current OpenWrt Home deployment uses a nearby Linux/Docker host and standard read-only LuCI/ubus methods; it does not install packages, scripts, custom ACL files, or agents on the router.
 - The **OpenShield Node** runs the core services, event pipeline, database, API, dashboard, and local AI runtime on a separate Linux server, mini PC, or VM.
 - The gateway remains operational independently of the Node.
 - A passive sensor or mirrored-traffic mode may be added as an alternative or complementary deployment mode.
@@ -595,7 +595,7 @@ Validation boundary:
 
 The nearby-host connector now uses the OpenWrt RPC client locally, keeping the Node out of the gateway management path:
 
-- Optional connector configuration is all-or-nothing: OpenWrt URL, username, password, and registered integration ID.
+- OpenWrt connection configuration is all-or-nothing. Dashboard-managed credentials are encrypted at rest and delivered to the connector through the gateway-authenticated channel; legacy environment variables remain supported as a fallback.
 - The gateway handshake advertises only `discover` and `health_check` when this adapter is configured; without it, no capabilities are advertised.
 - After connection, the agent reads board/interface metadata and emits a `gateway.discovery` event.
 - After each successful heartbeat, the agent emits a `gateway.health` event.
@@ -604,7 +604,7 @@ The nearby-host connector now uses the OpenWrt RPC client locally, keeping the N
 - The Node validates integration existence and kind. Residential mode trusts callers on the local network; source identity is provenance, not an authentication boundary.
 - The connector remains outbound-only and does not modify forwarding, firewall, routing, or wireless configuration.
 
-Required connector variables:
+Legacy environment fallback variables:
 - `OPENSHIELD_OPENWRT_URL`
 - `OPENSHIELD_OPENWRT_USERNAME`
 - `OPENSHIELD_OPENWRT_PASSWORD`
@@ -654,7 +654,7 @@ The PostgreSQL audit log now records security-relevant successful operations and
 - `authorization.denied`: gateway source-ID mismatch attempts.
 - State changes and their corresponding audit records are written in the same database transaction.
 - Audit reads are exposed through `GET /api/v1/audit`, restricted to the admin role, with a bounded limit (1–500).
-- Audit records contain no OpenWrt credentials. Residential API requests have no authenticated actor identity.
+- Audit records contain no OpenWrt credentials. The Home profile has no user accounts or per-user actor identities; optional HTTP Basic uses a shared admin credential and is disabled by default.
 
 Remaining audit hardening:
 - The residential profile has no per-user identity; optional admin Basic authentication does not provide user accounts or RBAC. Authentication-failure audit coverage must be reviewed before a shared Business profile is supported.
