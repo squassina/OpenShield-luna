@@ -33,21 +33,8 @@ jobs:
       - name: Lint
         run: docker compose run --rm openshield-lint
       - name: Verify locked mypy satisfies the declared development constraint
-        working-directory: backend
         run: |
-          python - <<'PY'
-          import tomllib
-          from importlib.metadata import version
-          from packaging.specifiers import SpecifierSet
-          from packaging.version import Version
-
-          project = tomllib.load(open("pyproject.toml", "rb"))
-          requirement = next(
-              item for item in project["project"]["optional-dependencies"]["dev"]
-              if item.startswith("mypy")
-          )
-          assert Version(version("mypy")) in SpecifierSet(requirement.removeprefix("mypy"))
-          PY
+          docker compose run --rm --no-deps openshield-lint python -c 'import tomllib; from importlib.metadata import version; from packaging.specifiers import SpecifierSet; from packaging.version import Version; project = tomllib.load(open("pyproject.toml", "rb")); requirement = next(item for item in project["project"]["optional-dependencies"]["dev"] if item.startswith("mypy")); assert Version(version("mypy")) in SpecifierSet(requirement.removeprefix("mypy"))'
       - name: Type check supported application modules
         run: |
           docker compose run --rm --no-deps openshield-lint mypy \
