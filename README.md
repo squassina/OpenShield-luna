@@ -26,7 +26,9 @@ See [PLAN.md](PLAN.md) for the product plan, roadmap, architecture decisions, ri
 
 ## Current delivery status
 
-The P0–P6 software baseline is implemented and CI-validated. Remaining open work is operational acceptance, not a claim of completed physical or production validation: OpenWrt hardware and P5 rollback (#17), live Suricata/Zeek deployments (#18), and representative database load/query/restore evidence (#19). See the [engineering TODO](TODO.md) for the prioritized backlog and code-review findings.
+The P0–P6 software baseline is implemented. The latest full CI run on the implementation baseline ([main `5950e185`](https://github.com/squassina/OpenShield-luna/commit/5950e185131fa61ec04bf1d20924549dcfa76ef4), [workflow #44812278107](https://github.com/squassina/OpenShield-luna/actions/runs/44812278107)) completed successfully, including lint, type checks, security/dependency checks, Python tests, dashboard browser tests, PostgreSQL backup/restore, and non-root startup smoke tests. CI does not certify physical hardware or production operations.
+
+Open acceptance remains: physical OpenWrt and P5 rollback validation ([#17](https://github.com/squassina/OpenShield-luna/issues/17)), live Suricata/Zeek deployments ([#18](https://github.com/squassina/OpenShield-luna/issues/18)), and representative database load/query-plan plus deployment-data restore evidence ([#19](https://github.com/squassina/OpenShield-luna/issues/19)). Audit retention policy approval and the first S3 Object Lock upload/retrieval drill are also pending. Keep P5 enforcement disabled until physical acceptance. See [TODO.md](TODO.md) for the prioritized backlog and current maintenance findings.
 
 ## P0 — Foundation & Gateway Connectivity
 
@@ -132,7 +134,7 @@ docker compose --profile gateway run --rm --no-deps --user 0:0 --entrypoint sh o
 
 These one-time commands run only the migration shell as root; the long-running Node and Connector processes remain unprivileged. Secret files retain their existing restrictive modes.
 
-Run lint and tests in the same Python 3.12 container environment used by CI:
+Run lint and tests inside the Docker Compose containers used by CI. The Node, test, and lint base image uses Python 3.15-slim; project metadata still declares Python 3.12 as its minimum supported version:
 
 ```bash
 docker compose build openshield-test openshield-lint
@@ -165,10 +167,14 @@ Do not use `docker compose down -v` for routine shutdown; it deletes the databas
 
 ### Reproducible build inputs
 
-Python 3.12 runtime, development and build dependencies are locked with
-distribution hashes, and the Python, Playwright and PostgreSQL container images
-are pinned by manifest digest. Dependabot and the scheduled lock-refresh
-workflow open review PRs for dependency, image and GitHub Actions updates.
+The Node, test, and lint base image uses Python 3.15-slim. Project metadata
+declares Python >=3.12, while pip-compiled dependency locks are resolved with
+Python 3.12 and package hashes. The Playwright browser image is pinned at
+1.65.2; Python, Playwright and PostgreSQL images use manifest digests.
+Dependency and GitHub Actions updates are reviewed through pull requests.
+The scheduled lock-refresh workflow currently has stale image references, and
+the generated build lock does not yet match its input; do not rely on that
+workflow until those items are reconciled (tracked in [TODO.md](TODO.md)).
 See the [build reproducibility runbook](docs/operations/build-reproducibility.md).
 
 ## Gateway connector
@@ -228,7 +234,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Event ingestion | Implemented (PostgreSQL-backed; idempotent retries) |
 | Residential admin authentication | Disabled by default; optional HTTP Basic, CSRF origin checks and failed-login rate limiting |
 | Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass |
-| PostgreSQL persistence and initial audit records | Implemented; audit hardening/retention pending |
+| PostgreSQL persistence and audit integrity | Implemented (hash chain, verification, NDJSON export and S3 Object Lock tooling); retention policy and live bucket/retrieval acceptance pending |
 | Structured logging and Prometheus metrics | Implemented (process-local counters) |
 | On-device OpenWrt agent and secure bootstrap | Pending |
 | Business authentication, roles, and gateway enrollment | Future phase |
@@ -399,7 +405,7 @@ P4 implements a local Ollama runtime and an optional OpenAI Responses API adapte
 
 - Multiple gateway IDs are independently tracked by the Node; see `GET /api/v1/gateways`.
 - Bounded operational summary is available at `GET /api/v1/reports/operations`.
-- PostgreSQL custom-format backup and restore helpers are in `scripts/`. Restore requires explicit confirmation and an operator-supplied fresh, empty target database; the script does not yet preflight target emptiness (see TODO.md).
+- PostgreSQL custom-format backup and restore helpers are in `scripts/`. Restore requires explicit confirmation, verifies the archive, rejects non-empty or unverifiable targets, and runs in one transaction. A source/restore manifest verifier and a disposable PostgreSQL backup/restore round-trip are covered by CI. A restore drill using the deployment's actual data remains open under [Issue #19](https://github.com/squassina/OpenShield-luna/issues/19).
 - Compose publishes the API on loopback by default; set `OPENSHIELD_PUBLISH_ADDRESS` to the Node's trusted-LAN address when remote LAN clients need access.
 - Deployment and recovery guidance: [Enterprise readiness runbook](docs/operations/enterprise-readiness.md).
 
