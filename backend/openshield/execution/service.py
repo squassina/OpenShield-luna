@@ -156,6 +156,9 @@ def execute_decision(
                 decision_id, "executed", {"reason": "equivalent_execution_already_active"},
             )
             return {"status": "already_active", "integration_id": integration_id}
+        # Publish the executable decision state before exposing its command to
+        # a heartbeat; otherwise a fast Connector could see a false denial.
+        store.update_policy_decision(decision_id, "executing", {"execution_id": execution_id})
         try:
             store.enqueue_gateway_command(
                 str(uuid4()), integration_id, execution_id, "block_ip",
@@ -165,7 +168,6 @@ def execute_decision(
             store.update_response_execution(execution_id, "failed", {"error": "gateway_command_enqueue_failed"})
             store.update_policy_decision(decision_id, "failed", {"reason": "gateway_command_enqueue_failed"})
             raise ExecutionError("Unable to queue the OpenWrt firewall command") from exc
-        store.update_policy_decision(decision_id, "executing", {"execution_id": execution_id})
         return execution
     raise ExecutionError("Unsupported enforcement action")
 
