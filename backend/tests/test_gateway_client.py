@@ -634,7 +634,8 @@ def test_connector_never_executes_without_command_authorization(tmp_path: Path) 
     from openshield.gateway import agent
 
     class NodeClient:
-        reports: list[tuple[str, str, dict[str, object]]] = []
+        def __init__(self) -> None:
+            self.reports: list[tuple[str, str, dict[str, object]]] = []
 
         def authorize_command(self, _command_id: str) -> dict[str, object]:
             return {"authorized": False, "reason": "emergency_stop_active", "lease_seconds": 0}
