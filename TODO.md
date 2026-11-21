@@ -3,7 +3,7 @@
 **Audit date:** 2026-11-20  
 **Reviewed implementation baseline:** `main` at `5950e185131fa61ec04bf1d20924549dcfa76ef4`  
 **CI evidence:** [workflow #44812278107](https://github.com/squassina/OpenShield-luna/actions/runs/44812278107) completed successfully on that baseline.  
-**Scope:** README/PLAN and engineering backlog reconciled against current main, merged PRs #153–#169, open acceptance issues #17–#19, current Docker/build inputs, and the latest CI run.
+**Scope:** README/PLAN and engineering backlog reconciled against current main, dependency updates (#153–#158, #160–#161; #159 closed as duplicate), audit/storage changes (#168–#169), open acceptance issues #17–#19, current Docker/build inputs, and the latest CI run.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
 
