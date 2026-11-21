@@ -28,8 +28,13 @@ ZEEK_FIELDS = (
 
 
 def _timestamp(value: Any) -> datetime:
+    if isinstance(value, bool):
+        raise ValueError("Sensor event requires a valid timestamp")
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, UTC)
+        try:
+            return datetime.fromtimestamp(value, UTC)
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ValueError("Sensor event requires a valid timestamp") from exc
     if isinstance(value, str):
         normalized = value.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)

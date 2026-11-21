@@ -292,17 +292,35 @@ def _check_admin_auth(request: Request) -> Response | None:
 @app.middleware("http")
 async def authenticate_requests(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/health/") or path == "/metrics":
+    request.state.admin_authenticated = not _api_auth_enabled()
+    if path.startswith("/health/"):
         return await call_next(request)
     is_gateway = path.startswith("/api/v1/gateway/")
+    is_sensor_ingestion = (
+        request.method == "POST"
+        and path.startswith("/api/v1/sensors/")
+        and path.endswith("/events")
+        and path.count("/") == 5
+    )
+    is_generic_ingestion = request.method == "POST" and path == "/api/v1/events"
+    is_bearer_ingestion = (
+        (is_sensor_ingestion or is_generic_ingestion)
+        and request.headers.get("authorization", "").startswith("Bearer ")
+    )
     if is_gateway:
         response = (
             JSONResponse({"detail": "Gateway authentication required"}, status_code=401)
             if not _gateway_token_valid(request)
             else await call_next(request)
         )
+    elif is_bearer_ingestion:
+        # Machine credentials are validated by the ingestion route. Do not
+        # treat a Bearer token as administrative authentication.
+        response = await call_next(request)
     else:
         denied = _check_admin_auth(request)
+        if denied is None:
+            request.state.admin_authenticated = True
         response = denied if denied is not None else await call_next(request)
     if is_gateway or path.endswith(("credentials", "-diagnostics")):
         response.headers["Cache-Control"] = "no-store"

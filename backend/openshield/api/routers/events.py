@@ -40,6 +40,11 @@ def create_events_router(
     def ingest_event(event: EventEnvelope, request: Request) -> dict[str, str]:
         if event.source.kind == "openwrt" and not gateway_token_valid(request):
             raise HTTPException(status_code=401, detail="Gateway authentication required")
+        if (
+            event.source.kind not in {"openwrt", "suricata", "zeek"}
+            and not getattr(request.state, "admin_authenticated", False)
+        ):
+            raise HTTPException(status_code=401, detail="Administrative authentication required")
         integration = registry.get(event.source.integration_id)
         if integration is None:
             raise HTTPException(status_code=400, detail="Unknown source integration")
@@ -59,7 +64,7 @@ def create_events_router(
         inserted = store.insert_event(event)
         if inserted:
             metrics.increment("openshield_events_ingested_total")
-        if event.source.kind == "openwrt" and event.event_type == "gateway.discovery":
+        if inserted and event.source.kind == "openwrt" and event.event_type == "gateway.discovery":
             store.record_gateway_discovery(
                 event.source.integration_id, event.payload, event.observed_at
             )

@@ -1,6 +1,7 @@
 import hashlib
 import os
 
+import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from rate_limit_helpers import reset_rate_limits
@@ -139,6 +140,25 @@ def test_generic_event_ingestion_cannot_bypass_sensor_authentication() -> None:
     assert accepted.status_code == 202
 
 
+@pytest.mark.parametrize("timestamp", [1e300, -1e300, True])
+def test_sensor_ingestion_rejects_out_of_range_numeric_timestamps(
+    timestamp: object,
+) -> None:
+    register_sensor("sensor-lab")
+    token = issue_token("sensor-lab")
+    record = sensor_record()
+    record["ts"] = timestamp
+
+    response = client.post(
+        "/api/v1/sensors/sensor-lab/events",
+        headers={"Authorization": f"Bearer {token}"},
+        json=[record],
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/v1/events").json()["items"] == []
+
+
 def test_business_admin_auth_protects_sensor_enrollment_and_credential_management(
     monkeypatch,
 ) -> None:
@@ -163,6 +183,26 @@ def test_business_admin_auth_protects_sensor_enrollment_and_credential_managemen
         headers=admin_headers,
     )
     assert rotated.status_code == 200
+    sensor_token = rotated.json()["token"]
+    assert ingest("sensor-lab", sensor_token) == 202
+
+    from datetime import UTC, datetime
+
+    generic_event = {
+        "schema_version": "openshield.event.v1",
+        "event_id": "sensor-event-with-admin-auth-enabled",
+        "source": {"integration_id": "sensor-lab", "kind": "zeek"},
+        "event_type": "network.zeek.conn",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "observed_at": datetime.now(UTC).isoformat(),
+        "severity": "info",
+        "payload": {},
+    }
+    assert client.post(
+        "/api/v1/events",
+        headers={"Authorization": f"Bearer {sensor_token}"},
+        json=generic_event,
+    ).status_code == 202
 
     # Admin credentials do not substitute for the sensor's integration-scoped token.
     assert client.post(
