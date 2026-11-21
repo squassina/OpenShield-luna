@@ -630,6 +630,46 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
     assert len(node.reports) == 1
 
 
+def test_connector_never_executes_without_command_authorization(tmp_path: Path) -> None:
+    from openshield.gateway import agent
+
+    class NodeClient:
+        reports: list[tuple[str, str, dict[str, object]]] = []
+
+        def authorize_command(self, _command_id: str) -> dict[str, object]:
+            return {"authorized": False, "reason": "emergency_stop_active", "lease_seconds": 0}
+
+        def report_command_result(
+            self, command_id: str, status: str, result: dict[str, object],
+        ) -> dict[str, object]:
+            self.reports.append((command_id, status, result))
+            return {"status": "acknowledged"}
+
+    class RouterClient:
+        calls = 0
+
+        def apply_firewall_block(self, *_args) -> dict[str, object]:
+            self.calls += 1
+            return {"section": "os_abcdef1234567890"}
+
+    spool = GatewayEventSpool(str(tmp_path / "unauthorized-command.sqlite3"))
+    node = NodeClient()
+    router = RouterClient()
+    agent._process_gateway_commands(node, router, [{
+        "command_id": "command-denied",
+        "execution_id": "execution-denied",
+        "action": "block_ip",
+        "payload": {"ip": "192.0.2.10", "direction": "source"},
+    }], spool)
+
+    assert router.calls == 0
+    assert node.reports == [(
+        "command-denied", "failed",
+        {"status": "rejected", "error": "command_not_authorized"},
+    )]
+    assert spool.get_command_result("command-denied")["acknowledged"] is True
+
+
 def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path) -> None:
     from openshield.gateway import agent
     from openshield.integrations.openwrt_rpc import OpenWrtRPCError

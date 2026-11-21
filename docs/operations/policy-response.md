@@ -81,7 +81,7 @@ A `block_ip` policy requires:
 - A Gateway Connector that can retrieve and report authenticated commands.
 - A dedicated rpcd ACL permitting only required UCI methods on the `firewall` config.
 
-The Node queues only two allowlisted command types: `block_ip` and `unblock_ip`. The Gateway Connector validates the command shape and invokes scoped UCI operations; it exposes no shell or arbitrary ubus command execution.
+The Node queues only two allowlisted command types: `block_ip` and `unblock_ip`. The Gateway Connector must advertise the `authorize_commands` capability; older connectors may receive rollback commands but never new block commands. Before each command, the Connector obtains a short authorization lease from Node. New block commands are denied when the emergency stop is active, enforcement/admin authentication is disabled, the policy is disabled or changed, the incident is no longer actionable, the autonomy cap is lowered, or the queued command is older than 60 seconds. Rollback authorization remains available during emergency stop and after policy changes. The Connector stores command results durably before reporting them; if a previously applied block is reported after its authorization is revoked, Node queues an immediate rollback. The Connector invokes only scoped UCI operations; it exposes no shell or arbitrary ubus command execution.
 
 - `direction=source`: WAN-to-LAN source IP.
 - `direction=destination`: LAN-to-WAN destination IP.
@@ -94,7 +94,7 @@ Physical hardware validation of the ACL, UCI behavior, firewall4 direction and r
 
 ## 6. TTL, rollback, and emergency stop
 
-The Node expiry worker runs every 15 seconds. Expired DNS actions are synchronized back out. Expired firewall actions queue a gateway rollback command. Failed rollbacks remain visible as `rollback_failed` and are retried; do not ignore them.
+The Node expiry worker runs every 15 seconds. Expired DNS actions are synchronized back out. Each firewall execution owns its own UCI section; expiry queues deletion of that exact section even when another response targets the same indicator. Failed rollbacks remain visible as `rollback_failed` and are retried; do not ignore them.
 
 Emergency stop is active by default:
 

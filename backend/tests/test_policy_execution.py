@@ -1,5 +1,7 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from threading import Barrier
 from unittest.mock import MagicMock
 
 import pytest
@@ -179,6 +181,42 @@ def test_manual_approval_executes_dns_block_with_ttl_and_rolls_back(monkeypatch)
         ("block", "manual-block.example"),
     }
     assert len(sync_calls) == 2
+
+
+def test_concurrent_approvals_create_only_one_response_execution(monkeypatch) -> None:
+    from openshield.api import main
+
+    _register("pihole", "pihole-home")
+    incident = _incident()
+    _enable_enforcement(monkeypatch, 1)
+    sync_calls = []
+    monkeypatch.setattr(
+        execution_service,
+        "sync_provider_lists",
+        lambda _integration, items: sync_calls.append(items) or {"status": "synced"},
+    )
+    policy = _policy()
+    decisions = [
+        main.store.create_policy_decision(
+            f"concurrent-decision-{index}", incident["incident_id"],
+            policy["policy_id"], "pending_approval", {},
+        )
+        for index in range(2)
+    ]
+    barrier = Barrier(2)
+
+    def approve(decision_id: str):
+        barrier.wait(timeout=10)
+        return execution_service.approve_decision(
+            main.store, main.registry, main.gateway_connections, decision_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(approve, [item["decision_id"] for item in decisions]))
+
+    assert len(main.store.list_response_executions()) == 1
+    assert len(sync_calls) == 1
+    assert {item.get("status") for item in results} == {"active", "already_active"}
 
 
 def test_existing_manual_dns_block_is_never_removed_by_ttl(monkeypatch) -> None:
@@ -382,6 +420,101 @@ def test_failed_gateway_rollback_is_requeued_until_acknowledged(monkeypatch) -> 
     assert execution_service.expire_due_executions(main.store, main.registry) == 1
     assert main.store.get_response_execution("execution-1")["status"] == "rollback_pending"
     assert main.store.list_pending_gateway_commands("home-gateway")[0]["action"] == "unblock_ip"
+
+
+def test_gateway_command_authorization_rechecks_runtime_state_and_rolls_back(monkeypatch) -> None:
+    from openshield.api import main
+
+    monkeypatch.setenv("OPENSHIELD_SECRET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("OPENSHIELD_GATEWAY_TOKEN", "gateway-test-token")
+    _register("openwrt", "home-gateway")
+    SecretStore(main.store).set("home-gateway", {
+        "base_url": "https://192.0.2.1", "username": "openshield", "password": "router-password",
+    })
+    incident = _incident("ip", "8.8.8.8")
+    _enable_enforcement(monkeypatch, 1)
+    policy = _policy("block_ip", "ip", "8.8.8.8", "home-gateway")
+    decision = evaluate_policy(
+        main.store, main.registry, incident["incident_id"], policy["policy_id"],
+        main.gateway_connections,
+    )
+    execution_service.approve_decision(
+        main.store, main.registry, main.gateway_connections, decision["decision_id"],
+    )
+    command = main.store.list_pending_gateway_commands("home-gateway")[0]
+
+    # A connector without the authorization capability never receives a new block.
+    legacy_connection = client.post("/api/v1/gateway/connect", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "gateway_type": "openwrt",
+        "connector_version": "0.0.9",
+        "capabilities": ["discover", "health_check"],
+    }, headers={"Authorization": "Bearer gateway-test-token"})
+    assert legacy_connection.status_code == 201
+    assert legacy_connection.json()["commands"] == []
+
+    # A current connector advertises command authorization and receives the block.
+    current_connection = client.post("/api/v1/gateway/connect", json={
+        "protocol_version": "openshield.gateway.v1",
+        "gateway_id": "home-gateway",
+        "gateway_type": "openwrt",
+        "connector_version": "1.0.0",
+        "capabilities": ["discover", "health_check", "authorize_commands"],
+    }, headers={"Authorization": "Bearer gateway-test-token"})
+    assert current_connection.status_code == 201
+    assert current_connection.json()["commands"][0]["command_id"] == command["command_id"]
+
+    headers = {"Authorization": "Bearer gateway-test-token"}
+    endpoint = f"/api/v1/gateway/commands/home-gateway/{command['command_id']}/authorize"
+    with main.store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE gateway_commands SET created_at = NOW() - INTERVAL '61 seconds' WHERE command_id = %s",
+            (command["command_id"],),
+        )
+    expired = client.post(endpoint, headers=headers)
+    assert expired.status_code == 200
+    assert expired.json()["reason"] == "command_authorization_lease_expired"
+    with main.store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE gateway_commands SET created_at = NOW() WHERE command_id = %s",
+            (command["command_id"],),
+        )
+
+    allowed = client.post(endpoint, headers=headers)
+    assert allowed.status_code == 200
+    assert allowed.json()["authorized"] is True
+
+    main.store.update_policy(policy["policy_id"], {"enabled": False})
+    disabled = client.post(endpoint, headers=headers)
+    assert disabled.status_code == 200
+    assert disabled.json()["reason"] == "policy_unavailable_or_changed"
+    main.store.update_policy(policy["policy_id"], {"enabled": True})
+
+    main.store.set_emergency_stop(True)
+    denied = client.post(endpoint, headers=headers)
+    assert denied.status_code == 200
+    assert denied.json()["reason"] == "emergency_stop_active"
+
+    # A block applied just before revocation is reported late; Node queues cleanup.
+    result = execution_service.process_gateway_command_result(
+        main.store, command["command_id"], "completed",
+        {"status": "applied", "section": "os_abcdef1234567890", "verified": True},
+    )
+    assert result["status"] == "rollback_pending"
+    rollback = main.store.list_pending_gateway_commands("home-gateway")[0]
+    assert rollback["action"] == "unblock_ip"
+    rollback_auth = client.post(
+        f"/api/v1/gateway/commands/home-gateway/{rollback['command_id']}/authorize",
+        headers=headers,
+    )
+    assert rollback_auth.status_code == 200
+    assert rollback_auth.json()["authorized"] is True
+    rolled_back = execution_service.process_gateway_command_result(
+        main.store, rollback["command_id"], "completed",
+        {"status": "rolled_back", "section": "os_abcdef1234567890", "verified": True},
+    )
+    assert rolled_back["status"] == "rolled_back"
 
 
 def test_gateway_command_agent_only_executes_allowlisted_actions(tmp_path) -> None:
