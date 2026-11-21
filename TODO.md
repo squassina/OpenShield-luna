@@ -1,8 +1,9 @@
 # OpenShield — Engineering TODO and audit findings
 
-**Audit date:** 2026-11-19  
-**Reviewed baseline:** `main` at `32b8e98ca243db3a7edc4b8d219d2afe836d3615`  
-**Scope:** repository tree (190 entries), README/PLAN/docs, Docker Compose and Dockerfiles, GitHub Actions, API/authentication, storage/migrations, gateway connector and spool, sensors, DNS polling, threat intelligence, AI, policy execution, operations scripts, and relevant tests.
+**Audit date:** 2026-11-20  
+**Reviewed implementation baseline:** `main` at `5950e185131fa61ec04bf1d20924549dcfa76ef4`  
+**CI evidence:** [workflow #44812278107](https://github.com/squassina/OpenShield-luna/actions/runs/44812278107) completed successfully on that baseline.  
+**Scope:** README/PLAN and engineering backlog reconciled against current main, merged PRs #153–#169, open acceptance issues #17–#19, current Docker/build inputs, and the latest CI run.
 
 This file is the canonical engineering backlog. Only items with current evidence remain here; closed historical issues are not repeated as open work.
 
@@ -18,7 +19,7 @@ This file is the canonical engineering backlog. Only items with current evidence
 | P5 — Policy and bounded response | Implemented; disabled by default | Physical UCI/firewall ACL, execution, TTL rollback and fail-safe acceptance before enabling |
 | P6 — Enterprise readiness baseline | Implemented | Not multi-tenant or enterprise identity-ready; RBAC and tenant isolation remain future scope |
 
-The latest main CI run at the reviewed baseline passed, including build, Ruff, mypy, pip-audit, Python tests, dashboard browser tests, PostgreSQL backup/restore drill, and non-root startup smoke tests. This is automated software evidence, not hardware or production acceptance.
+The latest main CI run (#44812278107) passed build, Ruff, mypy, pip-audit, Python tests, dashboard browser tests, the PostgreSQL backup/restore drill, and non-root startup smoke tests. This is automated software evidence, not hardware or production acceptance.
 
 ## Open GitHub acceptance issues
 
@@ -79,11 +80,13 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 
 ### P2 — Reproducibility and maintainability
 
-- [x] **Pin the complete build inputs.** Python 3.12 runtime, development and build dependencies are resolved into hash-pinned `requirements.txt`, `requirements-dev.txt` and `requirements-build.txt` files. The Dockerfile installs only with `--require-hashes`; pip 26.3 and setuptools 84.1.0 are pinned, and setuptools is declared as the exact build backend. Python 3.12, Playwright 1.64.1 and PostgreSQL 16 Alpine image references carry registry manifest digests. Playwright package/image versions stay aligned. Dependabot updates pip, Docker and Actions inputs weekly; the scheduled refresh workflow opens a PR for lock and digest changes. Implemented on this branch; CI required. Evidence: `backend/pyproject.toml`, `backend/requirements*.txt`, `backend/requirements-build.in`, `Dockerfile`, `docker-compose.yml`, `.github/dependabot.yml`, `.github/workflows/resolve-python-locks.yml`, `docs/operations/build-reproducibility.md`.
+- [x] **Pin runtime and development dependencies and container images.** The Node/test/lint base image is Python 3.15-slim; project metadata retains Python >=3.12. The pip-compiled locks use hashes and are generated with Python 3.12. The Playwright package and browser image are aligned at 1.65.2; Python, Playwright and PostgreSQL image references use manifest digests. The build-tool input pins pip 26.3 and setuptools 84.2.1. Evidence: `backend/pyproject.toml`, `backend/requirements*.txt`, `backend/requirements-build.in`, `Dockerfile`, `docker-compose.yml`, `.github/dependabot.yml`, `docs/operations/build-reproducibility.md`.
+
+- [ ] **Reconcile the build lock and scheduled image-refresh workflow.** `backend/requirements-build.in` pins setuptools 84.2.1, but the generated `backend/requirements-build.txt` still pins 84.1.0; Dockerfile installs the generated lock. The scheduled `.github/workflows/resolve-python-locks.yml` still searches for `python:3.12-slim` and Playwright 1.64.1, while the Dockerfile now uses Python 3.15-slim and Playwright 1.65.2. Its image replacement/verification logic is therefore out of sync with current Dockerfile references. Regenerate the build lock and update the refresh workflow before relying on scheduled lock/image updates.
 
 - [x] **Reconcile PLAN.md with the merged implementation.** Updated P3/P4/P5/P6 status text to reflect the CI-validated `main` baseline, corrected PostgreSQL migration/pooling/audit and gateway-spool details, and replaced historical hardware-issue links with the active #17 acceptance issue. Remaining physical and production acceptance boundaries stay explicit.
 
-- [ ] **Reduce large-module maintenance cost incrementally.** Six slices are merged: policy/decision (`storage_policies.py`), integration/secret/poll-cursor (`storage_integrations.py`), incident/investigation (`storage_incidents.py`), gateway inventory (`storage_gateway_inventory.py`), response execution/command queue/emergency stop (`storage_execution.py`, PR #166), and audit persistence (`storage_audit.py`, PR #167). A seventh slice is in review: event ingestion, lookup, pagination and batched deletion (`storage_events.py`). `PostgresStore` composes the mixins without changing method names, SQL, transaction boundaries or event/audit behavior. `storage.py` is now 1,242 lines, down from roughly 2,613; further splits should retain clear boundaries and existing regression coverage. The large dashboard asset remains.
+- [ ] **Reduce large-module maintenance cost incrementally.** Seven slices are merged: policy/decision (`storage_policies.py`), integration/secret/poll-cursor (`storage_integrations.py`), incident/investigation (`storage_incidents.py`), gateway inventory (`storage_gateway_inventory.py`), response execution/command queue/emergency stop (`storage_execution.py`, PR #166), audit persistence (`storage_audit.py`, PR #167), and event ingestion/lookup/pagination/batched deletion (`storage_events.py`, PR #169). `PostgresStore` composes the mixins without changing method names, SQL, transaction boundaries or event/audit behavior. `storage.py` is 1,242 lines, down from roughly 2,613. Further splits remain optional maintenance work and must preserve cohesive boundaries and regression coverage; the large dashboard asset also remains.
 
 - [x] **Add documentation and dashboard static checks to CI.** CI runs `scripts/ops/check_static_assets.py` before container builds. The standard-library checker validates repository-relative Markdown links/images and runs `node --check` against inline JavaScript extracted from `backend/openshield/dashboard.html`; unit tests cover fenced/inline code, balanced parentheses, root/relative links, and inline/module scripts. Implemented in PR #151 (CI #1222 passed). Evidence: `scripts/ops/check_static_assets.py`, `backend/tests/test_static_checks.py`, `.github/workflows/ci.yml`.
 
@@ -109,4 +112,6 @@ The latest main CI run at the reviewed baseline passed, including build, Ruff, m
 - P5 exact-match policies, approval, emergency stop, bounded DNS/OpenWrt execution, TTL and rollback logic; hardware validation remains a gate.
 - P6 multi-gateway summaries, loopback-by-default publishing and PostgreSQL backup/restore tooling.
 - Event keyset pagination, opt-in batched retention, sensor fixtures, benchmark/query-plan tooling, atomic backup publication, fail-closed transactional restore, and a disposable PostgreSQL backup/restore round-trip in CI.
+- Dependency/image updates merged in PRs #153–#161: Python 3.15 runtime image, Playwright 1.65.2, current GitHub Actions majors, mypy 2.4.1, and setuptools 84.2.1. PR #159 was closed as a duplicate of #154.
+- Audit WORM export/upload tooling merged in PR #168; event persistence extraction merged in PR #169.
 - Playwright browser setup uses the official browser image; no apt-based browser dependency installation is needed in CI. See [dashboard browser test runbook](docs/operations/dashboard-browser-tests.md).
