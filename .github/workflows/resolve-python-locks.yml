@@ -29,15 +29,97 @@ jobs:
             --output-file requirements-dev.txt pyproject.toml
           pip-compile --upgrade --resolver=backtracking --allow-unsafe --no-strip-extras --generate-hashes \
             --output-file requirements-build.txt requirements-build.in
+      - name: Read image tags from Dockerfile and Compose
+        id: image_refs
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          dockerfile = Path("Dockerfile").read_text(encoding="utf-8").splitlines()
+          compose = Path("docker-compose.yml").read_text(encoding="utf-8").splitlines()
+
+          def docker_stage_image(stage: str) -> str:
+              matches = []
+              for line in dockerfile:
+                  parts = line.strip().split()
+                  if (
+                      len(parts) >= 4
+                      and parts[0] == "FROM"
+                      and parts[-2].upper() == "AS"
+                      and parts[-1].lower() == stage
+                  ):
+                      matches.append(parts[-3].split("@", 1)[0])
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Dockerfile FROM stage '{stage}', found {len(matches)}"
+                  )
+              return matches[0]
+
+          def compose_service_image(service: str) -> str:
+              starts = [
+                  index for index, line in enumerate(compose)
+                  if line == f"  {service}:"
+              ]
+              if len(starts) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Compose service '{service}', found {len(starts)}"
+                  )
+              start = starts[0]
+              end = len(compose)
+              for index in range(start + 1, len(compose)):
+                  line = compose[index]
+                  if line and (
+                      not line.startswith(" ")
+                      or (line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"))
+                  ):
+                      end = index
+                      break
+              images = []
+              for line in compose[start + 1:end]:
+                  stripped = line.strip()
+                  if stripped.startswith("image:"):
+                      images.append(stripped.split(":", 1)[1].strip().strip('"').strip("'"))
+              if len(images) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one image in Compose service '{service}', found {len(images)}"
+                  )
+              return images[0].split("@", 1)[0]
+
+          refs = {
+              "python": docker_stage_image("base"),
+              "playwright": docker_stage_image("browser-test"),
+              "postgres": compose_service_image("openshield-db"),
+          }
+          for name, ref in refs.items():
+              if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*$", ref):
+                  raise SystemExit(f"Unexpected image reference for {name}: {ref!r}")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              for name, ref in refs.items():
+                  output.write(f"{name}={ref}\n")
+          PY
       - name: Resolve current image manifest digests
         id: images
+        env:
+          PYTHON_IMAGE_REF: ${{ steps.image_refs.outputs.python }}
+          PLAYWRIGHT_IMAGE_REF: ${{ steps.image_refs.outputs.playwright }}
+          POSTGRES_IMAGE_REF: ${{ steps.image_refs.outputs.postgres }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           resolve_ref() {
             local ref="$1"
             local repository="${ref%:*}"
             docker pull "$ref" >/dev/null
             local resolved
-            resolved="$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F "${repository}@sha256:" | head -n 1)"
+            resolved="$(
+              docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+                | grep -F "${repository}@sha256:" | head -n 1 || true
+            )"
             if [ -z "$resolved" ]; then
               echo "Could not resolve manifest digest for $ref" >&2
               return 1
@@ -45,46 +127,93 @@ jobs:
             printf '%s@%s\n' "$ref" "${resolved##*@}"
           }
 
-          python_image="$(resolve_ref python:3.12-slim)"
-          playwright_image="$(resolve_ref mcr.microsoft.com/playwright/python:v1.64.1-noble)"
-          postgres_image="$(resolve_ref postgres:16-alpine)"
+          python_image="$(resolve_ref "$PYTHON_IMAGE_REF")"
+          playwright_image="$(resolve_ref "$PLAYWRIGHT_IMAGE_REF")"
+          postgres_image="$(resolve_ref "$POSTGRES_IMAGE_REF")"
 
-          python - "$python_image" "$playwright_image" "$postgres_image" <<'PY'
+          {
+            printf 'python=%s\n' "$python_image"
+            printf 'playwright=%s\n' "$playwright_image"
+            printf 'postgres=%s\n' "$postgres_image"
+          } >> "$GITHUB_OUTPUT"
+      - name: Update pinned image digests
+        env:
+          PYTHON_IMAGE: ${{ steps.images.outputs.python }}
+          PLAYWRIGHT_IMAGE: ${{ steps.images.outputs.playwright }}
+          POSTGRES_IMAGE: ${{ steps.images.outputs.postgres }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
           from pathlib import Path
-          import sys
 
-          python_image, playwright_image, postgres_image = sys.argv[1:]
-          dockerfile = Path("Dockerfile")
-          docker_lines = dockerfile.read_text(encoding="utf-8").splitlines()
-          pinned = {
-              "FROM python:3.12-slim": f"FROM {python_image}",
-              "FROM mcr.microsoft.com/playwright/python:v1.64.1-noble": (
-                  f"FROM {playwright_image}"
-              ),
-          }
-          for index, line in enumerate(docker_lines):
-              for prefix, replacement in pinned.items():
-                  suffix = " AS base" if prefix.endswith("python:3.12-slim") else " AS browser-test"
-                  if line.startswith(prefix) and line.endswith(suffix):
-                      docker_lines[index] = replacement + suffix
+          def replace_docker_stage(path: Path, stage: str, image: str) -> None:
+              lines = path.read_text(encoding="utf-8").splitlines()
+              matches = []
+              for index, line in enumerate(lines):
+                  parts = line.strip().split()
+                  if (
+                      len(parts) >= 4
+                      and parts[0] == "FROM"
+                      and parts[-2].upper() == "AS"
+                      and parts[-1].lower() == stage
+                  ):
+                      matches.append((index, parts))
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Dockerfile FROM stage '{stage}', found {len(matches)}"
+                  )
+              index, parts = matches[0]
+              indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+              options = parts[1:-3]
+              instruction = " ".join(["FROM", *options, image, "AS", stage])
+              lines[index] = f"{indent}{instruction}"
+              path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          def service_bounds(lines: list[str], service: str) -> tuple[int, int]:
+              starts = [
+                  index for index, line in enumerate(lines)
+                  if line == f"  {service}:"
+              ]
+              if len(starts) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Compose service '{service}', found {len(starts)}"
+                  )
+              start = starts[0]
+              end = len(lines)
+              for index in range(start + 1, len(lines)):
+                  line = lines[index]
+                  if line and (
+                      not line.startswith(" ")
+                      or (line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"))
+                  ):
+                      end = index
                       break
-          if not any(line == f"FROM {python_image} AS base" for line in docker_lines):
-              raise SystemExit("Python image digest was not applied to Dockerfile")
-          if not any(
-              line == f"FROM {playwright_image} AS browser-test" for line in docker_lines
-          ):
-              raise SystemExit("Playwright image digest was not applied to Dockerfile")
-          dockerfile.write_text("\n".join(docker_lines) + "\n", encoding="utf-8")
+              return start, end
 
-          compose = Path("docker-compose.yml")
-          compose_lines = compose.read_text(encoding="utf-8").splitlines()
-          for index, line in enumerate(compose_lines):
-              if line.strip().startswith("image: postgres:16-alpine"):
-                  compose_lines[index] = f"    image: {postgres_image}"
-                  break
-          else:
-              raise SystemExit("PostgreSQL image was not found in docker-compose.yml")
-          compose.write_text("\n".join(compose_lines) + "\n", encoding="utf-8")
+          def replace_compose_service_image(path: Path, service: str, image: str) -> None:
+              lines = path.read_text(encoding="utf-8").splitlines()
+              start, end = service_bounds(lines, service)
+              matches = [
+                  index for index in range(start + 1, end)
+                  if lines[index].strip().startswith("image:")
+              ]
+              if len(matches) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one image in Compose service '{service}', found {len(matches)}"
+                  )
+              index = matches[0]
+              indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+              lines[index] = f"{indent}image: {image}"
+              path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          replace_docker_stage(Path("Dockerfile"), "base", os.environ["PYTHON_IMAGE"])
+          replace_docker_stage(
+              Path("Dockerfile"), "browser-test", os.environ["PLAYWRIGHT_IMAGE"]
+          )
+          replace_compose_service_image(
+              Path("docker-compose.yml"), "openshield-db", os.environ["POSTGRES_IMAGE"]
+          )
           PY
       - name: Open dependency and image refresh pull request
         uses: peter-evans/create-pull-request@v8
@@ -95,8 +224,9 @@ jobs:
           delete-branch: true
           title: "build: refresh Python locks and container image digests"
           body: |
-            Automated weekly refresh of the Python 3.12 runtime, development and build locks,
-            including package hashes, plus the pinned Python, Playwright and PostgreSQL
-            container manifest digests.
+            Automated weekly refresh of the Python 3.12 dependency locks,
+            including package hashes. Container image tags are read from the
+            current Dockerfile and Compose configuration before manifest
+            digests are refreshed, so this workflow follows version upgrades.
 
             CI must pass before merging. Review dependency changelogs and image release notes.

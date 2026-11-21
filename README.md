@@ -171,11 +171,10 @@ The Node, test, and lint base image uses Python 3.15-slim. Project metadata
 declares Python >=3.12, while pip-compiled dependency locks are resolved with
 Python 3.12 and package hashes. The Playwright browser image is pinned at
 1.65.2; Python, Playwright and PostgreSQL images use manifest digests.
-Dependency and GitHub Actions updates are reviewed through pull requests.
-The scheduled lock-refresh workflow currently has stale image references, and
-the generated build lock does not yet match its input; do not rely on that
-workflow until those items are reconciled (tracked in [TODO.md](TODO.md)).
-See the [build reproducibility runbook](docs/operations/build-reproducibility.md).
+The build-tool lock matches its input, and the scheduled refresh workflow reads
+image tags directly from the Dockerfile and Compose configuration before
+updating manifest digests. Dependency and GitHub Actions updates are reviewed
+through pull requests. See the [build reproducibility runbook](docs/operations/build-reproducibility.md).
 
 ## Gateway connector
 
