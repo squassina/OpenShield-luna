@@ -40,6 +40,7 @@ class Capability(StrEnum):
     DISCOVER = "discover"
     HEALTH_CHECK = "health_check"
     READ_EVENTS = "read_events"
+    AUTHORIZE_COMMANDS = "authorize_commands"
     READ_CONFIGURATION = "read_configuration"
     WRITE_CONFIGURATION = "write_configuration"
     EXECUTE_ACTION = "execute_action"

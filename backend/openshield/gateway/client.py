@@ -61,6 +61,12 @@ class GatewayConnectorClient:
             payload["spool_stats"] = spool_stats
         return self._post("/api/v1/gateway/heartbeat", payload)
 
+    def authorize_command(self, command_id: str) -> dict[str, object]:
+        return self._post(
+            f"/api/v1/gateway/commands/{self._gateway_id}/{command_id}/authorize",
+            {},
+        )
+
     def report_command_result(
         self, command_id: str, status: str, result: dict[str, object]
     ) -> dict[str, object]:

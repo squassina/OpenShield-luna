@@ -193,9 +193,46 @@ def _process_gateway_commands(
                 _flush_command_results(client, spool)
             continue
 
+        try:
+            authorization = client.authorize_command(command_id)
+        except GatewayTransportError as exc:
+            logger.warning(
+                "Gateway command authorization deferred for command %s: %s",
+                command_id,
+                exc,
+            )
+            return
+        lease_seconds = authorization.get("lease_seconds")
+        authorized_at = time.monotonic()
+        if (
+            authorization.get("authorized") is not True
+            or isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, int)
+            or not 1 <= lease_seconds <= 10
+        ):
+            try:
+                spool.enqueue_command_result(
+                    command_id,
+                    "failed",
+                    {"status": "rejected", "error": "command_not_authorized"},
+                )
+            except ValueError:
+                logger.error("Conflicting persisted result for rejected command %s", command_id)
+                continue
+            _flush_command_results(client, spool)
+            continue
+
         if not isinstance(payload, dict):
             payload = {}
         try:
+            if time.monotonic() - authorized_at > lease_seconds:
+                spool.enqueue_command_result(
+                    command_id,
+                    "failed",
+                    {"status": "rejected", "error": "command_authorization_lease_expired"},
+                )
+                _flush_command_results(client, spool)
+                continue
             if openwrt_client is None:
                 raise OpenWrtRPCError("OpenWrt RPC is not configured")
             if action == "block_ip":
@@ -360,7 +397,11 @@ def main() -> None:
             "OPENSHIELD_OPENWRT_PASSWORD must be configured together"
         )
     openwrt_client = None
-    capabilities = [Capability.DISCOVER, Capability.HEALTH_CHECK]
+    capabilities = [
+        Capability.DISCOVER,
+        Capability.HEALTH_CHECK,
+        Capability.AUTHORIZE_COMMANDS,
+    ]
     if all(openwrt_values):
         openwrt_client = OpenWrtRPCClient(
             base_url=openwrt_url,

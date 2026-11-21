@@ -6,31 +6,56 @@ from psycopg.types.json import Jsonb
 class PostgresExecutionStoreMixin:
     """Response execution, gateway command and emergency-stop persistence."""
 
+    def _insert_response_execution(self, cursor, execution: dict[str, object]) -> None:
+        cursor.execute(
+            """
+            INSERT INTO response_executions
+                (execution_id, decision_id, incident_id, policy_id, integration_id,
+                 action, indicator_type, indicator_value, direction, status, ttl_seconds,
+                 expires_at, adapter_result)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                execution["execution_id"], execution["decision_id"], execution["incident_id"],
+                execution["policy_id"], execution["integration_id"], execution["action"],
+                execution["indicator_type"], execution["indicator_value"], execution["direction"],
+                execution["status"], execution["ttl_seconds"], execution.get("expires_at"),
+                Jsonb(execution.get("adapter_result", {})),
+            ),
+        )
+        self._insert_audit(
+            cursor, "response.execution.created", None, str(execution["execution_id"]),
+            {"action": execution["action"], "indicator_type": execution["indicator_type"],
+             "integration_id": execution["integration_id"], "status": execution["status"],
+             "ttl_seconds": execution["ttl_seconds"]},
+        )
+
     def create_response_execution(self, execution: dict[str, object]) -> dict[str, object]:
         with self._connect() as connection, connection.cursor() as cursor:
+            self._insert_response_execution(cursor, execution)
+        return execution
+
+    def create_response_execution_if_absent(self, execution: dict[str, object]) -> bool:
+        lock_key = "\x1f".join(
+            str(execution[key]) for key in ("integration_id", "indicator_type", "indicator_value")
+        )
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_key,),
+            )
             cursor.execute(
                 """
-                INSERT INTO response_executions
-                    (execution_id, decision_id, incident_id, policy_id, integration_id,
-                     action, indicator_type, indicator_value, direction, status, ttl_seconds,
-                     expires_at, adapter_result)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                SELECT 1 FROM response_executions
+                WHERE indicator_type = %s AND indicator_value = %s AND integration_id = %s
+                  AND status IN ('pending_gateway', 'active', 'rollback_pending', 'rollback_failed')
+                LIMIT 1
                 """,
-                (
-                    execution["execution_id"], execution["decision_id"], execution["incident_id"],
-                    execution["policy_id"], execution["integration_id"], execution["action"],
-                    execution["indicator_type"], execution["indicator_value"], execution["direction"],
-                    execution["status"], execution["ttl_seconds"], execution.get("expires_at"),
-                    Jsonb(execution.get("adapter_result", {})),
-                ),
+                (execution["indicator_type"], execution["indicator_value"], execution["integration_id"]),
             )
-            self._insert_audit(
-                cursor, "response.execution.created", None, str(execution["execution_id"]),
-                {"action": execution["action"], "indicator_type": execution["indicator_type"],
-                 "integration_id": execution["integration_id"], "status": execution["status"],
-                 "ttl_seconds": execution["ttl_seconds"]},
-            )
-        return execution
+            if cursor.fetchone() is not None:
+                return False
+            self._insert_response_execution(cursor, execution)
+        return True
 
     @staticmethod
     def _response_execution_from_row(row: tuple[object, ...]) -> dict[str, object]:

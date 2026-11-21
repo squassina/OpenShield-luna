@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -75,7 +76,11 @@ def execute_decision(
             "expires_at": now + timedelta(seconds=ttl_seconds),
             "adapter_result": {"created_by_execution": not existing, "verified": False},
         }
-        store.create_response_execution(execution)
+        if not store.create_response_execution_if_absent(execution):
+            store.update_policy_decision(
+                decision_id, "executed", {"reason": "equivalent_execution_already_active"},
+            )
+            return {"status": "already_active", "integration_id": integration_id}
         try:
             if not existing:
                 store.upsert_privacy_list(
@@ -146,7 +151,11 @@ def execute_decision(
             "direction": direction, "status": "pending_gateway", "ttl_seconds": ttl_seconds,
             "expires_at": None, "adapter_result": {},
         }
-        store.create_response_execution(execution)
+        if not store.create_response_execution_if_absent(execution):
+            store.update_policy_decision(
+                decision_id, "executed", {"reason": "equivalent_execution_already_active"},
+            )
+            return {"status": "already_active", "integration_id": integration_id}
         try:
             store.enqueue_gateway_command(
                 str(uuid4()), integration_id, execution_id, "block_ip",
@@ -170,7 +179,11 @@ def approve_decision(
         raise ValueError("Policy decision not found")
     if decision["status"] != "pending_approval":
         raise ValueError("Only pending decisions can be approved")
-    store.update_policy_decision(decision_id, "approved", {"approval": "human"})
+    transitioned = store.transition_policy_decision(
+        decision_id, "pending_approval", "approved", {"approval": "human"},
+    )
+    if transitioned is None:
+        raise ValueError("Only pending decisions can be approved")
     return execute_decision(store, registry, gateway_registry, decision_id)
 
 
@@ -180,8 +193,103 @@ def reject_decision(store: PostgresStore, decision_id: str, reason: str) -> dict
         raise ValueError("Policy decision not found")
     if decision["status"] != "pending_approval":
         raise ValueError("Only pending decisions can be rejected")
-    result = store.update_policy_decision(decision_id, "rejected", {"rejection_reason": reason[:500]})
-    return result or {}
+    result = store.transition_policy_decision(
+        decision_id, "pending_approval", "rejected", {"rejection_reason": reason[:500]},
+    )
+    if result is None:
+        raise ValueError("Only pending decisions can be rejected")
+    return result
+
+
+def _block_ip_authorization_denial_reason(
+    store: PostgresStore,
+    execution: dict[str, object],
+    *,
+    command: dict[str, object] | None = None,
+    require_pending: bool = True,
+) -> str | None:
+    if execution.get("action") != "block_ip" or execution.get("status") != "pending_gateway":
+        return "execution_not_pending"
+    if command is not None:
+        if command.get("action") != "block_ip":
+            return "unsupported_command_action"
+        if require_pending and command.get("status") != "pending":
+            return "command_not_pending"
+        created_at = command.get("created_at")
+        if not isinstance(created_at, str):
+            return "command_created_at_missing"
+        try:
+            queued_at = datetime.fromisoformat(created_at)
+        except ValueError:
+            return "command_created_at_invalid"
+        if queued_at.tzinfo is None:
+            queued_at = queued_at.replace(tzinfo=UTC)
+        age_seconds = (datetime.now(UTC) - queued_at).total_seconds()
+        if age_seconds < -5 or age_seconds > 60:
+            return "command_authorization_lease_expired"
+    if store.get_emergency_stop():
+        return "emergency_stop_active"
+    if not enforcement_enabled():
+        return "enforcement_disabled_or_admin_auth_missing"
+    policy = store.get_policy(str(execution.get("policy_id")))
+    if (
+        policy is None or policy.get("enabled") is not True
+        or policy.get("action") != "block_ip"
+        or policy.get("integration_id") != execution.get("integration_id")
+        or policy.get("indicator_type") != execution.get("indicator_type")
+        or policy.get("indicator_value") != execution.get("indicator_value")
+        or policy.get("direction") != execution.get("direction")
+    ):
+        return "policy_unavailable_or_changed"
+    if int(policy["autonomy_level"]) > max_autonomy_level():
+        return "autonomy_cap_changed"
+    incident = store.get_incident(str(execution.get("incident_id")))
+    if incident is None or incident.get("status") in {"closed", "false_positive"}:
+        return "incident_not_actionable"
+    decision = store.get_policy_decision(str(execution.get("decision_id")))
+    if (
+        decision is None or decision.get("status") != "executing"
+        or decision.get("policy_id") != execution.get("policy_id")
+        or decision.get("incident_id") != execution.get("incident_id")
+    ):
+        return "policy_decision_not_executable"
+    return None
+
+
+def authorize_gateway_command(
+    store: PostgresStore, gateway_id: str, command_id: str,
+) -> dict[str, object]:
+    command = store.get_gateway_command(command_id)
+    if command is None or command.get("gateway_id") != gateway_id:
+        return {"authorized": False, "reason": "command_unavailable", "lease_seconds": 0}
+    if command.get("status") != "pending":
+        return {"authorized": False, "reason": "command_not_pending", "lease_seconds": 0}
+    execution = store.get_response_execution(str(command["execution_id"]))
+    if execution is None or execution.get("integration_id") != gateway_id:
+        return {"authorized": False, "reason": "execution_unavailable", "lease_seconds": 0}
+    if command.get("action") == "unblock_ip":
+        payload = command.get("payload")
+        section = payload.get("section") if isinstance(payload, dict) else None
+        adapter_result = execution.get("adapter_result")
+        expected = adapter_result.get("section") if isinstance(adapter_result, dict) else None
+        authorized = (
+            execution.get("action") == "block_ip"
+            and execution.get("status") in {"active", "rollback_pending", "rollback_failed"}
+            and isinstance(section, str)
+            and re.fullmatch(r"os_[a-f0-9]{1,16}", section) is not None
+            and section == expected
+        )
+        return {
+            "authorized": authorized,
+            "reason": None if authorized else "rollback_not_owned_by_execution",
+            "lease_seconds": 10 if authorized else 0,
+        }
+    if command.get("action") != "block_ip":
+        return {"authorized": False, "reason": "unsupported_command_action", "lease_seconds": 0}
+    reason = _block_ip_authorization_denial_reason(
+        store, execution, command=command, require_pending=True,
+    )
+    return {"authorized": reason is None, "reason": reason, "lease_seconds": 10 if reason is None else 0}
 
 
 def process_gateway_command_result(
@@ -195,6 +303,45 @@ def process_gateway_command_result(
         raise ValueError("Response execution not found")
     now = datetime.now(UTC)
     if status == "completed" and command["action"] == "block_ip" and result.get("status") == "applied":
+        denial_reason = _block_ip_authorization_denial_reason(
+            store, execution, command=command, require_pending=False,
+        )
+        section = result.get("section")
+        if denial_reason is not None:
+            if isinstance(section, str) and re.fullmatch(r"os_[a-f0-9]{1,16}", section):
+                if not store.has_pending_gateway_command(execution["execution_id"], "unblock_ip"):
+                    store.enqueue_gateway_command(
+                        str(uuid4()), str(execution["integration_id"]),
+                        str(execution["execution_id"]), "unblock_ip", {"section": section},
+                    )
+                updated = store.update_response_execution(
+                    execution["execution_id"], "rollback_pending",
+                    {"section": section, "rollback": "authorization_revoked_after_apply",
+                     "authorization_reason": denial_reason},
+                    expires_at=now,
+                )
+            else:
+                updated = store.update_response_execution(
+                    execution["execution_id"], "rollback_failed",
+                    {"rollback": "applied_rule_section_unavailable",
+                     "authorization_reason": denial_reason},
+                    expires_at=now,
+                )
+            store.update_policy_decision(
+                execution["decision_id"], "blocked",
+                {"reason": "gateway_authorization_revoked", "authorization_reason": denial_reason},
+            )
+            return updated or execution
+        if not isinstance(section, str) or not re.fullmatch(r"os_[a-f0-9]{1,16}", section):
+            updated = store.update_response_execution(
+                execution["execution_id"], "rollback_failed",
+                {"rollback": "applied_rule_section_invalid"}, expires_at=now,
+            )
+            store.update_policy_decision(
+                execution["decision_id"], "blocked",
+                {"reason": "gateway_returned_invalid_firewall_section"},
+            )
+            return updated or execution
         expires_at = now + timedelta(seconds=int(execution["ttl_seconds"]))
         updated = store.update_response_execution(
             execution["execution_id"], "active", result, expires_at=expires_at,
@@ -262,17 +409,8 @@ def expire_due_executions(
                 )
             processed += 1
             continue
-        if store.has_active_response_execution(
-            str(execution["indicator_type"]), str(execution["indicator_value"]),
-            integration_id, str(execution["execution_id"]),
-        ):
-            store.update_response_execution(
-                str(execution["execution_id"]), "rolled_back",
-                {"rollback": "another_active_execution_retains_the_control"},
-                rolled_back_at=datetime.now(UTC),
-            )
-            processed += 1
-            continue
+        # Each execution owns its own firewall section. Always remove this
+        # execution's section; another execution must not orphan this rule.
         if execution["action"] == "block_domain":
             if not execution["adapter_result"].get("created_by_execution"):
                 store.update_response_execution(
