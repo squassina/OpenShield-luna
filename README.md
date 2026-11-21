@@ -236,7 +236,7 @@ Event ingestion requires a registered integration ID and matching source kind. D
 | Gateway connector protocol v1, heartbeat, durable event outbox | Implemented; automated retry/recovery tests pass |
 | PostgreSQL persistence and audit integrity | Implemented (hash chain, verification, NDJSON export and S3 Object Lock tooling); retention policy and live bucket/retrieval acceptance pending |
 | Structured logging and Prometheus metrics | Implemented (process-local counters) |
-| On-device OpenWrt agent and secure bootstrap | Pending |
+| Router-side OpenWrt agent/package installation | Not part of the current Home deployment; the connector runs on a nearby Linux/Docker host and the router remains package-free |
 | Business authentication, roles, and gateway enrollment | Future phase |
 | SaaS multi-tenancy and billing | Future phase |
 | Docker-first runtime, lint, tests, and CI | Implemented |
