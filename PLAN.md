@@ -2,8 +2,8 @@
 
 **Product:** OpenShield — Autonomous Network Security & Privacy Intelligence  
 **Document:** Product and Technical Plan  
-**Version:** 0.2  
-**Status:** Initial baseline  
+**Version:** 0.3  
+**Status:** P0–P6 software baseline implemented; operational acceptance open  
 **Deployment philosophy:** Self-hosted first, gateway-first, local-first AI, policy-driven autonomy
 
 ---
@@ -17,6 +17,18 @@ OpenShield is **not** intended to replace every firewall, DNS resolver, IDS, or 
 The first deployment model is **Gateway-first**: a lightweight connector runs on or alongside a supported gateway, while the OpenShield Node runs on a separate Linux server, mini PC, or VM. The gateway must continue forwarding traffic when the Node is unavailable. OpenShield must not become an inline single point of failure.
 
 AI is **hybrid and local-first**. Local inference is the default. Cloud AI is optional, explicitly configured, and receives only minimized and sanitized context. AI can investigate and recommend; deterministic policy and execution components govern all actions.
+
+### Current implementation and acceptance status — 2026-11-20
+
+- **Software delivery:** P0–P6 software scope is implemented on `main`. The implementation baseline `5950e185131fa61ec04bf1d20924549dcfa76ef4` passed the full [CI workflow #44812278107](https://github.com/squassina/OpenShield-luna/actions/runs/44812278107).
+- **Physical gateway:** OpenWrt rpcd/ACL compatibility, forwarding independence during Node outage, and P5 UCI command/rollback behavior remain unverified on hardware ([Issue #17](https://github.com/squassina/OpenShield-luna/issues/17)).
+- **Live sensors:** real Suricata and Zeek deployment, shipper recovery, and sustained resource measurements remain pending ([Issue #18](https://github.com/squassina/OpenShield-luna/issues/18)).
+- **Database operations:** representative 1k/10k/50k load, query-plan/index review, and restore from actual deployment data remain pending ([Issue #19](https://github.com/squassina/OpenShield-luna/issues/19)); CI uses synthetic data and disposable databases.
+- **Audit governance:** SHA-256 chain verification, NDJSON export, and S3 Object Lock COMPLIANCE upload tooling are implemented. A first upload to a separately controlled bucket, retrieval/restore drill, and approved retention/legal-hold policy remain open; automatic audit deletion stays disabled.
+- **Response safety:** P5 enforcement remains disabled by default, the emergency stop is active, and the global autonomy cap is L0. Do not enable enforcement before physical acceptance.
+- **Deployment boundary:** the current Home profile is single-household/trusted-LAN. User identity, RBAC, organization/site ownership, and tenant isolation remain future gates for Business/SaaS.
+
+This status separates implemented software and CI evidence from acceptance that only a real deployment can establish.
 
 ## 2. Vision and Product Positioning
 
@@ -554,14 +566,14 @@ The first release should optimize for trust, safety, clarity, and a complete wor
 
 ## P0 implementation status — OpenWrt read-only integration
 
-Current increment adds a read-only OpenWrt rpcd/ubus client used by the nearby-host Gateway Connector (not by the Node). OpenWrt's own RPC session login remains enabled; OpenShield API authentication is disabled in residential mode:
+The read-only OpenWrt rpcd/ubus client runs in the nearby-host Gateway Connector (not in the Node). OpenWrt's own RPC session login remains enabled. Residential admin HTTP Basic authentication is optional and disabled by default:
 
 - Session login followed by `system.board` and `network.interface.dump`.
 - Discovery returns normalized board identity and interface metadata.
 - Health check verifies RPC reachability and returns basic device identity.
 - HTTP timeout is bounded to 5 seconds; response bodies are capped at 1 MiB.
 - TLS certificate verification uses Python's default HTTPS behavior.
-- Credentials are supplied only to the connector through deployment environment variables, never integration configuration.
+- Router credentials can use the legacy connector environment-variable fallback or be entered through the dashboard. Dashboard-managed credentials are encrypted at rest by the Node and delivered to the authenticated connector; secrets are not returned by integration APIs or stored in integration JSON.
 - Integration configuration rejects secret-like field names to prevent accidental API disclosure.
 - The adapter advertises only `discover` and `health_check`; it does not claim event reading or enforcement.
 - No firewall, routing, wireless, or forwarding mutation is implemented.
@@ -575,8 +587,8 @@ Environment:
 Validation boundary:
 - RPC behavior is covered with mocked transport tests.
 - Real OpenWrt hardware/version compatibility is not yet validated.
-- The nearby-host connector agent performs discovery at startup and forwards discovery/health envelopes to the Node without an OpenShield API key.
-- P0 remains incomplete until a real normalized gateway event is verified on OpenWrt hardware, durable audit/recovery requirements are addressed, and gateway independence is validated.
+- The nearby-host connector agent performs discovery and forwards discovery/health envelopes to the Node. Gateway authentication is separate from optional residential admin HTTP Basic.
+- **Software status:** P0 is implemented and CI-validated, including durable audit/recovery. **Acceptance status:** real firmware/ACL compatibility and gateway forwarding independence remain open under [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 
 ## P0 implementation status — connector event forwarding
@@ -598,7 +610,7 @@ Required connector variables:
 - `OPENSHIELD_OPENWRT_PASSWORD`
 - `OPENSHIELD_GATEWAY_ID` (default `home-gateway`)
 
-The integration must be registered on the Node before event forwarding. Hardware validation is still pending.
+The default `home-gateway` integration is provisioned automatically during the connector's first handshake. Physical hardware validation remains pending under [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17).
 
 
 ## P0 implementation status — PostgreSQL persistence
@@ -624,6 +636,7 @@ Implemented:
 - Atomic custom-format backup publication with archive verification and mode 0600.
 - Restore preflight that refuses non-empty or unverifiable targets, followed by a single-transaction restore.
 - Source/restore manifest comparison and a real disposable PostgreSQL backup/restore round-trip in CI.
+- `PostgresStore` is decomposed into seven storage mixins: policies, integrations, incidents, gateway inventory, execution, audit, and events. The extraction is structural; method contracts, SQL behavior, and transaction boundaries are preserved. `storage.py` is approximately 1,242 lines.
 
 Remaining:
 - Deployment-specific backup cadence, off-host encrypted retention, and production database hardening.
@@ -644,8 +657,8 @@ The PostgreSQL audit log now records security-relevant successful operations and
 - Audit records contain no OpenWrt credentials. Residential API requests have no authenticated actor identity.
 
 Remaining audit hardening:
-- Authentication-failure auditing is deferred with authentication itself.
-- The local SHA-256 chain and verified NDJSON export are implemented. AWS S3 Object Lock COMPLIANCE upload tooling is available; first deployment to a separately controlled bucket and retrieval/restore validation remain operational acceptance work.
+- The residential profile has no per-user identity; optional admin Basic authentication does not provide user accounts or RBAC. Authentication-failure audit coverage must be reviewed before a shared Business profile is supported.
+- The local SHA-256 chain and verified NDJSON export are implemented. PR #168 added AWS S3 Object Lock COMPLIANCE upload tooling; first deployment to a separately controlled bucket, bucket-policy review, and retrieval/restore validation remain operational acceptance work.
 - Audit retention and archival policy remain pending; automatic deletion is disabled until legal hold, retention periods, access controls and chain continuation are approved.
 
 
@@ -696,7 +709,7 @@ Use [the OpenWrt P0 validation runbook](docs/operations/openwrt-validation.md) t
 - Spool and gateway recovery after connector container restart.
 - No firewall, routing, wireless, or forwarding changes.
 
-Physical hardware acceptance is deferred as technical debt [#2](https://github.com/squassina/OpenShield-luna/issues/17). It is not part of the P0 software completion gate; execute this runbook when the target gateway is available.
+Physical hardware acceptance remains open in [Issue #17](https://github.com/squassina/OpenShield-luna/issues/17). It is not part of the P0 software completion gate; execute this runbook against the target gateway and attach sanitized evidence when the hardware is available.
 
 
 ## P0 implementation checkpoint
@@ -708,7 +721,7 @@ Physical hardware acceptance is deferred as technical debt [#2](https://github.c
 
 ## Residential deployment decision — current product stage
 
-The first product stage targets a single household and a trusted local network. OpenShield API authentication, user accounts, API keys, and RBAC are intentionally disabled. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
+The first product stage targets a single household and a trusted local network. User accounts and RBAC are not implemented; optional admin HTTP Basic is available but disabled by default. Gateway authentication is separate from residential admin authentication. The gateway connector defaults to `home-gateway`; its first handshake automatically provisions the corresponding OpenWrt integration. Heartbeats carry the gateway ID, and event provenance uses the same stable ID.
 
 This is a deployment simplification, not a claim that unauthenticated APIs are safe on untrusted networks. The Node API must remain reachable only from the trusted home LAN and must not be exposed directly to the Internet. OpenWrt's own RPC authentication remains enabled to protect router management access.
 
@@ -724,7 +737,7 @@ Business and SaaS authentication must be implemented and reviewed before those d
 
 **Network visibility software scope:** implemented as an API-first vertical slice. OpenShield accepts bounded Suricata EVE and Zeek JSON batches, normalizes supported records into the versioned event envelope, persists them idempotently, queries event filters and limits in PostgreSQL, and aggregates observed IP inventory and inferred topology in the database. Inventory validates IP addresses and labels IP version/scope. Sensor freshness is based on Node-side observation time.
 
-**Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. The interactive web dashboard remains P2. No traffic enforcement is introduced. Live sensor validation, identity enrichment, retention/scale, Business authentication, and richer topology remain tracked in [docs/technical-debt.md](docs/technical-debt.md).
+**Boundaries:** Suricata and Zeek are externally deployed/configured sensors; this release does not install them or configure packet capture. Inventory contains observed IP endpoints, not authenticated device identities. Topology is inferred from observed connections, not a Layer-2 physical map. The interactive dashboard and P2 privacy-intelligence software have since been implemented. No traffic enforcement is introduced by P1. Live sensor validation, identity enrichment, retention/scale, Business authentication, and richer topology remain tracked in [docs/technical-debt.md](docs/technical-debt.md) and [TODO.md](TODO.md).
 
 
 ## OpenWrt device inventory and logical topology — implementation checkpoint
