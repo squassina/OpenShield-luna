@@ -566,6 +566,10 @@ def test_gateway_command_result_delivery_survives_node_outage_without_reexecutio
             self.unavailable = True
             self.reports: list[tuple[str, str, dict[str, object]]] = []
 
+        def authorize_command(self, _command_id: str) -> dict[str, object]:
+            # The command is authorized before result delivery becomes unavailable.
+            return {"authorized": True, "lease_seconds": 10}
+
         def report_command_result(
             self,
             command_id: str,
@@ -678,6 +682,9 @@ def test_gateway_failed_command_result_is_persisted_and_delivered(tmp_path: Path
     class NodeClient:
         def __init__(self) -> None:
             self.reports: list[tuple[str, str, dict[str, object]]] = []
+
+        def authorize_command(self, _command_id: str) -> dict[str, object]:
+            return {"authorized": True, "lease_seconds": 10}
 
         def report_command_result(
             self,

@@ -529,6 +529,9 @@ def test_gateway_command_agent_only_executes_allowlisted_actions(tmp_path) -> No
         def __init__(self):
             self.results = []
 
+        def authorize_command(self, command_id):
+            return {"authorized": True, "lease_seconds": 10}
+
         def report_command_result(self, command_id, status, result):
             self.results.append((command_id, status, result))
             return {}
