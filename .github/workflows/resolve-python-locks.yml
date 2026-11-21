@@ -58,24 +58,40 @@ jobs:
                   )
               return matches[0]
 
-          def compose_image(prefix: str) -> str:
-              matches = []
-              for line in compose:
+          def compose_service_image(service: str) -> str:
+              starts = [
+                  index for index, line in enumerate(compose)
+                  if line == f"  {service}:"
+              ]
+              if len(starts) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Compose service '{service}', found {len(starts)}"
+                  )
+              start = starts[0]
+              end = len(compose)
+              for index in range(start + 1, len(compose)):
+                  line = compose[index]
+                  if line and (
+                      not line.startswith(" ")
+                      or (line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"))
+                  ):
+                      end = index
+                      break
+              images = []
+              for line in compose[start + 1:end]:
                   stripped = line.strip()
                   if stripped.startswith("image:"):
-                      image = stripped.split(":", 1)[1].strip().strip('"').strip("'")
-                      if image.startswith(prefix):
-                          matches.append(image.split("@", 1)[0])
-              if len(matches) != 1:
+                      images.append(stripped.split(":", 1)[1].strip().strip('"').strip("'"))
+              if len(images) != 1:
                   raise SystemExit(
-                      f"Expected exactly one Compose image starting with '{prefix}', found {len(matches)}"
+                      f"Expected exactly one image in Compose service '{service}', found {len(images)}"
                   )
-              return matches[0]
+              return images[0].split("@", 1)[0]
 
           refs = {
               "python": docker_stage_image("base"),
               "playwright": docker_stage_image("browser-test"),
-              "postgres": compose_image("postgres:"),
+              "postgres": compose_service_image("openshield-db"),
           }
           for name, ref in refs.items():
               if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]*$", ref):
@@ -142,26 +158,49 @@ jobs:
                       and parts[-2].upper() == "AS"
                       and parts[-1].lower() == stage
                   ):
-                      matches.append(index)
+                      matches.append((index, parts))
               if len(matches) != 1:
                   raise SystemExit(
                       f"Expected exactly one Dockerfile FROM stage '{stage}', found {len(matches)}"
                   )
-              index = matches[0]
+              index, parts = matches[0]
               indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
-              lines[index] = f"{indent}FROM {image} AS {stage}"
+              options = parts[1:-3]
+              instruction = " ".join(["FROM", *options, image, "AS", stage])
+              lines[index] = f"{indent}{instruction}"
               path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-          def replace_compose_image(path: Path, image: str) -> None:
+          def service_bounds(lines: list[str], service: str) -> tuple[int, int]:
+              starts = [
+                  index for index, line in enumerate(lines)
+                  if line == f"  {service}:"
+              ]
+              if len(starts) != 1:
+                  raise SystemExit(
+                      f"Expected exactly one Compose service '{service}', found {len(starts)}"
+                  )
+              start = starts[0]
+              end = len(lines)
+              for index in range(start + 1, len(lines)):
+                  line = lines[index]
+                  if line and (
+                      not line.startswith(" ")
+                      or (line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":"))
+                  ):
+                      end = index
+                      break
+              return start, end
+
+          def replace_compose_service_image(path: Path, service: str, image: str) -> None:
               lines = path.read_text(encoding="utf-8").splitlines()
+              start, end = service_bounds(lines, service)
               matches = [
-                  index
-                  for index, line in enumerate(lines)
-                  if re.match(r"^\s*image:\s*postgres:", line)
+                  index for index in range(start + 1, end)
+                  if lines[index].strip().startswith("image:")
               ]
               if len(matches) != 1:
                   raise SystemExit(
-                      f"Expected exactly one PostgreSQL service image, found {len(matches)}"
+                      f"Expected exactly one image in Compose service '{service}', found {len(matches)}"
                   )
               index = matches[0]
               indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
@@ -172,7 +211,9 @@ jobs:
           replace_docker_stage(
               Path("Dockerfile"), "browser-test", os.environ["PLAYWRIGHT_IMAGE"]
           )
-          replace_compose_image(Path("docker-compose.yml"), os.environ["POSTGRES_IMAGE"])
+          replace_compose_service_image(
+              Path("docker-compose.yml"), "openshield-db", os.environ["POSTGRES_IMAGE"]
+          )
           PY
       - name: Open dependency and image refresh pull request
         uses: peter-evans/create-pull-request@v8
