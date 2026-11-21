@@ -29,7 +29,7 @@ ZEEK_FIELDS = (
 
 def _timestamp(value: Any) -> datetime:
     if isinstance(value, bool):
-        raise ValueError("Sensor event requires a valid timestamp")
+        raise TypeError("Sensor event requires a valid timestamp")
     if isinstance(value, (int, float)):
         try:
             return datetime.fromtimestamp(value, UTC)
