@@ -162,6 +162,35 @@ class PostgresPolicyStoreMixin:
             "created_at": row[5].isoformat(), "updated_at": row[6].isoformat(),
         }
 
+    def transition_policy_decision(
+        self,
+        decision_id: str,
+        expected_status: str,
+        status: str,
+        rationale: dict[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status, rationale FROM policy_decisions WHERE decision_id = %s FOR UPDATE",
+                (decision_id,),
+            )
+            row = cursor.fetchone()
+            if row is None or row[0] != expected_status:
+                return None
+            payload = {**row[1], **(rationale or {}), "status": status}
+            cursor.execute(
+                """
+                UPDATE policy_decisions SET status = %s, rationale = %s, updated_at = NOW()
+                WHERE decision_id = %s
+                """,
+                (status, Jsonb(payload), decision_id),
+            )
+            self._insert_audit(
+                cursor, "policy.decision.status.updated", None, decision_id,
+                {"status": status, **(rationale or {})},
+            )
+        return self.get_policy_decision(decision_id)
+
     def update_policy_decision(
         self, decision_id: str, status: str, rationale: dict[str, object] | None = None
     ) -> dict[str, object] | None:

@@ -5,14 +5,17 @@ from fastapi import APIRouter, HTTPException, Request
 from openshield.core.metrics import MetricsRegistry
 from openshield.core.secrets import SecretConfigurationError
 from openshield.core.storage import PostgresStore
-from openshield.execution.service import process_gateway_command_result
+from openshield.execution.service import (
+    authorize_gateway_command,
+    process_gateway_command_result,
+)
 from openshield.gateway.models import (
     GatewayCommandResultRequest,
     GatewayConnectRequest,
     GatewayHeartbeatRequest,
 )
 from openshield.gateway.registry import GatewayConnectionRegistry
-from openshield.integrations.models import IntegrationRegistration
+from openshield.integrations.models import Capability, IntegrationRegistration
 from openshield.integrations.registry import IntegrationRegistry
 
 
@@ -26,6 +29,25 @@ def create_gateway_router(
     gateway_token_valid: Callable[[Request], bool],
 ) -> APIRouter:
     router = APIRouter()
+
+    def pending_commands(gateway_id: str, capabilities: list[Capability]) -> list[dict[str, object]]:
+        commands = store.list_pending_gateway_commands(gateway_id, limit=10)
+        if Capability.AUTHORIZE_COMMANDS not in capabilities:
+            # Older connectors may safely perform cleanup, never a new block.
+            return [command for command in commands if command["action"] == "unblock_ip"]
+        return commands
+
+    @router.post(
+        "/api/v1/gateway/commands/{gateway_id}/{command_id}/authorize",
+        tags=["gateway"],
+    )
+    def authorize_gateway_command_route(
+        gateway_id: str, command_id: str,
+    ) -> dict[str, object]:
+        command = store.get_gateway_command(command_id)
+        if command is None or command["gateway_id"] != gateway_id:
+            raise HTTPException(status_code=404, detail="Gateway command not found")
+        return authorize_gateway_command(store, gateway_id, command_id)
 
     @router.get("/api/v1/gateway/config/{gateway_id}", tags=["gateway"])
     def gateway_configuration(gateway_id: str, request: Request) -> dict[str, object]:
@@ -82,7 +104,7 @@ def create_gateway_router(
             "accepted_capabilities": [item.value for item in connection.capabilities],
             "connected_at": connection.connected_at.isoformat(),
             "openwrt_config": openwrt_config,
-            "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
+            "commands": pending_commands(connection.gateway_id, connection.capabilities),
         }
 
     @router.post("/api/v1/gateway/heartbeat", tags=["gateway"])
@@ -136,7 +158,7 @@ def create_gateway_router(
             "gateway_id": connection.gateway_id,
             "last_seen_at": connection.last_seen_at.isoformat(),
             "openwrt_config": openwrt_config,
-            "commands": store.list_pending_gateway_commands(connection.gateway_id, limit=10),
+            "commands": pending_commands(connection.gateway_id, connection.capabilities),
         }
 
     @router.post(
