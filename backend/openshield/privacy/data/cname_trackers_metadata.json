@@ -1,8 +1,9 @@
 {
-  "source": "AdGuard CNAME original trackers list",
-  "source_url": "https://github.com/AdguardTeam/cname-trackers",
+  "entry_count": 99,
   "feed_url": "https://github.com/AdguardTeam/cname-trackers/blob/master/data/combined_original_trackers_justdomains.txt",
   "license": "MIT",
-  "source_commit": "dd5bd59eda209a97efeee1ee7898e119c582a13b",
-  "updated_at": "2026-11-05T15:48:54+00:00"
+  "source": "AdGuard CNAME original trackers list",
+  "source_commit": "151c9614ab53005f90330f890b25b3a2ebf1a70a",
+  "source_url": "https://github.com/AdguardTeam/cname-trackers",
+  "updated_at": "2026-11-23T15:02:37+00:00"
 }

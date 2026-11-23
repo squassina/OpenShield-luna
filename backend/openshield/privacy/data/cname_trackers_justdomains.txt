@@ -1,258 +1,100 @@
-# Title: AdGuard CNAME original trackers list
-# Description: The list of trackers that are often disguised using CNAME. This list is supposed to be used only by Software capable of scanning CNAME records.
-# TimeUpdated: 2026-11-05T15:48:54+00:00
-# Homepage: https://github.com/AdguardTeam/cname-trackers
-#
-#
-# Company: 2cnt.net
-pl02.prolitteris.2cnt.net
-#
-# Company: A8.net
-a8.net
-#
-# Company: Act-On
-actonservice.com
-actonsoftware.com
-#
-# Company: ActionIQ
-mr-in.com
-#
-# Company: Actionlink.jp
-mm.actionlink.jp
-#
-# Company: ACWEB Inc.
-acweb.clog.jp
-#
-# Company: AD EBiS
-ebis.ne.jp
-#
-# Company: Ad Plus
-stat-rock.com
-#
-# Company: Ad-Shield
-ad-shield.cc
-#
-# Company: ad1n.net
-ad1n.net
-#
-# Company: Adobe Experience Cloud (formerly Omniture)
-2o7.net
-data.adobedc.net
-sc.adobedc.net
-sc.omtrdc.net
-#
-# Company: Adocean
-adocean.pl
-#
-# Company: ads2.bid
-ads.bid
-#
-# Company: AdSpyglass
+# Derived from AdGuardTeam/cname-trackers; see THIRD_PARTY_NOTICES.md
 0i0i0i0.com
-u57.muzikguide.com
-#
-# Company: affilbox.cz
-cz.affilbox.cz
-#
-# Company: ahacdn.me
-cdn18685953.ahacdn.me
-#
-# Company: Aquaplatform
-aquaplatform.com
-#
-# Company: AT Internet (formerly XiTi)
-at-o.net
-#
-# Company: Branch.io
-thirdparty.bnc.lt
-#
-# Company: Clickaine
-api.clickaine.com
-#
-# Company: Commanders Act
-tagcommander.com
-#
-# Company: Content Ignite
-greylabeldelivery.com
-#
-# Company: Cordial
-track.sp.crdl.io
-#
-# Company: Criteo
-dnsdelegation.io
-storetail.io
-#
-# Company: customer.io
-e.customeriomail.com
-#
-# Company: CustomerLabs
 1p-data.co
-#
-# Company: DataFast
-datafa.st
-datafast.io
-#
-# Company: DataUnlocker
-dataunlocker.com
-monopoly-drain.ga
-friendly-community.tk
-#
-# Company: EdgeTag
-edgetag.io
-attntags.com
-emtag.net
-xray-superpixel.com
-#
-# Company: Ensighten
-nc0.co
-#
-# Company: Etracker
-customer.etracker.com
-#
-# Company: Eulerian
-eulerian.net
-#
-# Company: Extole
-extole.com
-extole.io
-#
-# Company: Eyepin
-post.eyepinnews.com
-#
-# Company: Fathom
-fathomdns.com
-#
-# Company: Galaksion
-beixisys.com
-#
-# Company: GENIEE
-genieespv.jp
-#
-# Company: GMO Internet Group
-ad-cloud.jp
-#
-# Company: GoAdserver
-go.goadserver.com
-#
-# Company: GoatCounter
-goatcounter.com
-#
-# Company: heleric.com
-heleric.com
-#
-# Company: INFOnline
-iocnt.net
-#
-# Company: Ingenious Technologies
-affex.org
-#
-# Company: Keyade
-k.keyade.com
-#
-# Company: kib.hu
-kib.hu
-#
-# Company: Lead Forensics
-ghochv3eng.trafficmanager.net
-#
-# Company: LexisNexis Risk Solutions
-online-metrix.net
-#
-# Company: Logly
-logly.co.jp
-#
-# Company: Mailgun
-mailgun.org
-#
-# Company: midnightlotusgrove.com
-midnightlotusgrove.com
-#
-# Company: Monetag
-amaerodactylon.com
-#
-# Company: NameSilo
-ab1n.net
-#
-# Company: Nativo
-ntv.io
-ntvpforever.com
-postrelease.com
-#
-# Company: nonli.com
-non.li
-#
-# Company: NP6
-tracking.bp01.net
-#
-# Company: Oracle Eloqua
-t.eloqua.com
-#
-# Company: Otto Group
-oghub.io
-#
-# Company: Pardot
-go.pardot.com
-#
-# Company: Parse.ly
-parsely.com
-#
-# Company: Piwik PRO
-piwik.pro
-#
-# Company: Plausible Analytics
-custom.plausible.io
-#
-# Company: PopCash
-popcashjs.b-cdn.net
-#
-# Company: ProxyHog
-proxyhog.com
-europehog.com
-#
-# Company: RealBig
-park.realbig.online
-#
-# Company: RedTrack
-rdtk.io
-rttrk.com
-#
-# Company: SailThru
-sailthru.com
-#
-# Company: Salesforce Mail Marketing
-exacttarget.com
-#
-# Company: Stape
-stape.net
-stape.io
-#
-# Company: Stripchat
-white-label.stripchat.com
-#
-# Company: TraceDock
+2o7.net
 a351fec2c318c11ea9b9b0a0ae18fb0b-1529426863.eu-central-1.elb.amazonaws.com
 a5e652663674a11e997c60ac8a4ec150-1684524385.eu-central-1.elb.amazonaws.com
+a8.net
 a88045584548111e997c60ac8a4ec150-1610510072.eu-central-1.elb.amazonaws.com
+ab1n.net
+actonservice.com
+actonsoftware.com
+acweb.clog.jp
+ad-cloud.jp
+ad-shield.cc
+ad1n.net
+adocean.pl
+ads.bid
 afc4d9aa2a91d11e997c60ac8a4ec150-2082092489.eu-central-1.elb.amazonaws.com
-#
-# Company: trackwilltrk.com
-trackwilltrk.com
-#
-# Company: TrueData
-e.truedata.co
-#
-# Company: Utiq
-utiq-aws.net
-#
-# Company: Webair
+affex.org
 ak-is2.net
-#
-# Company: Webtrekk
+amaerodactylon.com
+api.clickaine.com
+aquaplatform.com
+at-o.net
+attntags.com
+beixisys.com
+cdn18685953.ahacdn.me
+custom.plausible.io
+customer.etracker.com
+cz.affilbox.cz
+data.adobedc.net
+datafa.st
+datafast.io
+dataunlocker.com
+dnsdelegation.io
+e.customeriomail.com
+e.truedata.co
+ebis.ne.jp
+edgetag.io
+emtag.net
+eulerian.net
+europehog.com
+exacttarget.com
+extole.com
+extole.io
+fathomdns.com
+friendly-community.tk
+genieespv.jp
+ghochv3eng.trafficmanager.net
+go.goadserver.com
+go.pardot.com
+goatcounter.com
+greylabeldelivery.com
+heleric.com
+iocnt.net
+k.keyade.com
+kib.hu
+logly.co.jp
+mailgun.org
+midnightlotusgrove.com
+mm.actionlink.jp
+monopoly-drain.ga
+mr-in.com
+nc0.co
+non.li
+ntv.io
+ntvpforever.com
+oghub.io
+online-metrix.net
+park.realbig.online
+parsely.com
+piwik.pro
+pl02.prolitteris.2cnt.net
+popcashjs.b-cdn.net
+post.eyepinnews.com
+postrelease.com
+proxyhog.com
+rdtk.io
+rttrk.com
+sailthru.com
+sc.adobedc.net
+sc.omtrdc.net
+stape.io
+stape.net
+stat-rock.com
+storetail.io
+t.eloqua.com
+tagcommander.com
+thirdparty.bnc.lt
+track.sp.crdl.io
+tracking.bp01.net
+trackwilltrk.com
+u57.muzikguide.com
+utiq-aws.net
 webtrekk.net
-wt-eu02.net
-#
-# Company: Wecantrack
 wecantrack.com
-#
-# Company: Wizaly
+white-label.stripchat.com
 wizaly.com
+wt-eu02.net
+xray-superpixel.com
